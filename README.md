@@ -6,7 +6,7 @@ inkpainter3d lets you paint directly onto 3D models with a layer-based, non-dest
 and export the result as texture maps for game engines and renderers. It runs natively on
 **Windows and Linux** and will always be **free**.
 
-> **Status:** early development. Phases 1 to 3 (viewport, texture sets, HDRI lighting, brush engine) are done; the layer stack is next.
+> **Status:** early development. Phases 1 to 4 (viewport, texture sets, HDRI lighting, brush engine, layer stack) are done; project files and export are next.
 
 ---
 
@@ -45,7 +45,6 @@ inkpainter3d aims to be a capable alternative that:
   - hovering a texture set or mesh highlights it in the viewport
   - select the texture set under the cursor with Ctrl+Alt+right click
 - Texture set settings: size (128 to 4096), opacity mode (opaque, alpha test, alpha blend)
-  and uniform channel values (base color, roughness, metallic, emissive, opacity)
 - Viewport
   - **PBR** with image based lighting from HDR panoramas (`.hdr`, `.exr`), rotation,
     exposure, background opacity and blur; a CC0 studio HDRI is built in
@@ -53,8 +52,8 @@ inkpainter3d aims to be a capable alternative that:
   - display modes: material, material ID (one color per texture set) and single channels
   - perspective and orthographic camera, drag-and-drop loading of models and HDRIs
 - **Brush engine** with Painter's tools and defaults
-  - **Paint** (1) and **Eraser** (2) on a paint layer per texture set, in the 3D view and in
-    the **2D view** (UV layout; layouts F1 to F4)
+  - **Paint** (1) and **Eraser** (2) into the selected paint layer, mask or paint effect, in
+    the 3D view and in the **2D view** (UV layout; layouts F1 to F4)
   - brush material per channel (base color, roughness, metallic, emissive, opacity), each
     channel switchable
   - size (relative to the model or the view), flow, stroke opacity, spacing, angle,
@@ -67,6 +66,19 @@ inkpainter3d aims to be a capable alternative that:
   - strokes are stored as data and painted on the GPU: changing the texture size repaints
     them sharp; the tip wraps around the surface, and surfaces hidden from the camera stay
     unpainted
+- **Layer stack** like Painter's, composited on the GPU in 16-bit float
+  - **paint layers**, **fill layers** and **folders**; the topmost layer wins where its mask
+    lets it, per channel
+  - **blend mode and opacity per channel**, with a dropdown choosing the channel the rows
+    show, like Painter's; all of Painter's blend modes, including Passthrough for folders
+    and the normal map modes
+  - **masks** (white or black) on layers and folders, painted with a grayscale brush, with
+    paint, fill and levels effects; Shift + click turns a mask off
+  - **fill layers** with a value or an image per channel (PNG, JPEG, TGA, BMP, EXR, HDR;
+    normal maps in DirectX or OpenGL format), **UV** or **tri-planar** projection with
+    scale, rotation, offset and hardness; height becomes normal detail
+  - add, delete, duplicate, group, copy, cut, paste and rename layers, reorder them by drag
+    and drop, show and hide them; every edit can be undone
 
 ### Planned
 See the [roadmap](#roadmap).
@@ -82,8 +94,8 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 1 | **Viewport** — model import (FBX, glTF, OBJ), PBR and stylized shading, camera | ✅ done |
 | 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures (incl. emissive and opacity), HDRI lighting, Painter-style navigation | ✅ done |
 | 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | ✅ done |
-| 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ⏳ next |
-| 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | |
+| 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
+| 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ⏳ next |
 | 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
 | 7 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
 | 8 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
@@ -128,6 +140,7 @@ The same as in Substance 3D Painter.
 | Hardness | Ctrl + right mouse drag up and down |
 | Flow / angle | Ctrl + left mouse drag sideways / up and down |
 | Lazy mouse on / off | D |
+| Paint black instead of white in a mask (and back) | X |
 | Undo / redo | Ctrl + Z / Ctrl + Y |
 | Layouts: 3D and 2D / 3D / 2D / swap | F1 / F2 / F3 / F4 |
 | Rotate | Alt + left mouse (add Shift to snap to 90°) |
@@ -139,6 +152,11 @@ The same as in Substance 3D Painter.
 | Material / next channel / previous channel | M / C / Shift + C |
 | Focus on selected texture set | Alt + Q |
 | Select texture set under cursor | Ctrl + Alt + right click |
+| Duplicate / group layers | Ctrl + D / Ctrl + G |
+| Copy / cut / paste / delete layers (pointer over the layer stack) | Ctrl + C / Ctrl + X / Ctrl + V / Delete |
+| Select several layers | Ctrl + click |
+| Rename a layer | double-click |
+| Turn a mask off and on | Shift + click on the mask |
 
 The left mouse button on its own paints. The 2D view navigates the same way, with Alt + left
 mouse rotating it.

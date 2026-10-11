@@ -261,17 +261,17 @@ Layer Stack von Body_MAT                 Ergebnis
   1  Stahl        (keine Maske)          Stahl überall sonst
 ```
 
-- [ ] `P0` **Ohne Maske** deckt ein Material das ganze Texture Set ab. Alles darunter ist
+- [x] `P0` **Ohne Maske** deckt ein Material das ganze Texture Set ab. Alles darunter ist
       verdeckt.
-- [ ] `P0` **Mit Maske:** Weiß zeigt dieses Material, Schwarz lässt die Materialien darunter
+- [x] `P0` **Mit Maske:** Weiß zeigt dieses Material, Schwarz lässt die Materialien darunter
       durch, Grau mischt beide. Graustufen ergeben weiche Übergänge, z. B. abgeplatzten Lack
       an Kanten.
-- [ ] `P0` **Priorität ändern** durch Verschieben im Stack per Drag & Drop.
-- [ ] `P0` **Pro Kanal:** Ein Material gewinnt nur in den Kanälen, die es eingeschaltet hat.
+- [x] `P0` **Priorität ändern** durch Verschieben im Stack per Drag & Drop.
+- [x] `P0` **Pro Kanal:** Ein Material gewinnt nur in den Kanälen, die es eingeschaltet hat.
       Ein „Nass“-Layer, der nur Roughness setzt, lässt die Farbe darunter stehen.
-- [ ] `P0` **Deckkraft und Blend Mode** verändern das Ergebnis: Bei *Normal* mit 100 % gilt
+- [x] `P0` **Deckkraft und Blend Mode** verändern das Ergebnis: Bei *Normal* mit 100 % gilt
       „oben gewinnt“, bei weniger Deckkraft oder anderen Modi wird gemischt.
-- [ ] `P0` **Ordner mit Maske:** Mehrere Layer lassen sich gruppieren und gemeinsam maskieren,
+- [x] `P0` **Ordner mit Maske:** Mehrere Layer lassen sich gruppieren und gemeinsam maskieren,
       z. B. „Lack“ zusammen mit „Kratzer im Lack“.
 - [ ] `P1` **Woher Masken kommen:** gemalt, Polygon Fill (Mesh, Polygon, UV-Insel), Geometry
       Mask (nach Mesh-Name), Color Selection aus der ID-Map, Generatoren wie Edge Wear oder
@@ -285,33 +285,36 @@ Layer Stack von Body_MAT                 Ergebnis
 
 **Layer-Typen**
 
-- [ ] `P0` **Paint Layer**
-- [ ] `P0` **Fill Layer**
-- [ ] `P0` **Ordner (Gruppe)**
+- [x] `P0` **Paint Layer**
+- [x] `P0` **Fill Layer**
+- [x] `P0` **Ordner (Gruppe)**, auch als *Passthrough*
 - [ ] `P2` **Instanz-Layer:** ein Layer, der in mehreren Texture Sets gleichzeitig wirkt
 - [ ] `P2` **Layer zusammenführen (Flatten)**, auch als Export auf die Festplatte
 
 **Eigenschaften pro Layer**
 
-- [ ] `P0` **Blend Mode und Deckkraft pro Kanal.** Wie in Painter wählt ein Dropdown oben im
+- [x] `P0` **Blend Mode und Deckkraft pro Kanal.** Wie in Painter wählt ein Dropdown oben im
       Layer Stack den Kanal, dessen Blending man gerade bearbeitet.
-- [ ] `P0` Kanäle pro Layer ein- und ausschalten (z. B. Layer wirkt nur auf Roughness)
-- [ ] `P0` Sichtbarkeit, Umbenennen, Reihenfolge per Drag & Drop
-- [ ] `P1` Vorschaubilder für Layer und Masken
+- [x] `P0` Kanäle pro Layer ein- und ausschalten (z. B. Layer wirkt nur auf Roughness)
+- [x] `P0` Sichtbarkeit, Umbenennen (Doppelklick), Reihenfolge per Drag & Drop, auch in Ordner
+      hinein; Mehrfachauswahl mit Strg+Klick
+- [ ] `P1` Vorschaubilder für Layer und Masken. Bisher zeigen die Zeilen Symbole, die Farbe
+      eines Fill Layers und den Grundton einer Maske.
 
 **Blend Modes**
 
-- [ ] `P0` Normal, Passthrough, Disable, Replace, Multiply, Screen, Overlay,
+- [x] `P0` Normal, Passthrough, Disable, Replace, Multiply, Screen, Overlay,
       Linear Dodge (Add), Subtract, Normal Map Combine, Normal Map Detail
-- [ ] `P1` die übrigen Modi aus Painter: Divide, Inverse Divide, Darken (Min), Lighten (Max),
+- [x] `P1` die übrigen Modi aus Painter: Divide, Inverse Divide, Darken (Min), Lighten (Max),
       Inverse Subtract, Difference, Exclusion, Signed Addition, Linear Burn, Color Burn,
       Color Dodge, Soft Light, Hard Light, Vivid Light, Linear Light, Pin Light, Tint,
       Saturation, Color, Value, Normal Map Inverse Detail
 
 **Bearbeiten**
 
-- [ ] `P0` Kopieren (Strg+C), Ausschneiden (Strg+X), Einfügen (Strg+V), Löschen (Entf),
-      Duplizieren (Strg+D), Gruppieren (Strg+G)
+- [x] `P0` Kopieren (Strg+C), Ausschneiden (Strg+X), Einfügen (Strg+V), Löschen (Entf),
+      Duplizieren (Strg+D), Gruppieren (Strg+G). Kopieren, Ausschneiden, Einfügen und Löschen
+      wirken wie in Painter nur, wenn die Maus über dem Layer Stack steht.
 - [ ] `P1` Layer zwischen Texture Sets kopieren
 - [ ] `P1` Nur den Layer-Inhalt kopieren und einfügen (Strg+Shift+C / V)
 - [ ] `P2` Material Layering (Unter-Stacks pro Texture Set)
@@ -322,18 +325,21 @@ Layer Stack von Body_MAT                 Ergebnis
 
 **Masken**
 
-- [ ] `P0` **Schwarze oder weiße Maske** hinzufügen und hineinmalen
-- [ ] `P1` Maske ein- und ausschalten (Shift+Klick), Maske im Viewport anzeigen (Alt+Klick)
+- [x] `P0` **Schwarze oder weiße Maske** hinzufügen und hineinmalen; in der Maske malt der Pinsel
+      Graustufen, X tauscht Schwarz und Weiß
+- [x] `P1` Maske ein- und ausschalten (Shift+Klick)
+- [ ] `P1` Maske im Viewport anzeigen (Alt+Klick)
 - [ ] `P1` **Color Selection:** Maske aus Farben der ID-Map
 - [ ] `P1` **Smart Masks:** gespeicherte Masken-Aufbauten aus dem Shelf
 - [ ] `P2` **Quick Mask** (U bearbeiten, Y leeren, I invertieren)
 
 **Effekte.** Sie liegen in der Maske und auch im Inhalt eines Layers und bilden dort einen
-eigenen Stapel:
+eigenen Stapel. *Seit Phase 4* gibt es Effekte in Masken, jeder mit Blend Mode und
+Deckkraft; Effekte im Layer-Inhalt folgen mit den Filtern.
 
-- [ ] `P0` **Paint**
-- [ ] `P0` **Fill**
-- [ ] `P1` **Levels**
+- [x] `P0` **Paint**
+- [x] `P0` **Fill**
+- [x] `P1` **Levels**
 - [ ] `P1` **Filter** (siehe Kapitel 11); Blur schon `P0`
 - [ ] `P1` **Generator** (siehe Kapitel 11)
 - [ ] `P2` **Compare Mask**
@@ -369,7 +375,7 @@ Taste in Klammern = Painter-Shortcut.
 - [ ] `P1` **Vorherigen Strich fortsetzen (A)**
 - [ ] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
       S+Rechts zoomen, N ignoriert die Stencil-Maske
-- [ ] `P1` **Graustufen invertieren (X)**
+- [x] `P1` **Graustufen invertieren (X)**
 
 **Pfad-Werkzeuge**
 
@@ -436,8 +442,8 @@ Taste in Klammern = Painter-Shortcut.
 
 **Projektionsarten**
 
-- [ ] `P0` **UV-Projektion:** Kachelung, Versatz, Rotation
-- [ ] `P0` **Tri-planar:** nahtlos über UV-Nähte, mit einstellbarer Kantenhärte
+- [x] `P0` **UV-Projektion:** Kachelung, Versatz, Rotation
+- [x] `P0` **Tri-planar:** nahtlos über UV-Nähte, mit einstellbarer Kantenhärte
 - [ ] `P1` **Planar**
 - [ ] `P1` **Sphärisch**
 - [ ] `P1` **Zylindrisch**
@@ -447,8 +453,9 @@ Taste in Klammern = Painter-Shortcut.
 
 **Füllinhalt**
 
-- [ ] `P0` Fester Wert oder Farbe pro Kanal
-- [ ] `P0` Bild-Textur pro Kanal
+- [x] `P0` Fester Wert oder Farbe pro Kanal
+- [x] `P0` Bild-Textur pro Kanal (PNG, JPEG, TGA, BMP, EXR, HDR). Normal Maps gelten wie in
+      Painter als DirectX, umschaltbar auf OpenGL; Height wird zu Normal-Details.
 - [ ] `P1` Material aus dem Shelf, prozedurale Texturen
 - [ ] `P1` Material per Drag & Drop direkt auf den Layer Stack oder das Modell ziehen
       (Strg+Drag wirkt nur auf das Teil unter dem Mauszeiger)
@@ -613,7 +620,8 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 Umgesetzt sind Kamera, Umgebung, die Anzeige-Modi Material und Kanal (M, C / Shift+C),
 Fokus-Modus, Set-Auswahl, Paint und Eraser (1 / 2), Pinselgröße, Härte, Flow und Winkel,
-gerade Linien, Lazy Mouse, Rückgängig / Wiederholen und die Layouts F1 bis F4; Mesh Map
+gerade Linien, Lazy Mouse, Graustufen invertieren (X), die Layer-Shortcuts, Rückgängig /
+Wiederholen und die Layouts F1 bis F4; Mesh Map
 (B / Shift+B) folgt mit dem Baking. [ und ] funktionieren auch, wenn AltGr als Strg+Alt
 ankommt (deutsche Tastatur unter Windows). Unter Linux
 verschieben viele Desktops Fenster mit Alt + Ziehen; die README erklärt, wie man das auf die
@@ -635,8 +643,9 @@ Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) 
 
 ## 16. Undo, Leistung, Stabilität
 
-- [ ] `P0` **Undo / Redo** für alle Aktionen (Striche, Layer, Einstellungen). Striche sind
-      umgesetzt (Strg+Z, Strg+Y, Strg+Shift+Z), Einstellungen und Layer folgen.
+- [ ] `P0` **Undo / Redo** für alle Aktionen (Striche, Layer, Einstellungen). Striche und alle
+      Änderungen am Layer Stack sind umgesetzt (Strg+Z, Strg+Y, Strg+Shift+Z), Einstellungen
+      folgen.
 - [ ] `P1` **History-Fenster**
 - [ ] `P0` **Flüssiges Malen bei 4K pro Texture Set** auf einer Mittelklasse-GPU
 - [ ] `P0` **5 Texture Sets mit je 4K** in einem Projekt wie im Referenzprojekt
@@ -697,8 +706,11 @@ Diese Punkte müssen **vor** der Brush-Engine feststehen, weil später alles dar
 2. **Szene statt Einzel-Mesh.** Das Datenmodell bekommt Meshes (mit Namen) und Texture Sets
    (mit Material-Slot und Liste der UV-Tiles). Ein Texture Set besitzt Layer Stack, Kanäle und
    Auflösung.
-3. **Layer Stack auf der GPU.** Das Zusammenrechnen der Layer läuft in Compute-Shadern, intern
-   mit 16-Bit-Float pro Kanal. Neu berechnet wird nur, was sich geändert hat.
+3. **Layer Stack auf der GPU.** Das Zusammenrechnen der Layer läuft in Shadern, intern
+   mit 16-Bit-Float pro Kanal. Neu berechnet wird nur, was sich geändert hat. *Seit Phase 4:*
+   Gemalte Pixel liegen in Kacheln (128 × 128), nur wo gemalt wurde. Der Stack wird in
+   Blöcken von 512 × 512 Texeln zusammengerechnet; beim Malen nur der bemalte Bereich, nach
+   anderen Änderungen die ganze Textur über mehrere Frames verteilt.
 4. **Tangent Space nach MikkTSpace**, Normal-Map-Format (OpenGL / DirectX) pro Projekt;
    umgerechnet wird beim Export.
 5. **Generatoren und Filter als Shader-Dateien:** WGSL-Code plus eine Beschreibung der Parameter
@@ -707,7 +719,8 @@ Diese Punkte müssen **vor** der Brush-Engine feststehen, weil später alles dar
 6. **Projektdatei** als ZIP-Container mit JSON (Struktur, Strokes, Einstellungen) und
    Binärdaten (Mesh, gerasterte Caches als EXR). Das Format wird dokumentiert.
 7. **Undo** über Befehle (Command Pattern), die auf den Stroke-Daten arbeiten. Undo braucht so
-   nur wenig Speicher. *Seit Phase 3* für Striche umgesetzt.
+   nur wenig Speicher. *Seit Phase 3* für Striche umgesetzt, *seit Phase 4* für den Layer
+   Stack: Ein Schritt merkt sich den Stack davor; die Striche darin teilen sich beide Stände.
 
 ---
 
@@ -721,8 +734,8 @@ texturieren und exportieren.**
 | 1 | **Viewport:** Import (FBX, glTF, OBJ), PBR- und Stylized-Shading, Kamera | ✅ fertig |
 | 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader (inkl. Emissive und Opacity), HDRI-Beleuchtung, Painter-Navigation | ✅ fertig |
 | 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ✅ fertig |
-| 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ⏳ als Nächstes |
-| 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | |
+| 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
+| 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ⏳ als Nächstes |
 | 6 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
 | 7 | **Generatoren und Bibliothek:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Shelf, Starter-Inhalte | |
 | 8 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |

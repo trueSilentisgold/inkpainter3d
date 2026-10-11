@@ -44,7 +44,8 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
 Layering: `ink_core` is the data model (no GPU, no file I/O); `ink_io` does everything that
 reads or writes files; `ink_render` does everything wgpu and depends only on `ink_core`
 (`ink_io` is a dev-dependency for the snapshot example); `ink_app` is the eframe/egui UI
-(`app.rs` with `app/views.rs` for the 3D and 2D views and `app/painting.rs` for the brush)
+(`app.rs` with `app/views.rs` for the 3D and 2D views, `app/painting.rs` for the brush and
+`app/layers.rs` for the layer stack panel and the properties of fills and effects)
 plus `pen.rs`, pen input on Linux: a Wayland tablet client and an XInput2 pressure reader
 (Linux-only dependencies).
 
@@ -64,10 +65,10 @@ Things that are easy to get wrong:
   the builder regroups triangles and splits vertices for tangents, so vertex and triangle
   indices do not match the source file.
 - **No stable IDs yet.** Sets, objects and parts are identified by `Vec` index (UI state
-  `expanded`/`focus`, the renderer's GPU sets, material ID colors, `Stroke::hidden_objects`
-  / `hidden_sets`, the undo history). Reordering or removing them must update all of these,
-  and project files need real IDs first. Strokes do have ids (`Model::next_stroke_id`,
-  unique per model).
+  `expanded`/`focus`, the layer selection per set, the renderer's GPU sets, material ID
+  colors, `Stroke::hidden_objects` / `hidden_sets`, the undo history). Reordering or
+  removing them must update all of these, and project files need real IDs first. Strokes,
+  layers, masks, effects and paint layers do have ids (`Model::next_id`, unique per model).
 - **UV convention.** UVs are stored with the origin top-left (like glTF/wgpu); importers
   flip FBX and OBJ. Tangents are computed in the bottom-left convention so the bitangent
   points up in the image, as OpenGL-style normal maps (Blender, Unity, Godot) expect.
@@ -75,26 +76,55 @@ Things that are easy to get wrong:
   `srgb_to_linear` before they reach uniforms or clear colors.
 - **Channel textures** are `CHANNEL_FORMATS` in `viewport.rs` plus the `@group(1)` bindings
   in `viewport.wgsl`: color channels in sRGB textures, data channels linear, normals
-  OpenGL-style. `TextureSet::fill` stands in for the layer stack (normal stays flat, AO 1).
+  OpenGL-style; the normal texture's alpha carries the height. The compositor writes them;
+  where no layer puts anything, Painter's shader defaults show (`background` in
+  compositor.rs).
+- **Layer stack** (`ink_core::layer`). Each `TextureSet` owns a `LayerStack`, stored bottom to
+  top; folders hold their own lists. Layers, masks, effects and every `PaintLayer` (a paint
+  layer's content, a mask's paint, a paint effect) have ids from `Model::ids`, unique per
+  model; `Layer::duplicate` gives the copy and everything in it new ids. Blending is per
+  channel (`Blending`); `BlendMode::for_layers` / `for_masks` say which modes each offers
+  (Passthrough only for folders). Fill layers and fill effects hold `Arc<TextureImage>`s;
+  the renderer uploads each image once by its id.
 - **UI → GPU sync.** The UI mutates `Model` directly; `ViewportRenderer::sync_texture_sets`
-  runs once per frame, after both views handled their input (`views()` in app/views.rs), and
-  diffs only resolution, fill and alpha mode, so add any new GPU-relevant `TextureSet` field
-  there. Its `stroke_in_progress` flag defers the full-texture composite to the stroke's end. New geometry goes through `set_model`; `render`
-  draws no meshes while the GPU set count differs from the model's.
-- **Strokes → GPU.** The app pushes a stroke onto `TextureSet::paint.strokes` when the button
-  goes down and appends dabs while it moves. `PaintRenderer::sync` (paint.rs) diffs each set's
-  strokes against what its layer holds by (stroke id, dab count): new dabs on the topmost
-  stroke are painted incrementally on top of a snapshot taken when that stroke started; undone
-  strokes copy back what they painted over (the snapshot for the topmost, budgeted
-  "pre-images" for earlier ones); anything else clears the layer and repaints every stroke.
-  Changed texels are tracked as a `Region` of a few rectangles, not one bounding box. So only ever append dabs to the topmost stroke, give new strokes new
-  ids, and keep everything that shapes the pixels inside the `Stroke` (brush values, camera,
-  hidden objects): replays must give the same result.
-- **Paint layer.** One premultiplied 16-bit float texture per `Channel` (`LAYER_FORMATS`):
-  colors as rgb·coverage + coverage, scalars as value·coverage in r and coverage in g. The
-  composite writes `CHANNEL_FORMATS` 0, 2 and 3 (the normal texture stays flat until the
-  layer stack) and reads each texel's paint from its nearest texel inside a UV island (the
-  jump-flood "seeds"), which pads past seams; then it rebuilds the mips.
+  runs once per frame, after both views handled their input (`views()` in app/views.rs). It
+  recreates a set's GPU state when the resolution changes, syncs its paint layers
+  (`PaintCaches::sync_set`) and composites (`Compositor::composite`). New geometry goes
+  through `set_model`; `render` draws no meshes while the GPU set count differs from the
+  model's.
+- **Strokes → GPU.** The app pushes a stroke onto the target `PaintLayer::strokes` when the
+  button goes down and appends dabs while it moves. `PaintCaches` (paint.rs) diffs each paint
+  layer's strokes against what its tiles hold by (stroke id, dab count): new dabs on the
+  topmost stroke are redrawn over a snapshot of the tiles it touched (copied on first
+  touch); undone strokes copy back what they painted over (the snapshot for the topmost,
+  budgeted "pre-images" for earlier ones); anything else clears the layer and replays every
+  stroke. Paint layers that leave the stack keep their tiles for a while (`ORPHANS_KEPT`),
+  for undo. Changed texels are tracked as a `Region` of a few rectangles, not one bounding
+  box. So only ever append dabs to the topmost stroke, give new strokes new ids, and keep
+  everything that shapes the pixels inside the `Stroke` (brush values, camera, hidden
+  objects): replays must give the same result.
+- **Paint tiles** (tiles.rs). Painted pixels live in sparse 128² tiles in shared pools of
+  2048² array pages (`POOL_FORMATS`: Rgba16Float for colors and normals, Rg16Float for
+  scalars, masks and paint effects), premultiplied: value·coverage plus coverage. Each paint
+  layer has a page table per channel in a storage buffer (`EMPTY` = no paint).
+- **Compositor** (compositor.rs). Composites in 512² chunks plus a 1-texel apron: first the
+  masks of the stack into a mask cache, then each channel's layers onto a 16-bit float
+  accumulator (`composite.wgsl`); isolated folders composite onto an accumulator of their
+  own, passthrough folders blend in place; a resolve pass writes the channel textures and
+  derives the normal from the height; the mips follow. Every texel is evaluated at its
+  "seed" (nearest texel inside a UV island, from a jump flood), which pads past seams. What
+  triggers what: a change of `signature(stack)` (everything but strokes) queues a full
+  composite that runs `CHUNKS_PER_FRAME` chunks per frame (`is_compositing()`; the app
+  repaints while it is true); painted regions composite right away with an 8-texel margin,
+  and the stroke's padding catches up to 64 texels when it ends. While a stroke is in
+  progress, full composites wait. A new pixel-affecting field of a layer must go into
+  `signature`.
+- **Undo of layer edits.** `Command::EditStack` swaps the whole stack; strokes are shared
+  `Arc`s, so the copy is cheap. The app clones the selected set's stack before the panels
+  run (`begin_stack_edits`) and records a step when it changed (`end_stack_edits`), once no
+  button is held and no text field is focused; strokes record their own `AddStroke`. Keep
+  stack edits between those two calls, or commit the pending edit first
+  (`commit_stack_edit`), as undo, redo and new strokes do.
 - **Buffers reused across draws** (stroke params, dabs, apply params) are written with
   `queue.write_buffer` and submitted per draw: writes land before the next `submit`, so
   several draws in one encoder would all see the last write.
@@ -105,11 +135,13 @@ Things that are easy to get wrong:
   sRGB target and hands egui a non-sRGB (`Rgba8Unorm`) view of it; sampling the sRGB view
   makes the viewport look too dark.
 - **Rust ↔ WGSL contracts** break the render without a compile error:
-  `Uniforms`/`TextureSetUniforms` (viewport), `GpuDab`/`StrokeParams`/`ApplyParams`/
-  `FillUniforms`/`DepthCamera` (paint) and `UvUniforms` (2D view) mirror the WGSL structs field
-  for field (vec4/mat4 only; update the size tests); the order of `DisplayMode::ALL` is the
-  `DISPLAY_*` code in viewport.wgsl and uv_view.wgsl; `UvCamera::to_pixel` and `to_clip` in
-  uv_view.wgsl must agree;
+  `Uniforms`/`TextureSetUniforms` (viewport), `GpuDab`/`StrokeParams`/`DepthCamera`/
+  `ApplyParams`/`TileDraw` (paint), `PassUniforms`/`ResolveUniforms`/`GeometryUniforms`
+  (compositor) and `UvUniforms` (2D view) mirror the WGSL structs field for field (vec4/mat4
+  only; update the size tests); `BlendMode::code` is the `BLEND_*` constants in
+  composite.wgsl (checked by `blend_codes_match_the_shader`); the order of
+  `DisplayMode::ALL` is the `DISPLAY_*` code in viewport.wgsl and uv_view.wgsl;
+  `UvCamera::to_pixel` and `to_clip` in uv_view.wgsl must agree;
   the alpha mode rides in `id_color.w`; highlighting uses the draw's first instance (1 =
   highlighted); the panorama mapping (`equirect_uv` in `viewport.wgsl` and
   `ibl_common.wgsl`, its inverse `equirect_direction` in `environment.rs`) and the SH basis
@@ -173,7 +205,9 @@ The snapshot options are listed at the top of `crates/ink_render/examples/snapsh
 model may also be `sphere` or `cube`. `display=` takes a display mode label without spaces,
 case-insensitive (`basecolor`, `ambientocclusion`, …). It also paints test strokes through
 the real paint pipeline (`paint`, `erase`, `uv`, `live=`, `undo`, `nocull`, `nodepth`,
-`set=`, `only=`) and renders the 2D view (`2d`). A small OBJ with two parallel quads in
+`set=`, `only=`), builds layer stacks to check the compositor (`fill=`, `image=`,
+`normalmap=`, `heightmap=`, `triplanar`, `mask`, `levels`, `blend=`, `opacity=`, `folder`,
+`passthrough`, `height`) and renders the 2D view (`2d`). A small OBJ with two parallel quads in
 different materials is the quickest occlusion test.
 
 To check that the app starts on Wayland, install `weston`, run
