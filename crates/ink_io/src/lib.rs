@@ -1,4 +1,6 @@
-//! Model and environment import (and later texture export).
+//! Model and environment import, project files and texture export.
+
+pub mod project;
 
 use anyhow::{Context, Result, bail};
 use glam::{Mat3, Mat4, Vec2, Vec3};

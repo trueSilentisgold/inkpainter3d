@@ -3,6 +3,7 @@
 
 pub mod brush;
 pub mod bvh;
+pub mod export;
 pub mod history;
 pub mod layer;
 pub mod mesh;
