@@ -11,6 +11,9 @@
 //!   connection reads the pressure from XInput2 on a background thread, and it is handed
 //!   to egui as touch events while the pen is the device in use.
 
+// Most of this only runs on Linux.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+
 use eframe::egui;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
