@@ -394,6 +394,20 @@ impl Effect {
         }
     }
 
+    /// A copy with new ids for the effect and its paint layer.
+    pub fn duplicate(&self, ids: &mut Ids) -> Self {
+        let mut copy = self.clone();
+        copy.renew_ids(ids);
+        copy
+    }
+
+    fn renew_ids(&mut self, ids: &mut Ids) {
+        self.id = ids.next();
+        if let EffectKind::Paint(paint) = &mut self.kind {
+            paint.id = ids.next();
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self.kind {
             EffectKind::Paint(_) => "Paint",
@@ -437,12 +451,20 @@ impl Mask {
 }
 
 /// A group of layers.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Folder {
     /// Bottom to top.
     pub layers: Vec<Layer>,
     /// Whether the layer stack shows the children.
     pub expanded: bool,
+}
+
+/// Compares the children only: opening or closing a folder in the panel changes nothing
+/// that undo should record, as in Painter.
+impl PartialEq for Folder {
+    fn eq(&self, other: &Self) -> bool {
+        self.layers == other.layers
+    }
 }
 
 /// What a layer holds.
@@ -549,10 +571,7 @@ impl Layer {
         if let Some(mask) = &mut self.mask {
             mask.paint.id = ids.next();
             for effect in &mut mask.effects {
-                effect.id = ids.next();
-                if let EffectKind::Paint(paint) = &mut effect.kind {
-                    paint.id = ids.next();
-                }
+                effect.renew_ids(ids);
             }
         }
     }
@@ -1002,6 +1021,18 @@ mod tests {
         assert!((levels.apply(0.4) - 0.5).abs() < 1e-6);
         assert_eq!(levels.apply(0.9), 1.0);
         assert_eq!(Levels::default().apply(0.3), 0.3);
+    }
+
+    #[test]
+    fn opening_a_folder_is_no_edit() {
+        let mut ids = Ids::default();
+        let before = stack(&mut ids);
+        let mut after = before.clone();
+        let folder = id_of(&after, "Folder");
+        if let Some(Content::Folder(f)) = after.find_mut(folder).map(|l| &mut l.content) {
+            f.expanded = !f.expanded;
+        }
+        assert_eq!(before, after);
     }
 
     #[test]

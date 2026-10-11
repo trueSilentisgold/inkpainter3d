@@ -63,7 +63,7 @@ pub struct LayersState {
     pub pending: Option<PendingEdit>,
     /// Name of the next recorded edit; set by the action that makes it.
     label: Option<&'static str>,
-    clipboard: Vec<Layer>,
+    clipboard: Clipboard,
     /// Layer being renamed and the name typed so far.
     renaming: Option<(u64, String)>,
     /// Images loaded for fills, offered again in every image slot.
@@ -77,7 +77,7 @@ impl Default for LayersState {
             channel: Channel::BaseColor,
             pending: None,
             label: None,
-            clipboard: Vec::new(),
+            clipboard: Clipboard::Empty,
             renaming: None,
             images: Vec::new(),
         }
@@ -91,6 +91,13 @@ impl LayersState {
         self.label = None;
         self.renaming = None;
     }
+}
+
+/// What Ctrl+C copied: layers, or an effect of a mask.
+enum Clipboard {
+    Empty,
+    Layers(Vec<Layer>),
+    Effect(Effect),
 }
 
 /// Where a dragged layer would land, and the line that shows it.
@@ -349,10 +356,20 @@ impl InkApp {
         }
     }
 
+    /// Copies the selected layers, or the selected effect.
     fn copy_selected(&mut self) {
         let (Some(selection), Some(stack)) = (self.selection(), self.stack()) else {
             return;
         };
+        if let Target::Effect(id) = selection.target {
+            if let Some(effect) = stack
+                .find(selection.layer)
+                .and_then(|l| l.mask.as_ref()?.effect(id))
+            {
+                self.layers.clipboard = Clipboard::Effect(effect.clone());
+            }
+            return;
+        }
         let mut layers: Vec<Layer> = selection
             .layers()
             .into_iter()
@@ -361,13 +378,30 @@ impl InkApp {
         // Bottom to top, so pasting keeps their order.
         let order: Vec<u64> = stack.iter().map(|l| l.id).collect();
         layers.sort_by_key(|l| order.iter().position(|&id| id == l.id));
-        self.layers.clipboard = layers;
+        self.layers.clipboard = Clipboard::Layers(layers);
     }
 
+    fn cut_selected(&mut self) {
+        let effect = self
+            .selection()
+            .is_some_and(|s| matches!(s.target, Target::Effect(_)));
+        self.label(if effect { "Cut effect" } else { "Cut layer" });
+        self.copy_selected();
+        self.delete_selected();
+    }
+
+    /// Pastes copied layers above the selected layer, or a copied effect into the selected
+    /// layer's mask (above the selected effect).
     fn paste(&mut self) {
-        if self.layers.clipboard.is_empty() {
-            return;
-        }
+        let layers = match &self.layers.clipboard {
+            Clipboard::Empty => return,
+            Clipboard::Effect(effect) => {
+                let effect = effect.clone();
+                self.paste_effect(&effect);
+                return;
+            }
+            Clipboard::Layers(layers) => layers.clone(),
+        };
         let anchor = self.selection().map(|s| s.layer);
         let Some(texture_set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
@@ -375,7 +409,7 @@ impl InkApp {
         let stack = &mut texture_set.stack;
         let mut place = stack.place_above(anchor);
         let mut last = None;
-        for layer in &self.layers.clipboard {
+        for layer in &layers {
             let copy = layer.duplicate(&mut self.model.ids);
             last = Some(copy.id);
             if stack.insert(place, copy).is_ok() {
@@ -385,6 +419,46 @@ impl InkApp {
         if let Some(id) = last {
             self.label("Paste layer");
             self.select(Selection::layer(id));
+        }
+    }
+
+    fn paste_effect(&mut self, effect: &Effect) {
+        let Some(selection) = self.selection().cloned() else {
+            return;
+        };
+        self.label("Paste effect");
+        let has_mask = self
+            .stack()
+            .and_then(|s| s.find(selection.layer))
+            .is_some_and(|l| l.mask.is_some());
+        if !has_mask {
+            self.add_mask(selection.layer, 0.0);
+        }
+        let copy = effect.duplicate(&mut self.model.ids);
+        let id = copy.id;
+        let Some(mask) = self.mask_mut(selection.layer) else {
+            return;
+        };
+        let index = match selection.target {
+            Target::Effect(e) => mask
+                .effects
+                .iter()
+                .position(|x| x.id == e)
+                .map_or(mask.effects.len(), |i| i + 1),
+            _ => mask.effects.len(),
+        };
+        mask.effects.insert(index, copy);
+        self.select(Selection {
+            target: Target::Effect(id),
+            ..Selection::layer(selection.layer)
+        });
+    }
+
+    /// Points the selection at the selected layers themselves, not at a mask or effect of
+    /// theirs: the layer context menu acts on layers.
+    fn select_layers_themselves(&mut self) {
+        if let Some(Some(selection)) = self.layers.selections.get_mut(self.selected_set) {
+            selection.target = Target::Content;
         }
     }
 
@@ -476,9 +550,7 @@ impl InkApp {
                 self.copy_selected();
             }
             if over_stack && pressed(Key::X) {
-                self.copy_selected();
-                self.delete_selected();
-                self.layers.label = Some("Cut layer");
+                self.cut_selected();
             }
             if over_stack && pressed(Key::V) {
                 self.paste();
@@ -1139,19 +1211,23 @@ impl InkApp {
                 .clicked()
         };
         if item(ui, "Cut layer", "Ctrl+X") {
-            self.copy_selected();
-            self.delete_selected();
-            self.layers.label = Some("Cut layer");
+            self.select_layers_themselves();
+            self.cut_selected();
             ui.close();
         }
         if item(ui, "Copy layer", "Ctrl+C") {
+            self.select_layers_themselves();
             self.copy_selected();
             ui.close();
         }
+        let paste = match self.layers.clipboard {
+            Clipboard::Effect(_) => "Paste effect",
+            _ => "Paste layer",
+        };
         if ui
             .add_enabled(
-                !self.layers.clipboard.is_empty(),
-                egui::Button::new("Paste layer").shortcut_text("Ctrl+V"),
+                !matches!(self.layers.clipboard, Clipboard::Empty),
+                egui::Button::new(paste).shortcut_text("Ctrl+V"),
             )
             .clicked()
         {
@@ -1163,6 +1239,7 @@ impl InkApp {
             ui.close();
         }
         if item(ui, "Remove layer", "Del") {
+            self.select_layers_themselves();
             self.delete_selected();
             ui.close();
         }
