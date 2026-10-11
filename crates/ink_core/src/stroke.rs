@@ -3,6 +3,7 @@
 
 use crate::brush::{Alpha, BrushMaterial, Tool};
 use glam::{Mat4, Vec2, Vec3};
+use std::sync::Arc;
 
 /// Where a stroke was painted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,7 +68,8 @@ pub struct StrokeCamera {
 /// A brush stroke: the brush settings that shape the pixels, and the dabs.
 #[derive(Clone, Debug)]
 pub struct Stroke {
-    /// Unique within the model; see [`crate::Model::next_stroke_id`].
+    /// Unique within the model; see [`crate::Model::next_id`]. A copy of a paint layer keeps
+    /// the ids of its strokes.
     pub id: u64,
     pub tool: Tool,
     pub space: StrokeSpace,
@@ -100,10 +102,44 @@ impl Stroke {
     }
 }
 
-/// Painted content of a texture set. Becomes one layer of the layer stack later.
-#[derive(Clone, Debug, Default)]
+/// Painted content: of a paint layer, of a mask, or of a paint effect.
+#[derive(Clone, Debug)]
 pub struct PaintLayer {
-    pub strokes: Vec<Stroke>,
+    /// Unique within the model; the renderer keeps the painted pixels under this id.
+    pub id: u64,
+    /// Bottom to top. Shared with copies of the layer stack (undo); only the topmost stroke
+    /// grows, while it is painted.
+    pub strokes: Vec<Arc<Stroke>>,
+}
+
+impl PaintLayer {
+    pub fn new(id: u64) -> Self {
+        Self {
+            id,
+            strokes: Vec::new(),
+        }
+    }
+
+    /// Appends dabs to the topmost stroke if it has this id.
+    pub fn extend_stroke(&mut self, id: u64, dabs: impl IntoIterator<Item = Dab>) {
+        if let Some(stroke) = self.strokes.last_mut().filter(|s| s.id == id) {
+            Arc::make_mut(stroke).dabs.extend(dabs);
+        }
+    }
+}
+
+/// Strokes are never edited, only added and grown, so their ids and dab counts tell
+/// whether two paint layers hold the same paint.
+impl PartialEq for PaintLayer {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.strokes.len() == other.strokes.len()
+            && self
+                .strokes
+                .iter()
+                .zip(&other.strokes)
+                .all(|(a, b)| a.id == b.id && a.dabs.len() == b.dabs.len())
+    }
 }
 
 /// Places dabs along the path of a stroke at a fixed spacing.

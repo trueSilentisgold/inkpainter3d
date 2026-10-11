@@ -1,6 +1,7 @@
+use crate::brush::Channel;
 use crate::bvh::Bvh;
+use crate::layer::LayerStack;
 use crate::mesh::{Aabb, Mesh};
-use crate::stroke::PaintLayer;
 use glam::{Vec2, Vec3};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -27,29 +28,79 @@ pub enum AlphaMode {
     Blend,
 }
 
-/// Uniform channel values. Colors are sRGB.
+/// Uniform channel values. Colors are sRGB; the normal is encoded like a normal map texel.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChannelValues {
     pub base_color: [f32; 3],
-    pub opacity: f32,
+    pub height: f32,
     pub roughness: f32,
     pub metallic: f32,
+    pub normal: [f32; 3],
     pub emissive: [f32; 3],
+    pub opacity: f32,
 }
+
+/// The flat normal, encoded.
+pub const FLAT_NORMAL: [f32; 3] = [0.5, 0.5, 1.0];
 
 impl Default for ChannelValues {
     fn default() -> Self {
         Self {
             base_color: [0.8, 0.8, 0.8],
-            opacity: 1.0,
+            height: 0.0,
             roughness: 0.5,
             metallic: 0.0,
+            normal: FLAT_NORMAL,
             emissive: [0.0; 3],
+            opacity: 1.0,
         }
     }
 }
 
-/// One material slot of the model. Every texture set has its own textures.
+impl ChannelValues {
+    /// A channel's value; scalar channels are repeated in all three components.
+    pub fn get(&self, channel: Channel) -> [f32; 3] {
+        match channel {
+            Channel::BaseColor => self.base_color,
+            Channel::Normal => self.normal,
+            Channel::Emissive => self.emissive,
+            _ => [self.scalar(channel); 3],
+        }
+    }
+
+    fn scalar(&self, channel: Channel) -> f32 {
+        match channel {
+            Channel::Height => self.height,
+            Channel::Roughness => self.roughness,
+            Channel::Metallic => self.metallic,
+            Channel::Opacity => self.opacity,
+            _ => self.get(channel)[0],
+        }
+    }
+
+    /// The value of a scalar channel to edit; None for colors and normals.
+    pub fn scalar_mut(&mut self, channel: Channel) -> Option<&mut f32> {
+        match channel {
+            Channel::Height => Some(&mut self.height),
+            Channel::Roughness => Some(&mut self.roughness),
+            Channel::Metallic => Some(&mut self.metallic),
+            Channel::Opacity => Some(&mut self.opacity),
+            _ => None,
+        }
+    }
+
+    /// The value of a color or normal channel to edit; None for scalars.
+    pub fn vector_mut(&mut self, channel: Channel) -> Option<&mut [f32; 3]> {
+        match channel {
+            Channel::BaseColor => Some(&mut self.base_color),
+            Channel::Normal => Some(&mut self.normal),
+            Channel::Emissive => Some(&mut self.emissive),
+            _ => None,
+        }
+    }
+}
+
+/// One material slot of the model. Every texture set has its own layer stack and textures.
 #[derive(Clone, Debug)]
 pub struct TextureSet {
     /// Material name from the model file; used for export file names.
@@ -58,24 +109,35 @@ pub struct TextureSet {
     /// Texture size in pixels (square).
     pub resolution: u32,
     pub alpha_mode: AlphaMode,
-    /// Content of the channels below the paint; becomes the bottom fill layer of the
-    /// layer stack.
-    pub fill: ChannelValues,
-    pub paint: PaintLayer,
+    pub stack: LayerStack,
 }
 
 impl TextureSet {
     pub const DEFAULT_RESOLUTION: u32 = 2048;
 
-    fn new(name: String) -> Self {
+    fn new(name: String, stack: LayerStack) -> Self {
         Self {
             name,
             visible: true,
             resolution: Self::DEFAULT_RESOLUTION,
             alpha_mode: AlphaMode::default(),
-            fill: ChannelValues::default(),
-            paint: PaintLayer::default(),
+            stack,
         }
+    }
+}
+
+/// Hands out ids that are unique within a model: for strokes, layers, paint layers and
+/// effects.
+#[derive(Clone, Debug, Default)]
+pub struct Ids {
+    last: u64,
+}
+
+impl Ids {
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> u64 {
+        self.last += 1;
+        self.last
     }
 }
 
@@ -106,7 +168,7 @@ pub struct Model {
     pub parts: Vec<Part>,
     /// Built from `mesh`; rebuild it with [`Self::rebuild_bvh`] after changing the geometry.
     bvh: Bvh,
-    last_stroke_id: u64,
+    pub ids: Ids,
 }
 
 /// Result of [`Model::pick`].
@@ -183,10 +245,9 @@ impl Model {
             .sum()
     }
 
-    /// A new id for a [`crate::stroke::Stroke`], unique within this model.
-    pub fn next_stroke_id(&mut self) -> u64 {
-        self.last_stroke_id += 1;
-        self.last_stroke_id
+    /// A new id for a stroke, layer, paint layer or effect, unique within this model.
+    pub fn next_id(&mut self) -> u64 {
+        self.ids.next()
     }
 
     /// Index of the part that contains the triangle.
@@ -270,7 +331,8 @@ pub struct ModelBuilder {
     pub mesh: Mesh,
     objects: Vec<MeshObject>,
     object_lookup: HashMap<String, usize>,
-    texture_sets: Vec<TextureSet>,
+    /// Material names; the texture sets are made in [`Self::build`].
+    materials: Vec<String>,
     set_lookup: HashMap<String, usize>,
     /// Triangles per (object, texture set), in order of first use.
     buckets: Vec<((usize, usize), Vec<u32>)>,
@@ -302,8 +364,8 @@ impl ModelBuilder {
         if let Some(&i) = self.set_lookup.get(material) {
             return i;
         }
-        self.texture_sets.push(TextureSet::new(material.to_owned()));
-        let i = self.texture_sets.len() - 1;
+        self.materials.push(material.to_owned());
+        let i = self.materials.len() - 1;
         self.set_lookup.insert(material.to_owned(), i);
         i
     }
@@ -327,7 +389,7 @@ impl ModelBuilder {
         let Self {
             mut mesh,
             objects,
-            texture_sets,
+            materials,
             buckets,
             ..
         } = self;
@@ -336,8 +398,8 @@ impl ModelBuilder {
         let mut used_sets: Vec<usize> = buckets.iter().map(|((_, s), _)| *s).collect();
         used_sets.sort_unstable();
         used_sets.dedup();
-        used_sets.sort_by_cached_key(|&s| texture_sets[s].name.to_lowercase());
-        let mut set_map = vec![usize::MAX; texture_sets.len()];
+        used_sets.sort_by_cached_key(|&s| materials[s].to_lowercase());
+        let mut set_map = vec![usize::MAX; materials.len()];
         for (new, &old) in used_sets.iter().enumerate() {
             set_map[old] = new;
         }
@@ -385,19 +447,21 @@ impl ModelBuilder {
             })
             .collect();
 
+        let mut ids = Ids::default();
+        let texture_sets = used_sets
+            .into_iter()
+            .map(|s| TextureSet::new(materials[s].clone(), LayerStack::new_default(&mut ids)))
+            .collect();
         Model {
             name,
             bvh: Bvh::new(&mesh),
-            last_stroke_id: 0,
+            ids,
             mesh,
             objects: used_objects
                 .into_iter()
                 .map(|o| objects[o].clone())
                 .collect(),
-            texture_sets: used_sets
-                .into_iter()
-                .map(|s| texture_sets[s].clone())
-                .collect(),
+            texture_sets,
             parts,
         }
     }

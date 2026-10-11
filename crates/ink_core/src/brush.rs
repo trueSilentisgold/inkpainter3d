@@ -12,22 +12,38 @@ pub enum Tool {
     Erase,
 }
 
-/// Texture set channels a brush can paint. The order is the order of the paint layer
-/// textures on the GPU.
+/// Texture set channels: what layers and brushes paint. The order is Painter's and the
+/// order of the channel textures on the GPU.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Channel {
     BaseColor,
+    Height,
     Roughness,
     Metallic,
+    Normal,
     Emissive,
     Opacity,
 }
 
+/// How a channel's values are stored and blended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelKind {
+    /// An sRGB color (base color, emissive), blended in linear space.
+    Color,
+    /// A single linear value.
+    Scalar,
+    /// A tangent-space normal, encoded like a normal map texel (0.5, 0.5, 1 is flat).
+    Normal,
+}
+
 impl Channel {
-    pub const ALL: [Self; 5] = [
+    pub const COUNT: usize = 7;
+    pub const ALL: [Self; Self::COUNT] = [
         Self::BaseColor,
+        Self::Height,
         Self::Roughness,
         Self::Metallic,
+        Self::Normal,
         Self::Emissive,
         Self::Opacity,
     ];
@@ -35,16 +51,39 @@ impl Channel {
     pub fn label(self) -> &'static str {
         match self {
             Self::BaseColor => "Base color",
+            Self::Height => "Height",
             Self::Roughness => "Roughness",
             Self::Metallic => "Metallic",
+            Self::Normal => "Normal",
             Self::Emissive => "Emissive",
             Self::Opacity => "Opacity",
         }
     }
 
-    /// Color channels hold sRGB colors, the others a single linear value.
+    /// The short names on Painter's material buttons.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::BaseColor => "color",
+            Self::Height => "height",
+            Self::Roughness => "rough",
+            Self::Metallic => "metal",
+            Self::Normal => "nrm",
+            Self::Emissive => "emiss",
+            Self::Opacity => "op",
+        }
+    }
+
+    pub fn kind(self) -> ChannelKind {
+        match self {
+            Self::BaseColor | Self::Emissive => ChannelKind::Color,
+            Self::Normal => ChannelKind::Normal,
+            _ => ChannelKind::Scalar,
+        }
+    }
+
+    /// Color channels hold sRGB colors, the others linear data.
     pub fn is_color(self) -> bool {
-        matches!(self, Self::BaseColor | Self::Emissive)
+        self.kind() == ChannelKind::Color
     }
 
     pub fn index(self) -> usize {
@@ -87,6 +126,8 @@ pub struct BrushMaterial {
     pub channels: ChannelSet,
     /// Colors are sRGB.
     pub values: ChannelValues,
+    /// The value painted into masks, 0 (black) to 1 (white).
+    pub grayscale: f32,
 }
 
 impl Default for BrushMaterial {
@@ -95,11 +136,10 @@ impl Default for BrushMaterial {
             channels: ChannelSet::ALL,
             values: ChannelValues {
                 base_color: [1.0; 3],
-                opacity: 1.0,
                 roughness: 0.3,
-                metallic: 0.0,
-                emissive: [0.0; 3],
+                ..ChannelValues::default()
             },
+            grayscale: 1.0,
         }
     }
 }

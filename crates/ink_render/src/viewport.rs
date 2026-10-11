@@ -205,7 +205,6 @@ pub(crate) struct GpuMesh {
 
 struct GpuTextureSet {
     resolution: u32,
-    fill: ChannelValues,
     alpha_mode: AlphaMode,
     /// Channel textures with mips, in `CHANNEL_FORMATS` order.
     textures: Vec<wgpu::Texture>,
@@ -643,14 +642,10 @@ impl ViewportRenderer {
             let uniforms = TextureSetUniforms {
                 id_color: id_color(index, set.alpha_mode),
             };
-            let mut fill_changed = false;
+            let fill_changed = false;
             if let Some(gpu) = self.sets.get_mut(index)
                 && gpu.resolution == set.resolution
             {
-                if gpu.fill != set.fill {
-                    gpu.fill = set.fill;
-                    fill_changed = true;
-                }
                 if gpu.alpha_mode != set.alpha_mode {
                     gpu.alpha_mode = set.alpha_mode;
                     queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -677,7 +672,7 @@ impl ViewportRenderer {
                 )
             });
             if fill_changed && !painted {
-                fill_channels(device, queue, &gpu.textures, &set.fill);
+                fill_channels(device, queue, &gpu.textures, &ChannelValues::default());
             }
         }
     }
@@ -711,7 +706,7 @@ impl ViewportRenderer {
                 })
             })
             .collect();
-        fill_channels(device, queue, &textures, &set.fill);
+        fill_channels(device, queue, &textures, &ChannelValues::default());
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("texture set uniforms"),
             contents: bytemuck::bytes_of(uniforms),
@@ -742,7 +737,6 @@ impl ViewportRenderer {
         });
         GpuTextureSet {
             resolution: set.resolution,
-            fill: set.fill,
             alpha_mode: set.alpha_mode,
             textures,
             uniforms: uniform_buffer,

@@ -97,6 +97,8 @@ impl PaintState {
 struct ActiveStroke {
     view: View,
     set: usize,
+    /// The paint layer (of a layer, mask or paint effect) the stroke goes into.
+    paint: u64,
     id: u64,
     path: StrokePath,
     /// The brush as the stroke started; switching tools or settings mid-stroke doesn't
@@ -316,12 +318,30 @@ impl InkApp {
         }
     }
 
-    /// Adds a stroke with the brush on the selected texture set.
-    fn new_stroke(&mut self, view: View, rect: egui::Rect, brush: &Brush) -> Option<(usize, u64)> {
+    /// The paint layer strokes go into: the topmost one of the selected texture set.
+    fn paint_target(&self) -> Option<(usize, u64)> {
         let set = self.selected_set;
-        self.model.texture_sets.get(set)?;
+        let paint = self
+            .model
+            .texture_sets
+            .get(set)?
+            .stack
+            .paint_layers()
+            .last()?
+            .id;
+        Some((set, paint))
+    }
+
+    /// Adds a stroke with the brush to the paint target.
+    fn new_stroke(
+        &mut self,
+        view: View,
+        rect: egui::Rect,
+        brush: &Brush,
+    ) -> Option<(usize, u64, u64)> {
+        let (set, paint) = self.paint_target()?;
         let stroke = Stroke {
-            id: self.model.next_stroke_id(),
+            id: self.model.next_id(),
             tool: self.paint.tool,
             space: match view {
                 View::Model => StrokeSpace::Surface,
@@ -345,19 +365,23 @@ impl InkApp {
             dabs: Vec::new(),
         };
         let id = stroke.id;
-        self.model.texture_sets[set].paint.strokes.push(stroke);
-        Some((set, id))
+        self.model.texture_sets[set]
+            .stack
+            .paint_mut(paint)?
+            .strokes
+            .push(Arc::new(stroke));
+        Some((set, paint, id))
     }
 
-    fn push_dabs(&mut self, set: usize, dabs: Vec<Dab>) {
-        if let Some(stroke) = self.model.texture_sets[set].paint.strokes.last_mut() {
-            stroke.dabs.extend(dabs);
+    fn push_dabs(&mut self, set: usize, paint: u64, id: u64, dabs: Vec<Dab>) {
+        if let Some(layer) = self.model.texture_sets[set].stack.paint_mut(paint) {
+            layer.extend_stroke(id, dabs);
         }
     }
 
     fn begin_stroke(&mut self, view: View, rect: egui::Rect, p: Vec2) {
         let brush = self.paint.brush().clone();
-        let Some((set, id)) = self.new_stroke(view, rect, &brush) else {
+        let Some((set, paint, id)) = self.new_stroke(view, rect, &brush) else {
             return;
         };
         let mut dabs = Vec::new();
@@ -373,10 +397,11 @@ impl InkApp {
                 &mut dabs,
             )
         };
-        self.push_dabs(set, dabs);
+        self.push_dabs(set, paint, id, dabs);
         self.paint.stroke = Some(ActiveStroke {
             view,
             set,
+            paint,
             id,
             path,
             brush,
@@ -394,19 +419,22 @@ impl InkApp {
                 .path
                 .move_to(p, self.paint.pressure, &project, &mut dabs);
         }
-        self.push_dabs(active.set, dabs);
+        self.push_dabs(active.set, active.paint, active.id, dabs);
         self.paint.stroke = Some(active);
     }
 
     fn end_stroke(&mut self) {
         if let Some(active) = self.paint.stroke.take() {
-            self.finish_stroke(active.set, active.id);
+            self.finish_stroke(active.set, active.paint, active.id);
         }
     }
 
     /// Records a finished stroke for undo and remembers where it ended for Shift+click.
-    fn finish_stroke(&mut self, set: usize, id: u64) {
-        let strokes = &mut self.model.texture_sets[set].paint.strokes;
+    fn finish_stroke(&mut self, set: usize, paint: u64, id: u64) {
+        let Some(layer) = self.model.texture_sets[set].stack.paint_mut(paint) else {
+            return;
+        };
+        let strokes = &mut layer.strokes;
         let Some(stroke) = strokes.last().filter(|s| s.id == id) else {
             return;
         };
@@ -416,7 +444,7 @@ impl InkApp {
                     StrokeSpace::Surface => LineStart::Surface(end.position),
                     StrokeSpace::Uv => LineStart::Uv(end.position.truncate()),
                 });
-                self.history.record(Command::add_stroke(set, id));
+                self.history.record(Command::add_stroke(set, paint, id));
             }
             // Nothing was hit; leave no empty step in the history.
             None => {
@@ -428,7 +456,7 @@ impl InkApp {
     /// Shift+click: a straight stroke from the end of the last one.
     fn paint_line(&mut self, view: View, rect: egui::Rect, from: Vec2, to: Vec2) {
         let brush = self.paint.brush().clone();
-        let Some((set, id)) = self.new_stroke(view, rect, &brush) else {
+        let Some((set, paint, id)) = self.new_stroke(view, rect, &brush) else {
             return;
         };
         let mut dabs = Vec::new();
@@ -439,8 +467,8 @@ impl InkApp {
                 StrokePath::start(from, pressure, brush.spacing, 0.0, &project, &mut dabs);
             path.line_to(to, pressure, &project, &mut dabs);
         }
-        self.push_dabs(set, dabs);
-        self.finish_stroke(set, id);
+        self.push_dabs(set, paint, id, dabs);
+        self.finish_stroke(set, paint, id);
     }
 
     fn adjust_brush(&mut self, p: Vec2) {
@@ -855,20 +883,7 @@ impl InkApp {
                     }
                     if tool == Tool::Paint {
                         ui.add_enabled_ui(on, |ui| {
-                            let values = &mut material.values;
-                            match channel {
-                                Channel::BaseColor => super::srgb_edit(ui, &mut values.base_color),
-                                Channel::Emissive => super::srgb_edit(ui, &mut values.emissive),
-                                Channel::Roughness => {
-                                    ui.add(egui::Slider::new(&mut values.roughness, 0.0..=1.0))
-                                }
-                                Channel::Metallic => {
-                                    ui.add(egui::Slider::new(&mut values.metallic, 0.0..=1.0))
-                                }
-                                Channel::Opacity => {
-                                    ui.add(egui::Slider::new(&mut values.opacity, 0.0..=1.0))
-                                }
-                            };
+                            super::channel_value_edit(ui, &mut material.values, channel);
                         });
                     } else {
                         ui.label("");

@@ -66,18 +66,6 @@ fn main() -> Result<()> {
         "cube" => Model::from_mesh(Mesh::cube(1.5)),
         path => ink_io::load_model(Path::new(path))?,
     };
-    for set in &mut model.texture_sets {
-        if let Some(r) = float("rough")? {
-            set.fill.roughness = r;
-        }
-        if let Some(m) = float("metal")? {
-            set.fill.metallic = m;
-        }
-        if let Some(c) = option("color") {
-            let c: Vec<f32> = c.split(',').map(str::parse).collect::<Result<_, _>>()?;
-            set.fill.base_color = [c[0], c[1], c[2]];
-        }
-    }
     if let Some(res) = option("res") {
         let res: u32 = res.parse()?;
         for set in &mut model.texture_sets {
@@ -184,7 +172,7 @@ fn main() -> Result<()> {
             dabs.len()
         );
         let stroke = Stroke {
-            id: model.next_stroke_id(),
+            id: model.next_id(),
             tool,
             space,
             alpha: brush.alpha.clone(),
@@ -198,10 +186,12 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             dabs: Vec::new(),
         };
-        model.texture_sets[set].paint.strokes.push(stroke);
+        let (stroke_id, paint) = (stroke.id, paint_id(&model, set));
+        let layer = model.texture_sets[set].stack.paint_mut(paint).unwrap();
+        layer.strokes.push(std::sync::Arc::new(stroke));
         for chunk in dabs.chunks(live) {
-            let stroke = model.texture_sets[set].paint.strokes.last_mut().unwrap();
-            stroke.dabs.extend_from_slice(chunk);
+            let layer = model.texture_sets[set].stack.paint_mut(paint).unwrap();
+            layer.extend_stroke(stroke_id, chunk.iter().copied());
             renderer.sync_texture_sets(&device, &queue, &model, true);
         }
     }
@@ -215,7 +205,13 @@ fn main() -> Result<()> {
         None => flag("undo") as usize,
     };
     for _ in 0..undo {
-        model.texture_sets[set].paint.strokes.pop();
+        let paint = paint_id(&model, set);
+        model.texture_sets[set]
+            .stack
+            .paint_mut(paint)
+            .unwrap()
+            .strokes
+            .pop();
     }
     if undo > 0 {
         eprintln!("Undid {undo} strokes");
@@ -300,4 +296,14 @@ fn main() -> Result<()> {
         .save(out_path)?;
     eprintln!("Wrote {out_path}");
     Ok(())
+}
+
+/// The topmost paint layer of a texture set.
+fn paint_id(model: &Model, set: usize) -> u64 {
+    model.texture_sets[set]
+        .stack
+        .paint_layers()
+        .last()
+        .expect("a paint layer")
+        .id
 }

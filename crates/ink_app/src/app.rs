@@ -445,34 +445,6 @@ impl InkApp {
                     });
                 ui.end_row();
             });
-
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("Fill (until the layer stack arrives)")
-                .small()
-                .weak(),
-        );
-        let fill = &mut set.fill;
-        egui::Grid::new("fill")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Base color");
-                srgb_edit(ui, &mut fill.base_color);
-                ui.end_row();
-                ui.label("Roughness");
-                ui.add(egui::Slider::new(&mut fill.roughness, 0.0..=1.0));
-                ui.end_row();
-                ui.label("Metallic");
-                ui.add(egui::Slider::new(&mut fill.metallic, 0.0..=1.0));
-                ui.end_row();
-                ui.label("Emissive");
-                srgb_edit(ui, &mut fill.emissive);
-                ui.end_row();
-                ui.label("Opacity");
-                ui.add(egui::Slider::new(&mut fill.opacity, 0.0..=1.0));
-                ui.end_row();
-            });
     }
 
     fn display_settings(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
@@ -693,6 +665,32 @@ fn alpha_label(mode: AlphaMode) -> &'static str {
         AlphaMode::Opaque => "Opaque",
         AlphaMode::Test => "Alpha test",
         AlphaMode::Blend => "Alpha blend",
+    }
+}
+
+/// Edits one channel of uniform channel values: a color button, a normal or a slider.
+fn channel_value_edit(
+    ui: &mut egui::Ui,
+    values: &mut ink_core::ChannelValues,
+    channel: ink_core::Channel,
+) -> egui::Response {
+    use ink_core::ChannelKind;
+    match channel.kind() {
+        ChannelKind::Color => srgb_edit(ui, values.vector_mut(channel).expect("color channel")),
+        ChannelKind::Normal => {
+            // Encoded like a normal map texel, shown as such.
+            let normal = values.vector_mut(channel).expect("normal channel");
+            ui.color_edit_button_rgb(normal)
+        }
+        ChannelKind::Scalar => {
+            let range = if channel == ink_core::Channel::Height {
+                -1.0..=1.0
+            } else {
+                0.0..=1.0
+            };
+            let value = values.scalar_mut(channel).expect("scalar channel");
+            ui.add(egui::Slider::new(value, range))
+        }
     }
 }
 

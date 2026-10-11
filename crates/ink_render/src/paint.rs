@@ -754,7 +754,11 @@ impl PaintRenderer {
         stroke_in_progress: bool,
     ) -> bool {
         let texture_set = &model.texture_sets[set];
-        let strokes = &texture_set.paint.strokes;
+        let strokes: &[std::sync::Arc<Stroke>] = texture_set
+            .stack
+            .paint_layers()
+            .next()
+            .map_or(&[], |p| &p.strokes);
         if paint.is_none() {
             if strokes.is_empty() {
                 return false;
@@ -769,7 +773,7 @@ impl PaintRenderer {
             queue.write_buffer(
                 &paint.fill_buffer,
                 0,
-                bytemuck::bytes_of(&FillUniforms::new(&texture_set.fill)),
+                bytemuck::bytes_of(&FillUniforms::new(&ChannelValues::default())),
             );
         }
 
@@ -967,7 +971,7 @@ impl PaintRenderer {
         queue.write_buffer(
             &fill_buffer,
             0,
-            bytemuck::bytes_of(&FillUniforms::new(&model.texture_sets[set].fill)),
+            bytemuck::bytes_of(&FillUniforms::new(&ChannelValues::default())),
         );
         let mut entries = vec![
             wgpu::BindGroupEntry {
@@ -1471,12 +1475,13 @@ impl PaintRenderer {
                 Channel::Roughness => [values.roughness, 1.0, 0.0],
                 Channel::Metallic => [values.metallic, 1.0, 0.0],
                 Channel::Opacity => [values.opacity, 1.0, 0.0],
+                Channel::Height | Channel::Normal => continue,
             };
             let params = ApplyParams {
                 value: [value[0], value[1], value[2], 0.0],
                 info: [stroke.opacity, 0.0, 0.0, 0.0],
             };
-            let offset = channel.index() * APPLY_STRIDE as usize;
+            let offset = old_slot(channel).unwrap_or(0) * APPLY_STRIDE as usize;
             bytes[offset..offset + size_of::<ApplyParams>()]
                 .copy_from_slice(bytemuck::bytes_of(&params));
         }
@@ -1506,10 +1511,13 @@ impl PaintRenderer {
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         for channel in stroke.material.channels.iter() {
+            let Some(slot) = old_slot(channel) else {
+                continue;
+            };
             let format = usize::from(!channel.is_color());
-            let mut pass = begin_pass(&mut encoder, &paint.layer_views[channel.index()], None);
+            let mut pass = begin_pass(&mut encoder, &paint.layer_views[slot], None);
             pass.set_pipeline(&self.apply[format][tool]);
-            pass.set_bind_group(0, &group, &[(channel.index() as u64 * APPLY_STRIDE) as u32]);
+            pass.set_bind_group(0, &group, &[(slot as u64 * APPLY_STRIDE) as u32]);
             for rect in &region.rects {
                 rect.scissor(&mut pass);
                 pass.draw(0..3, 0..1);
@@ -1748,6 +1756,18 @@ impl PaintRenderer {
     }
 }
 
+/// Temporary: the paint layer texture of a channel, until the layer stack compositor.
+fn old_slot(channel: Channel) -> Option<usize> {
+    match channel {
+        Channel::BaseColor => Some(0),
+        Channel::Roughness => Some(1),
+        Channel::Metallic => Some(2),
+        Channel::Emissive => Some(3),
+        Channel::Opacity => Some(4),
+        Channel::Height | Channel::Normal => None,
+    }
+}
+
 /// Copies `rect` of `to`'s size from `from` at `origin` into `to` at the rectangle's place.
 fn copy_rect(
     encoder: &mut wgpu::CommandEncoder,
@@ -1869,10 +1889,11 @@ mod tests {
         assert_eq!(size_of::<DepthCamera>(), 96);
         assert_eq!(size_of::<FillUniforms>(), 48);
         assert!(size_of::<ApplyParams>() as u64 <= APPLY_STRIDE);
-        assert_eq!(LAYER_FORMATS.len(), Channel::ALL.len());
         for channel in Channel::ALL {
-            let components = LAYER_FORMATS[channel.index()].components();
-            assert_eq!(components == 4, channel.is_color(), "{channel:?}");
+            if let Some(slot) = old_slot(channel) {
+                let components = LAYER_FORMATS[slot].components();
+                assert_eq!(components == 4, channel.is_color(), "{channel:?}");
+            }
         }
     }
 
