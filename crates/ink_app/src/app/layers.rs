@@ -196,7 +196,7 @@ impl InkApp {
     // ---- Undo of stack edits ----
 
     /// Remembers the selected set's stack before the panels that edit it run.
-    pub(super) fn begin_stack_edits(&mut self) -> Option<LayerStack> {
+    pub(super) fn begin_stack_edits(&mut self) -> Option<(usize, LayerStack)> {
         if self
             .layers
             .pending
@@ -208,17 +208,22 @@ impl InkApp {
         if self.layers.pending.is_some() {
             return None;
         }
-        self.stack().cloned()
+        Some((self.selected_set, self.stack()?.clone()))
     }
 
     /// Records what the panels changed as one undo step, once the interaction that made
     /// the change is over (no button held, no text being typed).
-    pub(super) fn end_stack_edits(&mut self, ui: &egui::Ui, before: Option<LayerStack>) {
-        if let Some(before) = before
-            && self.stack().is_some_and(|stack| *stack != before)
+    pub(super) fn end_stack_edits(&mut self, ui: &egui::Ui, before: Option<(usize, LayerStack)>) {
+        // Compared with the same set: the panels may have selected another one meanwhile.
+        if let Some((set, before)) = before
+            && self
+                .model
+                .texture_sets
+                .get(set)
+                .is_some_and(|s| s.stack != before)
         {
             self.layers.pending = Some(PendingEdit {
-                set: self.selected_set,
+                set,
                 before,
                 label: self.layers.label.unwrap_or("Edit layers").to_owned(),
             });
