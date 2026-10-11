@@ -164,8 +164,9 @@ Things that are easy to get wrong:
   Ink), injected by `pen.rs` in `raw_input_hook` on Linux. On Wayland the pen reaches the app
   only through the tablet protocol, so `pen.rs` also injects its pointer events; on X11 the
   pen moves the pointer itself and `pen.rs` only adds the pressure.
-- **Tests never touch a GPU.** wgpu validation errors (layouts, formats, pipeline state)
-  only show at runtime: after any renderer change, run the snapshot example (below).
+- **Unit tests never touch a GPU.** wgpu validation errors (layouts, formats, pipeline
+  state) only show at runtime: after any renderer change, run `scripts/gpu-smoke.sh`
+  (below), which CI runs too, and render what the change affects with the snapshot example.
 
 The architecture decisions for what comes next are settled; read `docs/FEATURES.md` →
 "Architektur-Entscheidungen" before building the brush engine, layer stack, project files or
@@ -188,7 +189,14 @@ cargo build --release
 ```
 
 Keep `--workspace`: `default-members` is `ink_app`, which has no tests, so a bare
-`cargo test` or `cargo clippy` silently skips the library crates.
+`cargo test` or `cargo clippy` silently skips the library crates. CI uses the latest stable
+Rust, whose Clippy may know lints your toolchain doesn't; `rustup toolchain install` it if
+CI fails on one.
+
+CI also runs `scripts/gpu-smoke.sh` on software Vulkan: it renders the snapshot example's
+standard cases (painting, undo, occlusion, masks, blending, normal maps, projections) and
+checks a few pixels of each. Add a case when you add something the renderer must keep
+doing; its test images live in `crates/ink_render/examples/testdata/`.
 
 ## Seeing the app without a display
 
@@ -207,7 +215,8 @@ case-insensitive (`basecolor`, `ambientocclusion`, …). It also paints test str
 the real paint pipeline (`paint`, `erase`, `uv`, `live=`, `undo`, `nocull`, `nodepth`,
 `set=`, `only=`), builds layer stacks to check the compositor (`fill=`, `image=`,
 `normalmap=`, `heightmap=`, `triplanar`, `mask`, `levels`, `blend=`, `opacity=`, `folder`,
-`passthrough`, `height`) and renders the 2D view (`2d`). A small OBJ with two parallel quads in
+`passthrough`, `height`, `rotate=`, `nblend=`, `nopacity=`), renders the 2D view (`2d`) and
+prints pixels for scripted checks (`probe=x,y`). A small OBJ with two parallel quads in
 different materials is the quickest occlusion test.
 
 To check that the app starts on Wayland, install `weston`, run

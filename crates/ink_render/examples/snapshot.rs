@@ -26,7 +26,11 @@
 //! `live=10` (paints in chunks of 10 dabs like the app does), `undo` or `undo=2` (removes
 //! the last strokes again), `nocull` (paints surfaces facing away too), `nodepth` (paints hidden
 //! surfaces too), `set=Name` (texture set to paint; default: the one in the middle),
-//! `only=Name` (shows only this texture set after painting). `2d` renders the 2D (UV) view of the painted texture set instead.
+//! `only=Name` (shows only this texture set after painting). `2d` renders the 2D (UV) view
+//! of the painted texture set instead.
+//!
+//! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
+//! for scripted checks (scripts/gpu-smoke.sh).
 
 use anyhow::{Context, Result};
 use glam::Vec2;
@@ -331,10 +335,17 @@ fn main() -> Result<()> {
         let start = y * row as usize;
         pixels.extend_from_slice(&data[start..start + SIZE[0] as usize * 4]);
     }
-    image::RgbaImage::from_raw(SIZE[0], SIZE[1], pixels)
-        .context("image size")?
-        .save(out_path)?;
+    let image = image::RgbaImage::from_raw(SIZE[0], SIZE[1], pixels).context("image size")?;
+    image.save(out_path)?;
     eprintln!("Wrote {out_path}");
+    for probe in args[3..].iter().filter_map(|a| a.strip_prefix("probe=")) {
+        let (x, y) = probe
+            .split_once(',')
+            .with_context(|| format!("probe={probe} is not x,y"))?;
+        let (x, y): (u32, u32) = (x.parse()?, y.parse()?);
+        let [r, g, b, _] = image.get_pixel(x, y).0;
+        println!("probe {x} {y} {r} {g} {b}");
+    }
     Ok(())
 }
 

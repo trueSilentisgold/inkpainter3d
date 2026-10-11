@@ -30,3 +30,22 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo build --release
+
+  gpu-smoke:
+    # The renderer on software Vulkan (lavapipe): wgpu validation and pixel checks that the
+    # unit tests can't do. See scripts/gpu-smoke.sh.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers libvulkan1 libxkbcommon-dev libwayland-dev libx11-dev
+      - run: scripts/gpu-smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: gpu-smoke-renders
+          path: target/gpu-smoke/
