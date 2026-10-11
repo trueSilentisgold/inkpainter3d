@@ -6,7 +6,7 @@ inkpainter3d lets you paint directly onto 3D models with a layer-based, non-dest
 and export the result as texture maps for game engines and renderers. It runs natively on
 **Windows and Linux** and will always be **free**.
 
-> **Status:** early development. Milestone 1 (viewport and model import) is done; painting is next.
+> **Status:** early development. Phase 1 (viewport and model import) is done; next are texture sets and the material foundation.
 
 ---
 
@@ -47,16 +47,22 @@ See the [roadmap](#roadmap).
 
 ## Roadmap
 
-| # | Milestone | Status |
+The goal is feature parity with Substance 3D Painter for everyday work: same concepts, same
+terms, same shortcuts. The full feature catalog with priorities lives in
+[docs/FEATURES.md](docs/FEATURES.md) (German).
+
+| # | Phase | Status |
 |---|---|---|
 | 1 | **Viewport** — model import (FBX, glTF, OBJ), PBR and stylized shading, camera | ✅ done |
-| 2 | **Brush engine** — paint directly on the model via GPU projection, tablet pressure and tilt, brush spacing and smoothing | ⏳ next |
-| 3 | **Layer stack** — paint and fill layers, opacity, blend modes, masks, groups, undo/redo | |
-| 4 | **Channels and export** — roughness, metallic, normal, height; PNG/EXR export with presets for Unreal, Unity, Godot, Blender | |
-| 5 | **Stylized tools** — ink channel, more toon controls, smoothed outline normals | |
-| 6 | **Vector layers** — editable paths anchored on the surface, shapes, stroke styles, SVG decals | |
-| 7 | **Baking and smart materials** — AO, curvature, ID and normal maps; generators such as edge wear | |
-| 8 | **Releases** — installers for Windows, AppImage / Flatpak for Linux | |
+| 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures, HDRI lighting, Painter-style navigation | ⏳ next |
+| 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo | |
+| 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | |
+| 5 | **Project and export** — project file, export templates for Unreal, Unity, Godot, Blender, glTF | |
+| 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
+| 7 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
+| 8 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points, 2D view | |
+| 9 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
+| 10 | **Polish** — UDIM, smudge and clone, path tools, post effects, Python API, installers (AppImage / Flatpak, Windows) | |
 
 ## Building
 
