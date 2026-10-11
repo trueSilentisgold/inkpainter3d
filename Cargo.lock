@@ -1226,6 +1226,7 @@ dependencies = [
  "rfd",
  "wayland-backend",
  "wayland-client",
+ "wayland-cursor",
  "wayland-protocols",
  "x11rb",
 ]

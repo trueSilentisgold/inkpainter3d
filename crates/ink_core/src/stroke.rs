@@ -82,15 +82,16 @@ pub struct Stroke {
     pub camera: Option<StrokeCamera>,
     /// Objects that were hidden while painting: they get no paint and hide nothing.
     pub hidden_objects: Vec<usize>,
-    /// Texture sets that were hidden while painting: they hide nothing.
+    /// Texture sets that were hidden while painting: they get no paint and hide nothing.
     pub hidden_sets: Vec<usize>,
     pub dabs: Vec<Dab>,
 }
 
 impl Stroke {
     /// Whether the stroke paints the part's triangles (if they are in its texture set).
+    /// Hidden objects and texture sets get no paint.
     pub fn paints(&self, part: &crate::Part) -> bool {
-        !self.hidden_objects.contains(&part.object)
+        !self.hidden_objects.contains(&part.object) && !self.hidden_sets.contains(&part.texture_set)
     }
 
     /// Whether the part hid what lay behind it when the stroke was painted.
@@ -155,7 +156,8 @@ impl DabSpacer {
         for _ in 0..Self::MAX_DABS_PER_SEGMENT {
             let here = last.lerp(&point, t);
             let step = (self.spacing * 2.0 * here.radius).max(length * 1e-4);
-            let need = step - self.travelled;
+            // A dab that is already overdue (the radius shrank) goes here, not behind us.
+            let need = (step - self.travelled).max(0.0);
             let remaining = (1.0 - t) * length;
             if need > remaining {
                 self.travelled += remaining;
@@ -263,6 +265,9 @@ pub struct StrokePath {
     spacer: DabSpacer,
     /// Brush position and pressure after the last step.
     brush: (Vec2, f32),
+    /// Screen position and pressure of the last point the spacer got; None after the path
+    /// left the surface.
+    last: Option<(Vec2, f32)>,
     /// Longest screen step between projections, in pixels.
     pub screen_step: f32,
 }
@@ -284,10 +289,11 @@ impl StrokePath {
             lazy,
             spacer: DabSpacer::new(spacing),
             brush: (pointer, pressure),
+            last: None,
             screen_step: 2.0,
         };
         match project(pointer, pressure) {
-            Some(dab) => path.spacer.add(dab, out),
+            Some(dab) => path.feed(pointer, pressure, dab, &mut project, out, 0),
             None => path.spacer.break_path(),
         }
         path
@@ -338,11 +344,53 @@ impl StrokePath {
         for (i, point) in steps.enumerate().skip(1) {
             let p = from_pressure + (pressure - from_pressure) * (i as f32 / count);
             match project(point, p) {
-                Some(dab) => self.spacer.add(dab, out),
-                None => self.spacer.break_path(),
+                Some(dab) => self.feed(point, p, dab, &mut project, out, Self::REFINE_DEPTH),
+                None => {
+                    self.spacer.break_path();
+                    self.last = None;
+                }
             }
         }
         self.brush = (target, pressure);
+    }
+
+    /// How often a screen step is halved to tell a continuous surface from a jump.
+    const REFINE_DEPTH: u32 = 10;
+
+    /// Hands the dab at screen point `b` to the spacer. If it lies further from the previous
+    /// point than the brush is wide, the step is halved until the surface in between is
+    /// known: small brushes and steep surfaces then still get evenly spaced dabs, and only
+    /// a real jump (a silhouette) starts a new path.
+    fn feed(
+        &mut self,
+        b: Vec2,
+        b_pressure: f32,
+        dab: Dab,
+        project: &mut impl FnMut(Vec2, f32) -> Option<Dab>,
+        out: &mut Vec<Dab>,
+        depth: u32,
+    ) {
+        if let (Some(previous), Some((a, a_pressure))) = (self.spacer.last().copied(), self.last)
+            && depth > 0
+            && previous.position.distance(dab.position) > 2.0 * previous.radius.max(dab.radius)
+        {
+            let middle = (a + b) * 0.5;
+            let middle_pressure = (a_pressure + b_pressure) * 0.5;
+            match project(middle, middle_pressure) {
+                Some(m) => {
+                    self.feed(middle, middle_pressure, m, project, out, depth - 1);
+                    self.feed(b, b_pressure, dab, project, out, depth - 1);
+                }
+                None => {
+                    self.spacer.break_path();
+                    self.spacer.add(dab, out);
+                    self.last = Some((b, b_pressure));
+                }
+            }
+            return;
+        }
+        self.spacer.add(dab, out);
+        self.last = Some((b, b_pressure));
     }
 }
 
@@ -492,6 +540,52 @@ mod tests {
         // Pressure is interpolated along the way.
         assert!(dabs.last().unwrap().flow > 0.95);
         assert!(dabs[3].flow > 0.5 && dabs[3].flow < 0.7);
+    }
+
+    #[test]
+    fn small_brushes_stay_continuous_and_jumps_break() {
+        // A 0.1 px wide brush on a surface 1 world unit per pixel, with a step down at
+        // x = 50 px (a silhouette onto a surface 10 units further back).
+        let project = |p: Vec2, _: f32| {
+            let depth = if p.x < 50.0 { 0.0 } else { 10.0 };
+            Some(Dab {
+                position: Vec3::new(p.x, 0.0, depth),
+                ..point(0.0, 0.05)
+            })
+        };
+        let mut dabs = Vec::new();
+        let mut path = StrokePath::start(Vec2::ZERO, 1.0, 0.5, 0.0, project, &mut dabs);
+        path.move_to(Vec2::new(100.0, 0.0), 1.0, project, &mut dabs);
+        let gaps: Vec<f32> = dabs
+            .windows(2)
+            .map(|w| w[0].position.distance(w[1].position))
+            .collect();
+        // Spacing 0.5 of the 0.1 diameter: 0.05 apart, except once across the jump.
+        let jumps = gaps.iter().filter(|&&g| g > 0.06).count();
+        assert_eq!(jumps, 1, "{:?}", gaps.iter().fold(0.0f32, |a, &b| a.max(b)));
+        assert!(
+            dabs.iter()
+                .all(|d| d.position.z == 0.0 || d.position.z == 10.0)
+        );
+    }
+
+    #[test]
+    fn shrinking_brushes_never_place_dabs_behind_the_path() {
+        let mut spacer = DabSpacer::new(5.0);
+        let mut dabs = Vec::new();
+        for i in 0..30 {
+            let x = i as f32;
+            let start = dabs.len();
+            spacer.add(point(x, (10.0 - 0.37 * x).max(0.1)), &mut dabs);
+            for d in &dabs[start..] {
+                assert!(
+                    d.position.x >= x - 1.0 - 1e-4,
+                    "dab at {} behind {}",
+                    d.position.x,
+                    x - 1.0
+                );
+            }
+        }
     }
 
     #[test]

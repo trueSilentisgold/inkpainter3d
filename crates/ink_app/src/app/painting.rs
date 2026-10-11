@@ -3,7 +3,7 @@
 
 use super::InkApp;
 use eframe::egui::{self, Color32, Key, PointerButton, RichText, Stroke as Line};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use ink_core::{
     Alpha, AlphaImage, Brush, Channel, Command, Dab, PressureCurve, SizeSpace, Stroke, StrokePath,
     StrokeSpace, Tool, snap_direction, surface_dab, uv_dab,
@@ -11,12 +11,20 @@ use ink_core::{
 use std::sync::Arc;
 
 /// The two views the brush paints in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum View {
     /// The 3D view.
     Model,
     /// The 2D view (UV layout).
     Uv,
+}
+
+/// Where the last stroke ended, for Shift+click lines. Kept on the model, not on screen,
+/// so the line still starts there after the view moved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LineStart {
+    Surface(Vec3),
+    Uv(Vec2),
 }
 
 /// Brush tools and their settings, plus the stroke being painted.
@@ -33,8 +41,7 @@ pub struct PaintState {
     /// Latest pen pressure; 1 without a pen.
     pub pressure: f32,
     stroke: Option<ActiveStroke>,
-    /// Where the last stroke ended on screen: Shift+click draws a line from there.
-    line_start: Option<(View, Vec2)>,
+    line_start: Option<LineStart>,
     adjust: Option<Adjust>,
 }
 
@@ -74,6 +81,11 @@ impl PaintState {
         self.stroke.is_some()
     }
 
+    /// A stroke or a Ctrl + drag adjustment is under way; the views don't navigate then.
+    pub fn is_busy(&self) -> bool {
+        self.stroke.is_some() || self.adjust.is_some()
+    }
+
     /// Forgets strokes and lines that belong to the previous model.
     pub fn reset(&mut self) {
         self.stroke = None;
@@ -87,6 +99,9 @@ struct ActiveStroke {
     set: usize,
     id: u64,
     path: StrokePath,
+    /// The brush as the stroke started; switching tools or settings mid-stroke doesn't
+    /// change it.
+    brush: Brush,
 }
 
 /// Ctrl + drag changes brush settings: right button size and hardness, left button flow
@@ -148,12 +163,14 @@ impl InkApp {
             }
             View::Uv => Box::new(move |p, pressure| {
                 let uv = self.uv_camera.to_uv(p - origin, size);
-                // As in Painter, only the 0-1 UV square can be painted.
-                if !(0.0..=1.0).contains(&uv.x) || !(0.0..=1.0).contains(&uv.y) {
-                    return None;
-                }
                 let (size_factor, flow_factor) = brush.pressure.factors(pressure);
                 let radius = brush.uv_radius(self.uv_camera.height) * size_factor;
+                // As in Painter, only the 0-1 UV square can be painted; dabs centered just
+                // outside still reach into it.
+                let inside = -radius..=1.0 + radius;
+                if !inside.contains(&uv.x) || !inside.contains(&uv.y) {
+                    return None;
+                }
                 // Keep the alpha upright on screen when the view is rotated.
                 let angle = brush.angle + self.uv_camera.angle.to_degrees();
                 Some(uv_dab(uv, angle, radius, brush.flow * flow_factor))
@@ -170,6 +187,20 @@ impl InkApp {
         }
     }
 
+    /// Where the next Shift+click line starts in this view, on screen.
+    fn line_start_on_screen(&self, view: View, rect: egui::Rect) -> Option<Vec2> {
+        let origin = vec2(rect.min);
+        let size = Vec2::new(rect.width(), rect.height());
+        match (view, self.paint.line_start?) {
+            (View::Model, LineStart::Surface(p)) => {
+                let screen = self.camera.project(p, size)?;
+                Some(screen + origin)
+            }
+            (View::Uv, LineStart::Uv(uv)) => Some(self.uv_camera.to_pixel(uv, size) + origin),
+            _ => None,
+        }
+    }
+
     /// Handles the brush in a view: painting with the left button, straight lines with
     /// Shift, brush adjustments with Ctrl + drag.
     pub(super) fn paint_input(
@@ -182,7 +213,7 @@ impl InkApp {
         let events = ui.input(|i| i.events.clone());
         for event in events {
             match event {
-                // Pens on Windows (Windows Ink) arrive as touches with a force.
+                // Pens arrive as touches whose force is the pressure (see pen.rs).
                 egui::Event::Touch { phase, force, .. } => match phase {
                     egui::TouchPhase::Start | egui::TouchPhase::Move => {
                         if let Some(force) = force {
@@ -198,11 +229,7 @@ impl InkApp {
                     modifiers,
                 } => {
                     let mine = rect.contains(pos) && response.hovered();
-                    if !mine
-                        || modifiers.alt
-                        || self.paint.stroke.is_some()
-                        || self.paint.adjust.is_some()
-                    {
+                    if !mine || modifiers.alt || self.paint.is_busy() {
                         continue;
                     }
                     let p = vec2(pos);
@@ -217,8 +244,8 @@ impl InkApp {
                             brush: self.paint.brush().clone(),
                         });
                     } else if button == PointerButton::Primary {
-                        match self.paint.line_start {
-                            Some((line_view, from)) if modifiers.shift && line_view == view => {
+                        match self.line_start_on_screen(view, rect) {
+                            Some(from) if modifiers.shift => {
                                 let to = if modifiers.command {
                                     snap_direction(from, p, LINE_SNAP)
                                 } else {
@@ -243,9 +270,7 @@ impl InkApp {
                     {
                         self.paint.adjust = None;
                     }
-                    if button == PointerButton::Primary
-                        && self.paint.stroke.as_ref().is_some_and(|s| s.view == view)
-                    {
+                    if button == PointerButton::Primary {
                         self.end_stroke();
                     }
                 }
@@ -260,19 +285,41 @@ impl InkApp {
                 _ => {}
             }
         }
-        // The release can get lost when the pointer leaves the window.
-        if !ui.input(|i| i.pointer.primary_down())
-            && self.paint.stroke.as_ref().is_some_and(|s| s.view == view)
+    }
+
+    /// Ends a stroke or adjustment whose view is no longer shown (F2 / F3 while painting),
+    /// whose button release got lost, or when the window loses focus.
+    pub(super) fn end_lost_painting(&mut self, ui: &egui::Ui, shown: &[(View, egui::Rect)]) {
+        let shown_view = |view: View| shown.iter().any(|&(v, _)| v == view);
+        let lost_focus = ui.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(false)))
+        });
+        let primary_down = ui.input(|i| i.pointer.primary_down());
+        if self
+            .paint
+            .stroke
+            .as_ref()
+            .is_some_and(|s| !shown_view(s.view) || !primary_down || lost_focus)
         {
             self.end_stroke();
         }
+        let adjust_down = |button| ui.input(|i| i.pointer.button_down(button));
+        if self
+            .paint
+            .adjust
+            .as_ref()
+            .is_some_and(|a| !shown_view(a.view) || !adjust_down(a.button) || lost_focus)
+        {
+            self.paint.adjust = None;
+        }
     }
 
-    /// Adds a stroke with the current tool on the selected texture set.
-    fn new_stroke(&mut self, view: View, rect: egui::Rect) -> Option<(usize, u64)> {
+    /// Adds a stroke with the brush on the selected texture set.
+    fn new_stroke(&mut self, view: View, rect: egui::Rect, brush: &Brush) -> Option<(usize, u64)> {
         let set = self.selected_set;
         self.model.texture_sets.get(set)?;
-        let brush = self.paint.brush();
         let stroke = Stroke {
             id: self.model.next_stroke_id(),
             tool: self.paint.tool,
@@ -309,12 +356,12 @@ impl InkApp {
     }
 
     fn begin_stroke(&mut self, view: View, rect: egui::Rect, p: Vec2) {
-        let Some((set, id)) = self.new_stroke(view, rect) else {
+        let brush = self.paint.brush().clone();
+        let Some((set, id)) = self.new_stroke(view, rect, &brush) else {
             return;
         };
-        let brush = self.paint.brush().clone();
         let mut dabs = Vec::new();
-        let mut path = {
+        let path = {
             let project = self.projector(view, rect, &brush);
             let lazy = self.lazy_pixels(rect);
             StrokePath::start(
@@ -326,21 +373,13 @@ impl InkApp {
                 &mut dabs,
             )
         };
-        // Small brushes need finer steps along the path, or dabs would leave gaps.
-        if let Some(dab) = dabs.first() {
-            let size = Vec2::new(rect.width(), rect.height());
-            let pixel = match view {
-                View::Model => self.camera.view_height_at(dab.position) / size.y.max(1.0),
-                View::Uv => self.uv_camera.uv_per_pixel(size),
-            };
-            path.screen_step = (dab.radius / pixel * 0.5).clamp(0.25, 2.0);
-        }
         self.push_dabs(set, dabs);
         self.paint.stroke = Some(ActiveStroke {
             view,
             set,
             id,
             path,
+            brush,
         });
     }
 
@@ -348,10 +387,9 @@ impl InkApp {
         let Some(mut active) = self.paint.stroke.take() else {
             return;
         };
-        let brush = self.paint.brush().clone();
         let mut dabs = Vec::new();
         {
-            let project = self.projector(active.view, rect, &brush);
+            let project = self.projector(active.view, rect, &active.brush);
             active
                 .path
                 .move_to(p, self.paint.pressure, &project, &mut dabs);
@@ -362,31 +400,37 @@ impl InkApp {
 
     fn end_stroke(&mut self) {
         if let Some(active) = self.paint.stroke.take() {
-            self.finish_stroke(active.view, active.set, active.id, active.path.brush());
+            self.finish_stroke(active.set, active.id);
         }
     }
 
-    /// Records a finished stroke for undo; `end` is where the next Shift+click line starts.
-    fn finish_stroke(&mut self, view: View, set: usize, id: u64, end: Vec2) {
+    /// Records a finished stroke for undo and remembers where it ended for Shift+click.
+    fn finish_stroke(&mut self, set: usize, id: u64) {
         let strokes = &mut self.model.texture_sets[set].paint.strokes;
-        if strokes
-            .last()
-            .is_some_and(|s| s.id == id && s.dabs.is_empty())
-        {
+        let Some(stroke) = strokes.last().filter(|s| s.id == id) else {
+            return;
+        };
+        match stroke.dabs.last() {
+            Some(end) => {
+                self.paint.line_start = Some(match stroke.space {
+                    StrokeSpace::Surface => LineStart::Surface(end.position),
+                    StrokeSpace::Uv => LineStart::Uv(end.position.truncate()),
+                });
+                self.history.record(Command::add_stroke(set, id));
+            }
             // Nothing was hit; leave no empty step in the history.
-            strokes.pop();
-        } else {
-            self.history.record(Command::add_stroke(set, id));
+            None => {
+                strokes.pop();
+            }
         }
-        self.paint.line_start = Some((view, end));
     }
 
     /// Shift+click: a straight stroke from the end of the last one.
     fn paint_line(&mut self, view: View, rect: egui::Rect, from: Vec2, to: Vec2) {
-        let Some((set, id)) = self.new_stroke(view, rect) else {
+        let brush = self.paint.brush().clone();
+        let Some((set, id)) = self.new_stroke(view, rect, &brush) else {
             return;
         };
-        let brush = self.paint.brush().clone();
         let mut dabs = Vec::new();
         {
             let project = self.projector(view, rect, &brush);
@@ -396,7 +440,7 @@ impl InkApp {
             path.line_to(to, pressure, &project, &mut dabs);
         }
         self.push_dabs(set, dabs);
-        self.finish_stroke(view, set, id, to);
+        self.finish_stroke(set, id);
     }
 
     fn adjust_brush(&mut self, p: Vec2) {
@@ -445,7 +489,7 @@ impl InkApp {
     /// Tool and brush shortcuts: 1 Paint, 2 Eraser, [ and ] size, D lazy mouse,
     /// Ctrl+Z / Ctrl+Y undo and redo.
     pub(super) fn paint_shortcuts(&mut self, ui: &egui::Ui) {
-        if ui.ctx().egui_wants_keyboard_input() {
+        if ui.ctx().text_edit_focused() {
             return;
         }
         let modifiers = ui.input(|i| i.modifiers);
@@ -514,7 +558,7 @@ impl InkApp {
             self.draw_outline(&painter, rect, view, adjust.start);
             return;
         }
-        if modifiers.alt {
+        if modifiers.alt && active.is_none() {
             return;
         }
         let p = vec2(pointer);
@@ -531,8 +575,7 @@ impl InkApp {
         }
         if modifiers.shift
             && active.is_none()
-            && let Some((line_view, from)) = self.paint.line_start
-            && line_view == view
+            && let Some(from) = self.line_start_on_screen(view, rect)
         {
             let to = if modifiers.command {
                 snap_direction(from, p, LINE_SNAP)
@@ -552,12 +595,11 @@ impl InkApp {
     /// The brush's outline at screen point `p`: a circle on the surface in 3D, a circle in
     /// UV space in 2D.
     fn draw_outline(&self, painter: &egui::Painter, rect: egui::Rect, view: View, p: Vec2) {
-        let brush = self.paint.brush();
-        let (size_factor, _) = brush.pressure.factors(if self.paint.is_painting() {
-            self.paint.pressure
-        } else {
-            1.0
-        });
+        let (brush, pressure) = match &self.paint.stroke {
+            Some(stroke) => (&stroke.brush, self.paint.pressure),
+            None => (self.paint.brush(), 1.0),
+        };
+        let (size_factor, _) = brush.pressure.factors(pressure);
         let points: Vec<egui::Pos2> = match view {
             View::Model => {
                 let origin = vec2(rect.min);

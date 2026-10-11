@@ -45,8 +45,8 @@ pub struct InkApp {
     uv_camera: UvCamera,
     uv_display: DisplayMode,
     uv_wireframe: bool,
-    /// Unsnapped 2D view rotation while snap-rotating.
-    uv_rotation: Option<f32>,
+    /// Unsnapped 2D view rotation and its pivot while rotating with Alt + left mouse.
+    uv_rotation: Option<(f32, glam::Vec2)>,
     /// Keep the UV square framed in the 2D view while its size changes, until the user
     /// pans, zooms or rotates it.
     uv_auto_frame: bool,
@@ -539,7 +539,7 @@ impl InkApp {
     // ---- Viewport ----
 
     fn shortcuts(&mut self, ui: &egui::Ui) {
-        if ui.ctx().egui_wants_keyboard_input() {
+        if ui.ctx().text_edit_focused() {
             return;
         }
         let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
@@ -579,6 +579,13 @@ impl InkApp {
 
 impl eframe::App for InkApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Tab would move keyboard focus to a button, which turns every shortcut off. In
+        // Painter it hides the UI (not there yet); in text fields it keeps working.
+        if !ctx.text_edit_focused() {
+            raw_input
+                .events
+                .retain(|e| !matches!(e, egui::Event::Key { key: Key::Tab, .. }));
+        }
         for notice in self.pen.feed(ctx, raw_input) {
             match notice {
                 // Flipping the pen erases, like in most painting programs.

@@ -43,17 +43,44 @@ impl InkApp {
             views[0].1 = b;
             views[1].1 = a;
         }
+
+        // Input of both views first, then the textures are brought up to date once, then
+        // both views are drawn.
+        self.end_lost_painting(ui, &views);
+        for &(view, rect) in &views {
+            // Not focusable: keyboard focus on a view would swallow the shortcuts.
+            let sense = Sense::CLICK | Sense::DRAG;
+            let response = ui.interact(rect, ui.id().with(("view", view)), sense);
+            match view {
+                View::Model => {
+                    self.navigate(ui, &response, rect);
+                    self.pick(ui, &response, rect);
+                }
+                View::Uv => {
+                    self.frame_uv_view(rect);
+                    self.navigate_uv(ui, &response, rect);
+                }
+            }
+            self.paint_input(ui, &response, rect, view);
+        }
+        let painting = self.paint.is_painting();
+        self.renderer
+            .sync_texture_sets(&rs.device, &rs.queue, &self.model, painting);
         for (view, rect) in views {
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| match view {
-                View::Model => self.model_view(ui, rs),
-                View::Uv => self.uv_view(ui, rs),
-            });
+            match view {
+                View::Model => self.draw_model_view(ui, rs, rect),
+                View::Uv => self.draw_uv_view(ui, rs, rect),
+            }
         }
     }
 
     // ---- 3D view ----
 
     fn navigate(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
+        if self.paint.is_busy() {
+            // Alt pressed during a stroke must not move the camera under it.
+            return;
+        }
         let (alt, shift, ctrl) =
             ui.input(|i| (i.modifiers.alt, i.modifiers.shift, i.modifiers.command));
         let delta = response.drag_delta();
@@ -84,7 +111,7 @@ impl InkApp {
                 self.settings.environment_rotation += delta.x * 0.01;
             }
         }
-        if response.hovered() && !self.paint.is_painting() {
+        if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta().y);
             if scroll != 0.0 {
                 self.camera.zoom(scroll / 50.0);
@@ -126,16 +153,9 @@ impl InkApp {
         }
     }
 
-    fn model_view(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        self.navigate(ui, &response, rect);
-        self.pick(ui, &response, rect);
-        self.paint_input(ui, &response, rect, View::Model);
-
+    fn draw_model_view(&mut self, ui: &mut egui::Ui, rs: &RenderState, rect: egui::Rect) {
         let size = pixel_size(ui, rect);
         let device = &rs.device;
-        self.renderer
-            .sync_texture_sets(device, &rs.queue, &self.model);
         if self.renderer.resize(device, size) {
             let view = self
                 .renderer
@@ -166,6 +186,9 @@ impl InkApp {
     // ---- 2D view ----
 
     fn navigate_uv(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
+        if self.paint.is_busy() {
+            return;
+        }
         let (alt, shift, ctrl) =
             ui.input(|i| (i.modifiers.alt, i.modifiers.shift, i.modifiers.command));
         let delta = response.drag_delta();
@@ -188,14 +211,20 @@ impl InkApp {
             self.uv_auto_frame = false;
         }
         if alt && left && !ctrl {
-            let angle = self.uv_rotation.get_or_insert(self.uv_camera.angle);
+            // Turns around the point where the drag started.
+            let press = ui
+                .input(|i| i.pointer.press_origin())
+                .map_or(pointer, |p| Vec2::new(p.x - rect.min.x, p.y - rect.min.y));
+            let (angle, pivot) = self
+                .uv_rotation
+                .get_or_insert((self.uv_camera.angle, press));
             *angle += delta.x * 0.01;
-            let mut target = *angle;
+            let (mut target, pivot) = (*angle, *pivot);
             if shift {
                 let step = std::f32::consts::FRAC_PI_2;
                 target = (target / step).round() * step;
             }
-            self.uv_camera.rotate_to(target, pointer, size);
+            self.uv_camera.rotate_to(target, pivot, size);
         } else {
             self.uv_rotation = None;
             if alt && (middle || (left && ctrl)) {
@@ -205,7 +234,7 @@ impl InkApp {
                     .zoom((delta.x - delta.y) * 0.015, size * 0.5, size);
             }
         }
-        if response.hovered() && !self.paint.is_painting() {
+        if response.hovered() {
             let scroll = ui.input(|i| i.smooth_scroll_delta().y);
             if scroll != 0.0 {
                 self.uv_camera.zoom(scroll / 50.0, pointer, size);
@@ -213,20 +242,18 @@ impl InkApp {
         }
     }
 
-    fn uv_view(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+    /// Keeps the UV square framed while the view changes size, until the user navigates.
+    fn frame_uv_view(&mut self, rect: egui::Rect) {
         let rounded = [rect.width().round() as u32, rect.height().round() as u32];
         if self.uv_auto_frame && self.uv_framed_size != Some(rounded) {
             self.uv_camera.frame(Vec2::new(rect.width(), rect.height()));
             self.uv_framed_size = Some(rounded);
         }
-        self.navigate_uv(ui, &response, rect);
-        self.paint_input(ui, &response, rect, View::Uv);
+    }
 
+    fn draw_uv_view(&mut self, ui: &mut egui::Ui, rs: &RenderState, rect: egui::Rect) {
         let size = pixel_size(ui, rect);
         let device = &rs.device;
-        self.renderer
-            .sync_texture_sets(device, &rs.queue, &self.model);
         if self.uv_view.resize(device, size) {
             let view = self
                 .uv_view

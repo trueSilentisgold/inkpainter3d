@@ -284,6 +284,9 @@ fn pad<T: Copy>(mut v: Vec<T>, len: usize, fill: T) -> Vec<T> {
     v
 }
 
+/// Largest side of a brush alpha; bigger images are scaled down when loaded.
+pub const MAX_ALPHA_SIZE: u32 = 4096;
+
 /// Loads a brush alpha: white paints, black does not. Images with transparency use their
 /// alpha channel, others their brightness.
 pub fn load_alpha(path: &Path) -> Result<AlphaImage> {
@@ -295,22 +298,27 @@ pub fn load_alpha(path: &Path) -> Result<AlphaImage> {
         bail!("Alpha image is empty");
     }
     let transparent = image.pixels().any(|p| p[3] < 255);
-    let pixels = image
-        .pixels()
-        .map(|p| {
-            if transparent {
-                p[3]
-            } else {
-                let [r, g, b, _] = p.0.map(f32::from);
-                (0.2126 * r + 0.7152 * g + 0.0722 * b).round() as u8
-            }
-        })
-        .collect();
+    let mut gray = image::GrayImage::from_fn(width, height, |x, y| {
+        let p = image.get_pixel(x, y);
+        image::Luma([if transparent {
+            p[3]
+        } else {
+            let [r, g, b, _] = p.0.map(f32::from);
+            (0.2126 * r + 0.7152 * g + 0.0722 * b).round() as u8
+        }])
+    });
+    if width.max(height) > MAX_ALPHA_SIZE {
+        let scale = MAX_ALPHA_SIZE as f32 / width.max(height) as f32;
+        let w = ((width as f32 * scale).round() as u32).max(1);
+        let h = ((height as f32 * scale).round() as u32).max(1);
+        gray = image::imageops::resize(&gray, w, h, image::imageops::FilterType::Triangle);
+    }
     let name = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Ok(AlphaImage::new(name, width, height, pixels))
+    let (width, height) = gray.dimensions();
+    Ok(AlphaImage::new(name, width, height, gray.into_raw()))
 }
 
 /// An equirectangular HDR environment, linear RGBA, rows top to bottom.
@@ -625,5 +633,13 @@ Connections:  {
         .save(&cutout)
         .unwrap();
         assert_eq!(load_alpha(&cutout).unwrap().pixels, [0, 200]);
+
+        let huge = dir.join("huge.png");
+        image::GrayImage::from_pixel(MAX_ALPHA_SIZE * 2, 8, image::Luma([255]))
+            .save(&huge)
+            .unwrap();
+        let alpha = load_alpha(&huge).unwrap();
+        assert_eq!((alpha.width, alpha.height), (MAX_ALPHA_SIZE, 4));
+        assert!(alpha.pixels.iter().all(|&p| p == 255));
     }
 }

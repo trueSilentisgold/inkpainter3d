@@ -118,7 +118,7 @@ pub struct Hit {
     /// Distance along the ray.
     pub distance: f32,
     pub position: Vec3,
-    /// Interpolated vertex normal, facing the ray's origin.
+    /// Interpolated vertex normal, turned around when the triangle was hit from behind.
     pub normal: Vec3,
     pub uv: Vec2,
 }
@@ -211,7 +211,16 @@ impl Model {
         ];
         let lerp3 = |v: &[Vec3]| v[corners[0]] * wa + v[corners[1]] * wb + v[corners[2]] * wc;
         let mut normal = lerp3(&self.mesh.normals).normalize_or(Vec3::Y);
-        if normal.dot(dir) > 0.0 {
+        // Turn the normal to the camera only if the triangle was hit from behind. The
+        // interpolated normal alone can point away near silhouettes of smooth low-poly
+        // meshes; the face normal follows the vertex normals, so reversed winding is fine.
+        let [a, b, c] = corners.map(|v| self.mesh.positions[v]);
+        let mut face = (b - a).cross(c - a);
+        let vertex_sum: Vec3 = corners.iter().map(|&v| self.mesh.normals[v]).sum();
+        if face.dot(vertex_sum) < 0.0 {
+            face = -face;
+        }
+        if face.dot(dir) > 0.0 {
             normal = -normal;
         }
         let uvs = &self.mesh.uvs;
@@ -477,6 +486,31 @@ mod tests {
             model.pick(Vec3::new(2.5, 0.5, 5.0), down).is_none(),
             "Right uses mat_a"
         );
+    }
+
+    #[test]
+    fn hit_normals_keep_facing_camera_facing_triangles() {
+        // Near the silhouette of a coarse smooth sphere, interpolated normals point away
+        // from the camera although the hit triangle faces it.
+        let model = Model::from_mesh(Mesh::uv_sphere(1.0, 8, 6));
+        let dir = Vec3::new(0.2f32.sin(), 0.0, -0.2f32.cos());
+        for i in 0..200 {
+            for j in 0..200 {
+                let x = i as f32 / 100.0 - 1.0;
+                let y = j as f32 / 100.0 - 1.0;
+                let origin = Vec3::new(x, y, 0.0) - dir * 5.0;
+                let Some(hit) = model.pick(origin, dir) else {
+                    continue;
+                };
+                let [a, b, c] = model
+                    .triangle_vertices(hit.triangle as u32)
+                    .map(|v| model.mesh.positions[v]);
+                let face = (b - a).cross(c - a);
+                if face.dot(dir) < 0.0 {
+                    assert!(hit.normal.dot(face) > 0.0, "flipped at {x}, {y}");
+                }
+            }
+        }
     }
 
     #[test]

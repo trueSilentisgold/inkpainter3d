@@ -77,15 +77,17 @@ Things that are easy to get wrong:
   in `viewport.wgsl`: color channels in sRGB textures, data channels linear, normals
   OpenGL-style. `TextureSet::fill` stands in for the layer stack (normal stays flat, AO 1).
 - **UI → GPU sync.** The UI mutates `Model` directly; `ViewportRenderer::sync_texture_sets`
-  runs every frame and diffs only resolution, fill and alpha mode, so add any new
-  GPU-relevant `TextureSet` field there. New geometry goes through `set_model`; `render`
+  runs once per frame, after both views handled their input (`views()` in app/views.rs), and
+  diffs only resolution, fill and alpha mode, so add any new GPU-relevant `TextureSet` field
+  there. Its `stroke_in_progress` flag defers the full-texture composite to the stroke's end. New geometry goes through `set_model`; `render`
   draws no meshes while the GPU set count differs from the model's.
 - **Strokes → GPU.** The app pushes a stroke onto `TextureSet::paint.strokes` when the button
   goes down and appends dabs while it moves. `PaintRenderer::sync` (paint.rs) diffs each set's
   strokes against what its layer holds by (stroke id, dab count): new dabs on the topmost
-  stroke are painted incrementally on top of a snapshot taken when that stroke started; a
-  removed topmost stroke (undo) restores the snapshot; anything else clears the layer and
-  repaints every stroke. So only ever append dabs to the topmost stroke, give new strokes new
+  stroke are painted incrementally on top of a snapshot taken when that stroke started; undone
+  strokes copy back what they painted over (the snapshot for the topmost, budgeted
+  "pre-images" for earlier ones); anything else clears the layer and repaints every stroke.
+  Changed texels are tracked as a `Region` of a few rectangles, not one bounding box. So only ever append dabs to the topmost stroke, give new strokes new
   ids, and keep everything that shapes the pixels inside the `Stroke` (brush values, camera,
   hidden objects): replays must give the same result.
 - **Paint layer.** One premultiplied 16-bit float texture per `Channel` (`LAYER_FORMATS`):
@@ -122,7 +124,10 @@ Things that are easy to get wrong:
   are reserved words.
 - **Pointer input.** Both views run `paint_input` over the same frame's events; a press only
   starts a stroke in the view whose response is hovered, Alt presses belong to navigation,
-  and a stroke also ends when the button is no longer down (the release can get lost).
+  and the views don't navigate while a stroke or Ctrl-drag runs. `end_lost_painting` ends a
+  stroke whose view was hidden (F2 / F3), whose release got lost or when focus is lost.
+  The start of Shift+click lines is kept on the model (world position or UV), not on screen.
+  The views are not focusable and Tab is dropped, so keyboard focus can't swallow shortcuts.
   Pen pressure arrives as the force of `egui::Event::Touch`: from winit on Windows (Windows
   Ink), injected by `pen.rs` in `raw_input_hook` on Linux. On Wayland the pen reaches the app
   only through the tablet protocol, so `pen.rs` also injects its pointer events; on X11 the

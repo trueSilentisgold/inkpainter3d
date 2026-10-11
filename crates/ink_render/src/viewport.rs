@@ -624,12 +624,20 @@ impl ViewportRenderer {
         });
         self.sets.clear();
         self.paint.reset();
-        self.sync_texture_sets(device, queue, model);
+        self.sync_texture_sets(device, queue, model, false);
     }
 
     /// Brings the GPU textures in line with the texture sets after their settings or
-    /// strokes changed. Cheap when nothing changed, so it can run every frame.
-    pub fn sync_texture_sets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, model: &Model) {
+    /// strokes changed. Cheap when nothing changed; call it once per frame, after input.
+    /// While `stroke_in_progress`, only the painted area of the textures is updated, and
+    /// the rest follows when the stroke ends.
+    pub fn sync_texture_sets(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        stroke_in_progress: bool,
+    ) {
         self.sets.truncate(model.texture_sets.len());
         for (index, set) in model.texture_sets.iter().enumerate() {
             let uniforms = TextureSetUniforms {
@@ -665,6 +673,7 @@ impl ViewportRenderer {
                     &mut gpu.paint,
                     &gpu.textures,
                     fill_changed,
+                    stroke_in_progress,
                 )
             });
             if fill_changed && !painted {

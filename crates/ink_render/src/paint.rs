@@ -14,7 +14,7 @@ use egui_wgpu::wgpu;
 use ink_core::{
     Alpha, Channel, ChannelValues, Dab, Model, Stroke, StrokeCamera, StrokeSpace, Tool,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 
 /// Paint layer textures, one per [`Channel`] in [`Channel::ALL`] order. Premultiplied:
@@ -40,7 +40,11 @@ const MAX_DABS_PER_DRAW: usize = 64;
 const DEPTH_MAP_SIZE: u32 = 2048;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 /// Depth maps kept for strokes painted from the same view.
-const DEPTH_MAP_CACHE: usize = 4;
+const DEPTH_MAP_CACHE: usize = 8;
+/// Bytes per texel of all paint layer textures together.
+const LAYER_BYTES_PER_TEXEL: u64 = 8 + 4 + 4 + 8 + 4;
+/// Video memory for the areas strokes painted over, kept for fast undo.
+const PRE_IMAGE_BUDGET: u64 = 512 << 20;
 /// Uniform buffer offset alignment for the per-channel apply parameters.
 const APPLY_STRIDE: u64 = 256;
 
@@ -174,6 +178,22 @@ impl TexelRect {
         }
     }
 
+    /// Whether the rectangles overlap or are less than `gap` texels apart.
+    fn near(&self, other: &Self, gap: u32) -> bool {
+        self.min[0] <= other.max[0] + gap
+            && other.min[0] <= self.max[0] + gap
+            && self.min[1] <= other.max[1] + gap
+            && other.min[1] <= self.max[1] + gap
+    }
+
+    fn texels(&self) -> u64 {
+        if self.is_empty() {
+            0
+        } else {
+            (self.max[0] - self.min[0]) as u64 * (self.max[1] - self.min[1]) as u64
+        }
+    }
+
     fn scissor(&self, pass: &mut wgpu::RenderPass) {
         pass.set_scissor_rect(
             self.min[0],
@@ -200,6 +220,71 @@ impl TexelRect {
     }
 }
 
+/// Texels that changed, as a few rectangles: a single bounding box would span most of the
+/// texture whenever the brush touches UV islands that lie far apart.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Region {
+    rects: Vec<TexelRect>,
+}
+
+impl Region {
+    /// Rectangles closer than this are merged.
+    const MERGE_GAP: u32 = 16;
+    /// More rectangles than this collapse into their bounding box.
+    const MAX_RECTS: usize = 32;
+
+    fn full(size: u32) -> Self {
+        Self {
+            rects: vec![TexelRect::full(size)],
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.rects.is_empty()
+    }
+
+    fn add(&mut self, rect: TexelRect) {
+        if rect.is_empty() {
+            return;
+        }
+        let mut rect = rect;
+        // Merging grows the rectangle, which can bring it near others.
+        while let Some(i) = self
+            .rects
+            .iter()
+            .position(|r| r.near(&rect, Self::MERGE_GAP))
+        {
+            rect = rect.union(self.rects.swap_remove(i));
+        }
+        self.rects.push(rect);
+        if self.rects.len() > Self::MAX_RECTS {
+            self.rects = vec![self.bounds()];
+        }
+    }
+
+    fn extend(&mut self, other: &Self) {
+        for &rect in &other.rects {
+            self.add(rect);
+        }
+    }
+
+    fn grown(&self, margin: u32, size: u32) -> Self {
+        let mut grown = Self::default();
+        for rect in &self.rects {
+            grown.add(rect.grow(margin, size));
+        }
+        grown
+    }
+
+    fn bounds(&self) -> TexelRect {
+        self.rects.iter().fold(TexelRect::EMPTY, |a, &b| a.union(b))
+    }
+
+    fn texels(&self) -> u64 {
+        self.rects.iter().map(TexelRect::texels).sum()
+    }
+}
+
 /// Paint state of one texture set on the GPU.
 pub(crate) struct GpuPaint {
     resolution: u32,
@@ -221,6 +306,18 @@ struct Snapshot {
     stroke: u64,
     resolution: u32,
     textures: Vec<wgpu::Texture>,
+    /// What the stroke has painted over so far.
+    region: Region,
+}
+
+/// What a stroke painted over, as it was before: undoing the stroke copies it back.
+struct PreImage {
+    set: usize,
+    stroke: u64,
+    resolution: u32,
+    /// Per rectangle, one texture per layer channel.
+    pieces: Vec<(TexelRect, Vec<wgpu::Texture>)>,
+    bytes: u64,
 }
 
 pub(crate) struct PaintRenderer {
@@ -255,6 +352,10 @@ pub(crate) struct PaintRenderer {
     triangle_marks: Vec<u32>,
     mark: u32,
     snapshot: Option<Snapshot>,
+    /// Snapshot textures no longer needed, kept to be reused.
+    spare_snapshot: Option<(u32, Vec<wgpu::Texture>)>,
+    /// Oldest first; together at most [`PRE_IMAGE_BUDGET`] bytes.
+    pre_images: VecDeque<PreImage>,
 }
 
 impl PaintRenderer {
@@ -619,20 +720,26 @@ impl PaintRenderer {
             triangle_marks: Vec::new(),
             mark: 0,
             snapshot: None,
+            spare_snapshot: None,
+            pre_images: VecDeque::new(),
         }
     }
 
     /// Forgets everything tied to the previous model.
     pub fn reset(&mut self) {
         self.snapshot = None;
+        self.spare_snapshot = None;
+        self.pre_images.clear();
         self.triangle_marks.clear();
         self.depth_maps.clear();
     }
 
     /// Brings a texture set's paint layer and channel textures in line with its strokes
     /// and fill. `outputs` are the texture set's channel textures; `fill_changed` asks for
-    /// a new composite even if no stroke changed. Returns false if the set has no paint
-    /// layer, so the caller fills the channel textures itself.
+    /// a new composite even if no stroke changed. While `stroke_in_progress`, only the
+    /// painted area is composited; the padding far from it catches up once the stroke
+    /// ends. Returns false if the set has no paint layer, so the caller fills the channel
+    /// textures itself.
     #[allow(clippy::too_many_arguments)]
     pub fn sync(
         &mut self,
@@ -644,6 +751,7 @@ impl PaintRenderer {
         paint: &mut Option<GpuPaint>,
         outputs: &[wgpu::Texture],
         fill_changed: bool,
+        stroke_in_progress: bool,
     ) -> bool {
         let texture_set = &model.texture_sets[set];
         let strokes = &texture_set.paint.strokes;
@@ -679,7 +787,7 @@ impl PaintRenderer {
             .filter(|s| s.set == set && s.resolution == size)
             .map(|s| s.stroke);
         let topmost = paint.applied.last().map(|&(id, _)| id);
-        let mut dirty = TexelRect::EMPTY;
+        let mut dirty = Region::default();
         let mut full = fill_changed;
 
         if common + 1 == paint.applied.len()
@@ -691,7 +799,7 @@ impl PaintRenderer {
             // The stroke being painted got new dabs. Its coverage so far is still in the
             // coverage texture; the snapshot gives the layer underneath.
             let done = paint.applied[common].1;
-            let rect = self.rasterize(
+            let region = self.rasterize(
                 device,
                 queue,
                 model,
@@ -701,47 +809,113 @@ impl PaintRenderer {
                 stroke,
                 &stroke.dabs[done..],
             );
-            self.restore(device, queue, paint, rect);
-            self.apply(device, queue, paint, stroke, rect);
+            self.restore(device, queue, paint, &region);
+            self.apply(device, queue, paint, stroke, &region);
             paint.applied[common].1 = stroke.dabs.len();
-            dirty = rect;
-        } else if common < paint.applied.len() {
-            if common + 1 == paint.applied.len() && strokes.len() == common && snapshot == topmost {
-                // The topmost stroke was undone: the snapshot is the layer without it.
-                self.restore(device, queue, paint, TexelRect::full(size));
-                self.snapshot = None;
-                paint.applied.truncate(common);
-            } else {
-                self.clear_layer(device, queue, paint);
+            if let Some(snapshot) = &mut self.snapshot {
+                snapshot.region.extend(&region);
             }
-            full = true;
+            dirty = region;
+        } else if common < paint.applied.len() {
+            // Strokes were taken off the top (undo): put back what they painted over. If
+            // that is gone, or other strokes changed, paint everything again.
+            let undone = strokes.len() == common
+                && self.undo_strokes(device, queue, set, paint, common, &mut dirty);
+            if !undone {
+                self.forget(set);
+                self.clear_layer(device, queue, paint);
+                full = true;
+            }
         }
 
         for (i, stroke) in strokes.iter().enumerate().skip(paint.applied.len()) {
-            if i + 1 == strokes.len() {
+            let last = i + 1 == strokes.len();
+            if last {
                 self.take_snapshot(device, queue, set, stroke.id, paint);
             }
             self.clear_coverage(device, queue, paint);
-            let rect = self.rasterize(device, queue, model, mesh, set, paint, stroke, &stroke.dabs);
-            self.apply(device, queue, paint, stroke, rect);
+            let region =
+                self.rasterize(device, queue, model, mesh, set, paint, stroke, &stroke.dabs);
+            self.apply(device, queue, paint, stroke, &region);
             paint.applied.push((stroke.id, stroke.dabs.len()));
-            dirty = dirty.union(rect);
+            if last && let Some(snapshot) = &mut self.snapshot {
+                snapshot.region = region.clone();
+            }
+            dirty.extend(&region);
         }
 
-        if full || (paint.stale && dirty.is_empty()) {
-            self.composite(device, queue, paint, outputs, TexelRect::full(size));
+        let catch_up = !stroke_in_progress && (paint.stale || !dirty.is_empty());
+        if full || catch_up {
+            self.composite(device, queue, paint, outputs, &Region::full(size));
             paint.stale = false;
         } else if !dirty.is_empty() {
-            self.composite(
-                device,
-                queue,
-                paint,
-                outputs,
-                dirty.grow(PADDING_MARGIN, size),
-            );
+            let region = dirty.grown(PADDING_MARGIN, size);
+            self.composite(device, queue, paint, outputs, &region);
             paint.stale = true;
         }
         true
+    }
+
+    /// Undoes the strokes above `keep` with the snapshot and pre-images. Returns false,
+    /// having changed nothing, if one of them is missing.
+    fn undo_strokes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        set: usize,
+        paint: &mut GpuPaint,
+        keep: usize,
+        dirty: &mut Region,
+    ) -> bool {
+        let size = paint.resolution;
+        let available = |id: u64| {
+            self.snapshot
+                .as_ref()
+                .is_some_and(|s| s.set == set && s.stroke == id && s.resolution == size)
+                || self
+                    .pre_images
+                    .iter()
+                    .any(|p| p.set == set && p.stroke == id && p.resolution == size)
+        };
+        if !paint.applied[keep..].iter().all(|&(id, _)| available(id)) {
+            return false;
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        while let Some(&(id, _)) = paint.applied.get(keep..).and_then(|top| top.last()) {
+            if let Some(snapshot) = self.snapshot.take_if(|s| s.set == set && s.stroke == id) {
+                for rect in &snapshot.region.rects {
+                    for (from, to) in snapshot.textures.iter().zip(&paint.layer) {
+                        copy_rect(&mut encoder, from, rect.origin(), to, *rect);
+                    }
+                }
+                dirty.extend(&snapshot.region);
+                self.spare_snapshot = Some((snapshot.resolution, snapshot.textures));
+            } else if let Some(i) = self
+                .pre_images
+                .iter()
+                .position(|p| p.set == set && p.stroke == id && p.resolution == size)
+                && let Some(pre) = self.pre_images.remove(i)
+            {
+                for (rect, textures) in &pre.pieces {
+                    for (from, to) in textures.iter().zip(&paint.layer) {
+                        copy_rect(&mut encoder, from, wgpu::Origin3d::ZERO, to, *rect);
+                    }
+                    dirty.add(*rect);
+                }
+            }
+            paint.applied.pop();
+        }
+        queue.submit([encoder.finish()]);
+        true
+    }
+
+    /// Drops the snapshot and pre-images of a texture set, before it is painted again from
+    /// scratch.
+    fn forget(&mut self, set: usize) {
+        if self.snapshot.as_ref().is_some_and(|s| s.set == set) {
+            self.snapshot = None;
+        }
+        self.pre_images.retain(|p| p.set != set);
     }
 
     fn create_paint(
@@ -926,14 +1100,19 @@ impl PaintRenderer {
         paint: &GpuPaint,
         stroke: &Stroke,
         dabs: &[Dab],
-    ) -> TexelRect {
+    ) -> Region {
         let size = paint.resolution;
-        let (tip, alpha_size) = match &stroke.alpha {
-            Alpha::Round => (0.0, 1.0),
-            Alpha::Square => (1.0, 1.0),
-            Alpha::Image(image) => (2.0, image.width.max(image.height) as f32),
+        let tip = match &stroke.alpha {
+            Alpha::Round => 0.0,
+            Alpha::Square => 1.0,
+            Alpha::Image(_) => 2.0,
         };
         let alpha = self.alpha_view(device, queue, &stroke.alpha);
+        // The uploaded size, which is smaller than the image if it exceeded the device limit.
+        let alpha_size = {
+            let t = alpha.texture();
+            t.width().max(t.height()) as f32
+        };
         let camera = stroke
             .camera
             .filter(|_| stroke.space == StrokeSpace::Surface);
@@ -976,30 +1155,39 @@ impl PaintRenderer {
             None => ([[0.0; 4]; 4], [0.0; 4], [0.0; 4]),
         };
 
-        let mut changed = TexelRect::EMPTY;
+        let mut changed = Region::default();
         let mut indices: Vec<u32> = Vec::new();
         let mut nearby: Vec<u32> = Vec::new();
         for chunk in dabs.chunks(MAX_DABS_PER_DRAW) {
-            let (rect, count) = match stroke.space {
+            let (region, count) = match stroke.space {
                 StrokeSpace::Surface => {
                     indices.clear();
-                    let (min, max) =
-                        self.select_triangles(model, set, stroke, chunk, &mut nearby, &mut indices);
-                    (TexelRect::from_uv(min, max, size, 1), indices.len() as u32)
+                    let region = self.select_triangles(
+                        model,
+                        set,
+                        stroke,
+                        chunk,
+                        size,
+                        &mut nearby,
+                        &mut indices,
+                    );
+                    (region, indices.len() as u32)
                 }
                 StrokeSpace::Uv => {
-                    let mut min = [f32::MAX; 2];
-                    let mut max = [f32::MIN; 2];
+                    let mut region = Region::default();
                     for dab in chunk {
-                        for k in 0..2 {
-                            min[k] = min[k].min(dab.position[k] - dab.radius);
-                            max[k] = max[k].max(dab.position[k] + dab.radius);
-                        }
+                        let (p, r) = (dab.position, dab.radius);
+                        region.add(TexelRect::from_uv(
+                            [p.x - r, p.y - r],
+                            [p.x + r, p.y + r],
+                            size,
+                            1,
+                        ));
                     }
-                    (TexelRect::from_uv(min, max, size, 1), 3)
+                    (region, 3)
                 }
             };
-            if rect.is_empty() || count == 0 {
+            if region.is_empty() || count == 0 {
                 continue;
             }
             let gpu_dabs: Vec<GpuDab> = chunk
@@ -1041,7 +1229,7 @@ impl PaintRenderer {
             let mut encoder = device.create_command_encoder(&Default::default());
             {
                 let mut pass = begin_pass(&mut encoder, &paint.coverage, None);
-                rect.scissor(&mut pass);
+                region.bounds().scissor(&mut pass);
                 pass.set_bind_group(0, &group, &[]);
                 match stroke.space {
                     StrokeSpace::Surface => {
@@ -1061,7 +1249,7 @@ impl PaintRenderer {
             }
             // Submitted per draw: the next chunk overwrites the buffers.
             queue.submit([encoder.finish()]);
-            changed = changed.union(rect);
+            changed.extend(&region);
         }
         changed
     }
@@ -1209,17 +1397,19 @@ impl PaintRenderer {
         view
     }
 
-    /// Collects the vertex indices of the triangles the dabs can touch. Returns their UV
-    /// bounds.
+    /// Collects the vertex indices of the triangles the dabs can touch. Returns the texels
+    /// they cover.
+    #[allow(clippy::too_many_arguments)]
     fn select_triangles(
         &mut self,
         model: &Model,
         set: usize,
         stroke: &Stroke,
         dabs: &[Dab],
+        size: u32,
         nearby: &mut Vec<u32>,
         indices: &mut Vec<u32>,
-    ) -> ([f32; 2], [f32; 2]) {
+    ) -> Region {
         let triangle_count = model.mesh.triangle_count();
         if self.triangle_marks.len() != triangle_count {
             self.triangle_marks = vec![0; triangle_count];
@@ -1230,8 +1420,7 @@ impl PaintRenderer {
             self.triangle_marks.fill(0);
             self.mark = 1;
         }
-        let mut min = [f32::MAX; 2];
-        let mut max = [f32::MIN; 2];
+        let mut region = Region::default();
         for dab in dabs {
             nearby.clear();
             model.triangles_near(
@@ -1246,15 +1435,18 @@ impl PaintRenderer {
                     continue;
                 }
                 *mark = self.mark;
+                let mut min = [f32::MAX; 2];
+                let mut max = [f32::MIN; 2];
                 for v in model.triangle_vertices(t) {
                     indices.push(v as u32);
                     let uv = model.mesh.uvs[v];
                     min = [min[0].min(uv.x), min[1].min(uv.y)];
                     max = [max[0].max(uv.x), max[1].max(uv.y)];
                 }
+                region.add(TexelRect::from_uv(min, max, size, 1));
             }
         }
-        (min, max)
+        region
     }
 
     /// Blends the stroke's coverage into the paint layer within `rect`.
@@ -1264,9 +1456,9 @@ impl PaintRenderer {
         queue: &wgpu::Queue,
         paint: &GpuPaint,
         stroke: &Stroke,
-        rect: TexelRect,
+        region: &Region,
     ) {
-        if rect.is_empty() {
+        if region.is_empty() {
             return;
         }
         let values = &stroke.material.values;
@@ -1316,10 +1508,12 @@ impl PaintRenderer {
         for channel in stroke.material.channels.iter() {
             let format = usize::from(!channel.is_color());
             let mut pass = begin_pass(&mut encoder, &paint.layer_views[channel.index()], None);
-            rect.scissor(&mut pass);
             pass.set_pipeline(&self.apply[format][tool]);
             pass.set_bind_group(0, &group, &[(channel.index() as u64 * APPLY_STRIDE) as u32]);
-            pass.draw(0..3, 0..1);
+            for rect in &region.rects {
+                rect.scissor(&mut pass);
+                pass.draw(0..3, 0..1);
+            }
         }
         queue.submit([encoder.finish()]);
     }
@@ -1343,7 +1537,8 @@ impl PaintRenderer {
         paint.applied.clear();
     }
 
-    /// Copies the layer, before the stroke `id` is painted on it.
+    /// Copies the layer, before the stroke `id` is painted on it. What the previous
+    /// snapshot's stroke painted over is kept as its pre-image first.
     fn take_snapshot(
         &mut self,
         device: &wgpu::Device,
@@ -1353,10 +1548,14 @@ impl PaintRenderer {
         paint: &GpuPaint,
     ) {
         let resolution = paint.resolution;
-        let reuse = self.snapshot.take().filter(|s| s.resolution == resolution);
-        let textures = match reuse {
-            Some(s) => s.textures,
-            None => paint
+        let mut encoder = device.create_command_encoder(&Default::default());
+        if let Some(old) = self.snapshot.take() {
+            self.keep_pre_image(device, &mut encoder, &old);
+            self.spare_snapshot = Some((old.resolution, old.textures));
+        }
+        let textures = match self.spare_snapshot.take() {
+            Some((r, textures)) if r == resolution => textures,
+            _ => paint
                 .layer
                 .iter()
                 .map(|t| {
@@ -1373,7 +1572,6 @@ impl PaintRenderer {
                 })
                 .collect(),
         };
-        let mut encoder = device.create_command_encoder(&Default::default());
         for (from, to) in paint.layer.iter().zip(&textures) {
             encoder.copy_texture_to_texture(from.as_image_copy(), to.as_image_copy(), from.size());
         }
@@ -1383,36 +1581,90 @@ impl PaintRenderer {
             stroke: id,
             resolution,
             textures,
+            region: Region::default(),
         });
     }
 
-    /// Copies the snapshot back into the layer within `rect`.
+    /// Copies what the snapshot's stroke painted over out of the snapshot, so the stroke
+    /// can still be undone quickly once the snapshot moves on. Drops the oldest pre-images
+    /// to stay within budget.
+    fn keep_pre_image(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        snapshot: &Snapshot,
+    ) {
+        let bytes = snapshot.region.texels() * LAYER_BYTES_PER_TEXEL;
+        if snapshot.region.is_empty() || bytes > PRE_IMAGE_BUDGET {
+            return;
+        }
+        let mut used: u64 = self.pre_images.iter().map(|p| p.bytes).sum();
+        while used + bytes > PRE_IMAGE_BUDGET
+            && let Some(oldest) = self.pre_images.pop_front()
+        {
+            used -= oldest.bytes;
+        }
+        let pieces = snapshot
+            .region
+            .rects
+            .iter()
+            .map(|&rect| {
+                let textures = snapshot
+                    .textures
+                    .iter()
+                    .map(|from| {
+                        let piece = device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("paint pre-image"),
+                            size: rect.extent(),
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: from.format(),
+                            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+                            view_formats: &[],
+                        });
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                origin: rect.origin(),
+                                ..from.as_image_copy()
+                            },
+                            piece.as_image_copy(),
+                            rect.extent(),
+                        );
+                        piece
+                    })
+                    .collect();
+                (rect, textures)
+            })
+            .collect();
+        self.pre_images.push_back(PreImage {
+            set: snapshot.set,
+            stroke: snapshot.stroke,
+            resolution: snapshot.resolution,
+            pieces,
+            bytes,
+        });
+    }
+
+    /// Copies the snapshot back into the layer within `region`.
     fn restore(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         paint: &GpuPaint,
-        rect: TexelRect,
+        region: &Region,
     ) {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        if rect.is_empty() {
+        if region.is_empty() {
             return;
         }
         let mut encoder = device.create_command_encoder(&Default::default());
-        for (from, to) in snapshot.textures.iter().zip(&paint.layer) {
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    origin: rect.origin(),
-                    ..from.as_image_copy()
-                },
-                wgpu::TexelCopyTextureInfo {
-                    origin: rect.origin(),
-                    ..to.as_image_copy()
-                },
-                rect.extent(),
-            );
+        for rect in &region.rects {
+            for (from, to) in snapshot.textures.iter().zip(&paint.layer) {
+                copy_rect(&mut encoder, from, rect.origin(), to, *rect);
+            }
         }
         queue.submit([encoder.finish()]);
     }
@@ -1424,7 +1676,7 @@ impl PaintRenderer {
         queue: &wgpu::Queue,
         paint: &GpuPaint,
         outputs: &[wgpu::Texture],
-        rect: TexelRect,
+        region: &Region,
     ) {
         let size = paint.resolution;
         let mip0 = |t: &wgpu::Texture, level: u32| {
@@ -1456,10 +1708,12 @@ impl PaintRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            rect.scissor(&mut pass);
             pass.set_pipeline(&self.composite);
             pass.set_bind_group(0, &paint.composite_group, &[]);
-            pass.draw(0..3, 0..1);
+            for rect in &region.rects {
+                rect.scissor(&mut pass);
+                pass.draw(0..3, 0..1);
+            }
         }
         for i in COMPOSITE_OUTPUTS {
             let texture = &outputs[i];
@@ -1482,14 +1736,37 @@ impl PaintRenderer {
                     ],
                 });
                 let mut pass = begin_pass(&mut encoder, &target, None);
-                rect.at_level(level, size).scissor(&mut pass);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &group, &[]);
-                pass.draw(0..3, 0..1);
+                for rect in &region.rects {
+                    rect.at_level(level, size).scissor(&mut pass);
+                    pass.draw(0..3, 0..1);
+                }
             }
         }
         queue.submit([encoder.finish()]);
     }
+}
+
+/// Copies `rect` of `to`'s size from `from` at `origin` into `to` at the rectangle's place.
+fn copy_rect(
+    encoder: &mut wgpu::CommandEncoder,
+    from: &wgpu::Texture,
+    origin: wgpu::Origin3d,
+    to: &wgpu::Texture,
+    rect: TexelRect,
+) {
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            origin,
+            ..from.as_image_copy()
+        },
+        wgpu::TexelCopyTextureInfo {
+            origin: rect.origin(),
+            ..to.as_image_copy()
+        },
+        rect.extent(),
+    );
 }
 
 /// A render pass on one color target, cleared to `clear` or keeping its contents.
@@ -1516,7 +1793,8 @@ fn begin_pass<'a>(
     })
 }
 
-/// Uploads a grayscale alpha with a box-filtered mip chain.
+/// Uploads a grayscale alpha with a box-filtered mip chain. Levels larger than the device
+/// allows are left out.
 fn upload_alpha(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1526,10 +1804,11 @@ fn upload_alpha(
     pixels: &[u8],
 ) -> wgpu::TextureView {
     use wgpu::util::DeviceExt;
-    let mut levels = vec![(width, height, pixels.to_vec())];
+    let mut levels = vec![(width.max(1), height.max(1), pixels.to_vec())];
     while let Some((w, h, data)) = levels.last()
         && (*w > 1 || *h > 1)
     {
+        let (w, h) = (*w, *h);
         let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
         let mut next = Vec::with_capacity((nw * nh) as usize);
         for y in 0..nh {
@@ -1545,6 +1824,13 @@ fn upload_alpha(
         }
         levels.push((nw, nh, next));
     }
+    let limit = device.limits().max_texture_dimension_2d;
+    let first = levels
+        .iter()
+        .position(|(w, h, _)| *w <= limit && *h <= limit)
+        .unwrap_or(levels.len() - 1);
+    let levels = &levels[first..];
+    let (width, height, _) = levels[0];
     let data: Vec<u8> = levels
         .iter()
         .flat_map(|(_, _, d)| d.iter().copied())
@@ -1588,6 +1874,51 @@ mod tests {
             let components = LAYER_FORMATS[channel.index()].components();
             assert_eq!(components == 4, channel.is_color(), "{channel:?}");
         }
+    }
+
+    #[test]
+    fn regions_keep_distant_areas_apart() {
+        let rect = |x: u32, y: u32, w: u32| TexelRect {
+            min: [x, y],
+            max: [x + w, y + w],
+        };
+        let mut region = Region::default();
+        region.add(rect(0, 0, 10));
+        region.add(rect(1000, 1000, 10));
+        assert_eq!(region.rects.len(), 2);
+        assert_eq!(region.texels(), 200);
+        // Close rectangles merge, and the merge can reach a third one.
+        region.add(rect(20, 0, 10));
+        assert_eq!(region.rects.len(), 2);
+        region.add(rect(40, 0, 10));
+        assert_eq!(region.rects.len(), 2);
+        assert!(region.rects.contains(&TexelRect {
+            min: [0, 0],
+            max: [50, 10]
+        }));
+        let grown = region.grown(5, 1024);
+        assert_eq!(
+            grown.bounds(),
+            TexelRect {
+                min: [0, 0],
+                max: [1015, 1015]
+            }
+        );
+        let mut many = Region::default();
+        for i in 0..100 {
+            many.add(rect(i * 100, 0, 1));
+        }
+        assert!(
+            many.rects.len() <= Region::MAX_RECTS,
+            "collapses to bounding boxes"
+        );
+        assert_eq!(
+            many.bounds(),
+            TexelRect {
+                min: [0, 0],
+                max: [9901, 1]
+            }
+        );
     }
 
     #[test]

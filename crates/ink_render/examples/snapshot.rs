@@ -11,8 +11,8 @@
 //! Brush strokes through the middle of the view, to check the paint pipeline: `paint`
 //! (horizontal, red and shiny), `erase` (vertical eraser stroke), `uv` (a diagonal stroke
 //! in UV space), `size=8`, `hardness=0.8`, `tip=round|square`, `res=1024` (texture size),
-//! `live=10` (paints in chunks of 10 dabs like the app does), `undo` (removes the last
-//! stroke again), `nocull` (paints surfaces facing away too), `nodepth` (paints hidden
+//! `live=10` (paints in chunks of 10 dabs like the app does), `undo` or `undo=2` (removes
+//! the last strokes again), `nocull` (paints surfaces facing away too), `nodepth` (paints hidden
 //! surfaces too), `set=Name` (texture set to paint; default: the one in the middle),
 //! `only=Name` (shows only this texture set after painting). `2d` renders the 2D (UV) view of the painted texture set instead.
 
@@ -202,7 +202,7 @@ fn main() -> Result<()> {
         for chunk in dabs.chunks(live) {
             let stroke = model.texture_sets[set].paint.strokes.last_mut().unwrap();
             stroke.dabs.extend_from_slice(chunk);
-            renderer.sync_texture_sets(&device, &queue, &model);
+            renderer.sync_texture_sets(&device, &queue, &model, true);
         }
     }
     if let Some(name) = option("only") {
@@ -210,12 +210,18 @@ fn main() -> Result<()> {
             set.visible = set.name.starts_with(name);
         }
     }
-    if flag("undo") {
+    let undo: usize = match option("undo") {
+        Some(n) => n.parse()?,
+        None => flag("undo") as usize,
+    };
+    for _ in 0..undo {
         model.texture_sets[set].paint.strokes.pop();
-        eprintln!("Undid the last stroke");
+    }
+    if undo > 0 {
+        eprintln!("Undid {undo} strokes");
     }
     let started = std::time::Instant::now();
-    renderer.sync_texture_sets(&device, &queue, &model);
+    renderer.sync_texture_sets(&device, &queue, &model, false);
     device.poll(wgpu::PollType::wait_indefinitely())?;
     eprintln!("Final sync took {:?}", started.elapsed());
     let settings = ViewportSettings {
