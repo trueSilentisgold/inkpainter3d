@@ -11,6 +11,8 @@ const PAGE: u32 = 2048;
 /// Tiles per page side and per page.
 pub(crate) const PAGE_TILES: u32 = PAGE / TILE;
 const TILES_PER_PAGE: u32 = PAGE_TILES * PAGE_TILES;
+/// Most pages a pool grows by at once (512 MiB of 16-bit RGBA).
+const GROW_PAGES: u32 = 16;
 /// Marks a tile that holds no paint.
 pub(crate) const EMPTY: u32 = u32::MAX;
 
@@ -132,11 +134,13 @@ impl TilePool {
         self.free.push(slot);
     }
 
-    /// Doubles the number of pages, keeping the tiles where they are.
+    /// Adds pages, keeping the tiles where they are: doubles small pools, grows large ones
+    /// by [`GROW_PAGES`] at a time, as the old and the new texture exist together while the
+    /// tiles are copied.
     fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let old_pages = self.pages();
         let limit = device.limits().max_texture_array_layers;
-        let pages = (old_pages * 2).min(limit);
+        let pages = (old_pages + old_pages.min(GROW_PAGES)).min(limit);
         assert!(pages > old_pages, "paint tile pool {} is full", self.label);
         let (texture, view, page_views) = Self::create(device, self.label, self.format, pages);
         let mut encoder = device.create_command_encoder(&Default::default());

@@ -39,9 +39,13 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const DEPTH_MAP_CACHE: usize = 8;
 /// Video memory for the tiles strokes painted over, kept for fast undo.
 const PRE_IMAGE_BUDGET: u64 = 512 << 20;
+/// At most this many strokes keep their pre-images.
+const PRE_IMAGES_KEPT: usize = 1024;
 /// Paint layers that left their stack (deleted, or undone) keep their tiles for a while,
 /// in case they come back with undo.
 const ORPHANS_KEPT: usize = 32;
+/// Video memory the tiles of those paint layers may take together.
+const ORPHAN_BUDGET: u64 = 512 << 20;
 /// Uniform buffer offset alignment for the per-channel apply parameters.
 const APPLY_STRIDE: u64 = 256;
 
@@ -680,24 +684,40 @@ impl PaintCaches {
     }
 
     /// Paint layers of the set that are no longer in its stack are kept for undo, up to
-    /// [`ORPHANS_KEPT`] of them; the ones that left first go first.
+    /// [`ORPHANS_KEPT`] of them within [`ORPHAN_BUDGET`]; the ones that left first go first.
     fn drop_orphans(&mut self, set: usize, seen: &HashSet<u64>) {
-        let mut orphans: Vec<(u64, u64)> = self
+        let mut orphans: Vec<(u64, u64, u64)> = self
             .maps
             .iter()
             .filter(|(id, m)| m.set == set && !seen.contains(id))
-            .map(|(&id, m)| (m.last_seen, id))
+            .map(|(&id, m)| (m.last_seen, id, self.map_bytes(m)))
             .collect();
-        if orphans.len() <= ORPHANS_KEPT {
-            return;
-        }
         orphans.sort_unstable();
-        for &(_, id) in &orphans[..orphans.len() - ORPHANS_KEPT] {
+        let mut bytes: u64 = orphans.iter().map(|o| o.2).sum();
+        let mut count = orphans.len();
+        for &(_, id, size) in &orphans {
+            if count <= ORPHANS_KEPT && bytes <= ORPHAN_BUDGET {
+                break;
+            }
             self.forget(id);
             if let Some(map) = self.maps.remove(&id) {
                 self.release_map(&map);
             }
+            count -= 1;
+            bytes -= size;
         }
+    }
+
+    /// Video memory a paint layer's tiles take.
+    fn map_bytes(&self, map: &PaintMap) -> u64 {
+        map.slots
+            .iter()
+            .enumerate()
+            .map(|(c, slots)| {
+                let tiles = slots.iter().filter(|&&s| s != EMPTY).count() as u64;
+                tiles * self.live[map.pool(c) as usize].bytes_per_tile()
+            })
+            .sum()
     }
 
     /// Brings one paint layer's tiles in line with its strokes. Returns the texels that
@@ -814,18 +834,26 @@ impl PaintCaches {
         let tiles = map.tiles_in(region);
         let channels = map.channels_of(stroke);
         let erase = stroke.tool == Tool::Erase;
-        // Make room first: growing a pool replaces its texture.
-        let mut needed = [0u32; 2];
+        // Make room first: growing a pool replaces its texture. A tile touched for the first
+        // time takes a new tile if it was empty, else a snapshot copy.
+        let mut new_tiles = [0u32; 2];
+        let mut copies = [0u32; 2];
         for &c in &channels {
-            let new = tiles
+            for &t in tiles
                 .iter()
                 .filter(|&&t| !snapshot.before.contains_key(&(c, t)))
-                .count() as u32;
-            needed[map.pool(c) as usize] += new;
+            {
+                let kind = map.pool(c) as usize;
+                if map.slots[c][t as usize] != EMPTY {
+                    copies[kind] += 1;
+                } else if !erase {
+                    new_tiles[kind] += 1;
+                }
+            }
         }
         for kind in [PoolKind::Rgba, PoolKind::Rg] {
-            self.live[kind as usize].reserve(device, queue, needed[kind as usize]);
-            self.snap[kind as usize].reserve(device, queue, needed[kind as usize]);
+            self.live[kind as usize].reserve(device, queue, new_tiles[kind as usize]);
+            self.snap[kind as usize].reserve(device, queue, copies[kind as usize]);
         }
 
         let Self {
@@ -889,9 +917,16 @@ impl PaintCaches {
         let tiles = map.tiles_in(region);
         let channels = map.channels_of(stroke);
         let erase = stroke.tool == Tool::Erase;
+        // Only empty tiles take new ones; erasing never does.
         let mut needed = [0u32; 2];
-        for &c in &channels {
-            needed[map.pool(c) as usize] += tiles.len() as u32;
+        if !erase {
+            for &c in &channels {
+                let empty = tiles
+                    .iter()
+                    .filter(|&&t| map.slots[c][t as usize] == EMPTY)
+                    .count() as u32;
+                needed[map.pool(c) as usize] += empty;
+            }
         }
         for kind in [PoolKind::Rgba, PoolKind::Rg] {
             self.live[kind as usize].reserve(device, queue, needed[kind as usize]);
@@ -1130,14 +1165,16 @@ impl PaintCaches {
             .sum()
     }
 
+    /// Keeps a stroke's snapshot for undo. Snapshots of strokes that only painted empty
+    /// tiles copy nothing, but are kept too: undoing them just frees those tiles.
     fn keep_pre_image(&mut self, snapshot: Snapshot) {
         let bytes = self.copies_bytes(&snapshot);
-        if bytes == 0 || bytes > PRE_IMAGE_BUDGET {
+        if bytes > PRE_IMAGE_BUDGET {
             self.release_copies(&snapshot);
             return;
         }
         let mut used: u64 = self.pre_images.iter().map(|p| self.copies_bytes(p)).sum();
-        while used + bytes > PRE_IMAGE_BUDGET
+        while (used + bytes > PRE_IMAGE_BUDGET || self.pre_images.len() >= PRE_IMAGES_KEPT)
             && let Some(oldest) = self.pre_images.pop_front()
         {
             used -= self.copies_bytes(&oldest);

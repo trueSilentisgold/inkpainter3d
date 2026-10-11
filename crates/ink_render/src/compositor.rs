@@ -21,7 +21,7 @@ use ink_core::{
     BlendMode, Channel, ChannelKind, Content, EffectKind, Layer, LayerStack, Mask, Model,
     Projection, ProjectionMode, Texels, TextureImage,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -43,8 +43,9 @@ const PASS_STRIDE: u64 = 256;
 /// Texels around painted ones that are composited too while painting, for the padding past
 /// the UV islands. The rest of the padding follows when the stroke ends.
 const PADDING_MARGIN: u32 = 8;
-/// How far the padding is brought up to date when a stroke ends. Farther texels only
-/// matter for the smallest mips; they catch up with the next full composite.
+/// How far the padding is brought up to date right when a stroke ends. The chunks within
+/// one chunk of the stroke follow a few per frame; farther texels only matter for the
+/// smallest mips and catch up with the next full composite.
 const STROKE_CATCH_UP: u32 = 64;
 /// Chunks of a full composite done per frame.
 const CHUNKS_PER_FRAME: usize = 4;
@@ -525,12 +526,19 @@ impl GpuComposite {
     pub fn is_pending(&self) -> bool {
         self.pending.iter().any(|&p| p)
     }
-}
 
-/// An uploaded fill image.
-struct GpuImage {
-    view: wgpu::TextureView,
-    last_used: u64,
+    /// Queues the chunks that overlap `rect` for compositing.
+    fn mark_pending(&mut self, rect: TexelRect) {
+        if rect.is_empty() {
+            return;
+        }
+        let side = self.chunks_side();
+        for y in rect.min[1] / CHUNK..rect.max[1].div_ceil(CHUNK).min(side) {
+            for x in rect.min[0] / CHUNK..rect.max[0].div_ceil(CHUNK).min(side) {
+                self.pending[(y * side + x) as usize] = true;
+            }
+        }
+    }
 }
 
 /// Textures the size of a chunk.
@@ -566,8 +574,10 @@ pub(crate) struct Compositor {
     resolve_buffer: wgpu::Buffer,
     geometry_buffer: wgpu::Buffer,
     temps: Option<Temps>,
-    images: HashMap<(u64, bool), GpuImage>,
-    image_uses: u64,
+    /// Uploaded fill images by image id and whether they hold colors (sRGB).
+    images: HashMap<(u64, bool), wgpu::TextureView>,
+    /// Per texture set, the images its last composite used.
+    set_images: Vec<HashSet<(u64, bool)>>,
     dummy_acc: wgpu::TextureView,
     dummy_mask: wgpu::TextureView,
     dummy_tiles: wgpu::TextureView,
@@ -934,7 +944,7 @@ impl Compositor {
             ),
             temps: None,
             images: HashMap::new(),
-            image_uses: 0,
+            set_images: Vec::new(),
             dummy_acc: small("dummy", ACC_FORMAT, 1, d2),
             dummy_mask: small("dummy mask", MASK_FORMAT, 1, d2),
             dummy_tiles: small(
@@ -1016,7 +1026,11 @@ impl Compositor {
         }
         if !stroke_in_progress && !state.stroke_region.is_empty() {
             now.extend(&state.stroke_region.grown(STROKE_CATCH_UP, size));
-            state.stroke_region = Region::default();
+            // The padding farther out follows a few chunks per frame.
+            let stroke = std::mem::take(&mut state.stroke_region);
+            for rect in &stroke.rects {
+                state.mark_pending(rect.grow(CHUNK, size));
+            }
         }
         let mut rects: Vec<TexelRect> = Vec::new();
         for rect in &now.rects {
@@ -1056,7 +1070,7 @@ impl Compositor {
                 Some(self.compute_triangles(device, queue, model, mesh, mesh_buffers, set, size));
         }
         self.ensure_temps(device, &program);
-        self.upload_images(device, queue, &program);
+        self.upload_images(device, queue, model.texture_sets.len(), set, &program);
         self.run(
             device,
             queue,
@@ -1123,9 +1137,16 @@ impl Compositor {
         }
     }
 
-    /// Uploads the images the program uses; drops images unused for a while.
-    fn upload_images(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, program: &Program) {
-        self.image_uses += 1;
+    /// Uploads the images the program uses; drops images no texture set uses any more.
+    fn upload_images(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sets: usize,
+        set: usize,
+        program: &Program,
+    ) {
+        let mut used = HashSet::new();
         for step in &program.steps {
             let Step::Pass(pass) = step else {
                 continue;
@@ -1134,19 +1155,16 @@ impl Compositor {
                 continue;
             };
             let key = (image.id, *srgb);
-            let uses = self.image_uses;
+            used.insert(key);
             self.images
                 .entry(key)
-                .or_insert_with(|| GpuImage {
-                    view: upload_image(device, queue, image, *srgb),
-                    last_used: uses,
-                })
-                .last_used = uses;
+                .or_insert_with(|| upload_image(device, queue, image, *srgb));
         }
-        // Images of other texture sets are used every frame too, so only long-unused
-        // ones go.
-        let uses = self.image_uses;
-        self.images.retain(|_, i| uses - i.last_used < 10_000);
+        self.set_images.resize_with(sets, HashSet::new);
+        self.set_images[set] = used;
+        let set_images = &self.set_images;
+        self.images
+            .retain(|key, _| set_images.iter().any(|keys| keys.contains(key)));
     }
 
     /// Composites the chunks.
@@ -1248,7 +1266,7 @@ impl Compositor {
                         None => (&self.dummy_tiles, &self.dummy_slots),
                     };
                 let image = match &p.image {
-                    Some((image, srgb)) => &self.images[&(image.id, *srgb)].view,
+                    Some((image, srgb)) => &self.images[&(image.id, *srgb)],
                     None => &self.dummy_image,
                 };
                 let is_mask = matches!(p.target, Tex::MaskTmp(_) | Tex::MaskCache(_));

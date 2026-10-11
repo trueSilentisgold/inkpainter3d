@@ -12,11 +12,13 @@
 //! (sRGB), `rough=0.2`, `metal=1` (a fill layer at the bottom with these values);
 //! `fill=0.2,0.5,0.9` (a fill layer on top with this base color), `image=file.png` (its base
 //! color image), `normalmap=file.png` (its normal image; `opengl` if it is not DirectX),
-//! `heightmap=file.png` (its height image), `triplanar` and `scale=4` (its projection);
+//! `heightmap=file.png` (its height image), `triplanar`, `scale=4` and `rotate=30` (its
+//! projection);
 //! `mask` (the fill gets a black mask and the strokes paint into it), `levels` (an inverting
 //! levels effect in that mask); `blend=multiply` and `opacity=0.5` (blending of the top
-//! layer's color, roughness and metallic); `folder` (puts the top layer in a folder),
-//! `passthrough` (that folder passes through); `height` (strokes paint only height 1).
+//! layer's color, roughness and metallic), `nblend=` and `nopacity=` (of its normal);
+//! `folder` (puts the top layer in a folder), `passthrough` (that folder passes through);
+//! `height` (strokes paint only height 1).
 //!
 //! Brush strokes through the middle of the view, to check the paint pipeline: `paint`
 //! (horizontal, red and shiny), `erase` (vertical eraser stroke), `uv` (a diagonal stroke
@@ -65,7 +67,11 @@ fn main() -> Result<()> {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))?;
     eprintln!("GPU: {}", adapter.get_info().name);
-    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))?;
+    // Like the app: everything the GPU can do.
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: adapter.limits(),
+        ..Default::default()
+    }))?;
 
     let mut renderer = ViewportRenderer::new(&device, &queue);
     let env = match option("env") {
@@ -408,6 +414,9 @@ fn build_stack<'a>(
             if let Some(scale) = floats("scale")? {
                 fill.projection.scale = [scale[0], scale[0]];
             }
+            if let Some(angle) = floats("rotate")? {
+                fill.projection.rotation = angle[0];
+            }
         }
         if flag("mask") {
             let mut mask = Mask::new(0.0, ids.next());
@@ -426,8 +435,14 @@ fn build_stack<'a>(
         stack.layers.push(layer);
     }
     let layer = stack.find_mut(top).expect("just added");
-    for channel in [Channel::BaseColor, Channel::Roughness, Channel::Metallic] {
+    for (channel, prefix) in [
+        (Channel::BaseColor, ""),
+        (Channel::Roughness, ""),
+        (Channel::Metallic, ""),
+        (Channel::Normal, "n"),
+    ] {
         let blend = layer.blending.get_mut(channel);
+        let option = |key: &str| option(&format!("{prefix}{key}"));
         if let Some(name) = option("blend") {
             blend.mode = *BlendMode::ALL
                 .iter()
