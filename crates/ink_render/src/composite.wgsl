@@ -154,7 +154,8 @@ fn rotate(v: vec2<f32>, angle: f32) -> vec2<f32> {
 // then offset in tiles.
 fn uv_projection(uv: vec2<f32>) -> vec2<f32> {
     let scaled = uv * pass_.transform.xy;
-    return rotate(scaled - 0.5, -pass_.transform.z) + 0.5 + pass_.offset.xy;
+    // Turns the image counterclockwise as seen in the 2D view, like tri-planar projections.
+    return rotate(scaled - 0.5, pass_.transform.z) + 0.5 + pass_.offset.xy;
 }
 
 fn sample_image(uv: vec2<f32>, lod: f32) -> vec4<f32> {
@@ -188,6 +189,14 @@ fn fill_value(s: vec2<i32>, local: vec2<i32>) -> vec4<f32> {
         c = sample_image(uv_projection(uv), lod_for(pass_.params.y * scale / size));
         if (flags & FLAG_DIRECTX) != 0u {
             c.y = 1.0 - c.y;
+        }
+        if (flags & FLAG_NORMAL_IMAGE) != 0u {
+            // The relief turned and mirrored with the image, so its normals turn too (in the
+            // tangent frame, y up).
+            let n = decode_normal(c.xyz);
+            let mirror = vec2<f32>(sign_or_one(pass_.transform.x), sign_or_one(pass_.transform.y));
+            let xy = rotate(n.xy, pass_.transform.z) * mirror;
+            c = vec4<f32>(encode_normal(vec3<f32>(xy, n.z)), c.w);
         }
     } else {
         c = triplanar(local);
@@ -432,13 +441,18 @@ fn blend_premultiplied(below: vec4<f32>, top: vec4<f32>, k: f32, mode: u32, kind
 }
 
 // Fades a normal towards flat, keeping its direction (Painter's normalFade).
-fn fade_normal(n: vec3<f32>, amount: f32) -> vec3<f32> {
-    if amount >= 1.0 || n.z >= 1.0 {
+// Scales the normal's tilt away from flat by `amount`, staying short of 90°.
+fn tilt_normal(n: vec3<f32>, amount: f32) -> vec3<f32> {
+    if amount == 1.0 || n.z >= 1.0 {
         return n;
     }
-    let phi = amount * acos(clamp(n.z, -1.0, 1.0));
+    let phi = min(amount * acos(clamp(n.z, -1.0, 1.0)), 1.55);
     let xy = n.xy / max(sqrt(max(1.0 - n.z * n.z, 0.0)), 1e-6) * sin(phi);
     return vec3<f32>(xy, cos(phi));
+}
+
+fn fade_normal(n: vec3<f32>, amount: f32) -> vec3<f32> {
+    return tilt_normal(n, min(amount, 1.0));
 }
 
 // Whiteout blending (Normal Map Combine).
@@ -474,18 +488,27 @@ fn blend_normal(below: vec4<f32>, top: vec4<f32>, k: f32, mode: u32) -> vec4<f32
     }
     let a = top.w * k;
     let alpha = a + below.w * (1.0 - a);
+    if alpha <= 0.0 {
+        return vec4<f32>(0.5, 0.5, 1.0, 0.0);
+    }
     var n: vec3<f32>;
     switch mode {
-        case BLEND_NORMAL_MAP_COMBINE: { n = whiteout(b, fade_normal(t, a)); }
-        case BLEND_NORMAL_MAP_DETAIL: { n = reoriented(b, fade_normal(t, a)); }
-        case BLEND_NORMAL_MAP_INVERSE_DETAIL: { n = reoriented(fade_normal(t, a), b); }
+        case BLEND_NORMAL_MAP_COMBINE, BLEND_NORMAL_MAP_DETAIL, BLEND_NORMAL_MAP_INVERSE_DETAIL: {
+            // Both normals at the strength their coverage gives them...
+            let fb = fade_normal(b, below.w);
+            let ft = fade_normal(t, a);
+            switch mode {
+                case BLEND_NORMAL_MAP_COMBINE: { n = whiteout(fb, ft); }
+                case BLEND_NORMAL_MAP_DETAIL: { n = reoriented(fb, ft); }
+                default: { n = reoriented(ft, fb); }
+            }
+            // ...and stored straight, as the resolve fades the result by its coverage.
+            n = tilt_normal(normalize(n), 1.0 / alpha);
+        }
         default: {
             // Normal and the color modes: weighted like premultiplied "over".
             n = t * a + b * below.w * (1.0 - a);
         }
-    }
-    if alpha <= 0.0 {
-        return vec4<f32>(0.5, 0.5, 1.0, 0.0);
     }
     return vec4<f32>(encode_normal(n + flat * 1e-6), alpha);
 }
