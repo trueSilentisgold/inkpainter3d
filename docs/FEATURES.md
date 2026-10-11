@@ -91,7 +91,6 @@ sich in inkpainter3d genauso bauen lassen.** Es enthält:
 
 - [x] `P0` Beim Import bleiben **Materialzuweisung und Mesh-Namen erhalten**: aus FBX
       (Material pro Polygon), glTF (Material pro Primitive) und OBJ (`usemtl`).
-      *Heute fasst der Import alles zu einem Mesh zusammen und verwirft die Materialien.*
 - [x] `P0` Jedes Material wird ein Texture Set. Meshes ohne Material landen in einem
       Standard-Set.
 - [x] `P0` **Tangenten nach MikkTSpace**, damit Normal Maps in Unreal, Unity, Godot und Blender
@@ -186,7 +185,7 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 
 **Beleuchtung**
 
-- [x] `P0` **HDRI-Umgebung (Image Based Lighting).** Ersetzt die jetzige Platzhalter-Beleuchtung.
+- [x] `P0` **HDRI-Umgebung (Image Based Lighting).**
 - [x] `P0` **Umgebung drehen mit Shift+Rechts ziehen**, dazu Belichtung,
       Hintergrund-Deckkraft und Hintergrund-Unschärfe.
 - [x] `P0` Mitgelieferte HDRIs (CC0, z. B. von Poly Haven)
@@ -597,7 +596,8 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 | | UI ausblenden | Tab |
 | | Berechnung pausieren | Shift+Esc |
 
-Kamera, Umgebung, Anzeige-Modi, Fokus-Modus und die Set-Auswahl sind so umgesetzt. Unter Linux
+Umgesetzt sind Kamera, Umgebung, die Anzeige-Modi Material und Kanal (M, C / Shift+C),
+Fokus-Modus und Set-Auswahl; Mesh Map (B / Shift+B) folgt mit dem Baking. Unter Linux
 verschieben viele Desktops Fenster mit Alt + Ziehen; die README erklärt, wie man das auf die
 Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) als Option.
 
