@@ -1,0 +1,8 @@
+[package]
+name = "ink_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam.workspace = true

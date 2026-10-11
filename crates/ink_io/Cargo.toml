@@ -1,0 +1,13 @@
+[package]
+name = "ink_io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ink_core.workspace = true
+glam.workspace = true
+gltf.workspace = true
+tobj.workspace = true
+ufbx.workspace = true
+anyhow.workspace = true

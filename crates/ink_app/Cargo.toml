@@ -1,0 +1,20 @@
+[package]
+name = "ink_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "inkpainter3d"
+path = "src/main.rs"
+
+[dependencies]
+ink_core.workspace = true
+ink_io.workspace = true
+ink_render.workspace = true
+eframe.workspace = true
+glam.workspace = true
+rfd.workspace = true
+log.workspace = true
+env_logger.workspace = true
+anyhow.workspace = true
