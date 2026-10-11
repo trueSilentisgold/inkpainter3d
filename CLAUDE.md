@@ -43,7 +43,10 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
 
 Layering: `ink_core` is the data model (no GPU, no file I/O); `ink_io` does everything that
 reads or writes files; `ink_render` does everything wgpu and depends only on `ink_core`
-(`ink_io` is a dev-dependency for the snapshot example); `ink_app` is the eframe/egui UI.
+(`ink_io` is a dev-dependency for the snapshot example); `ink_app` is the eframe/egui UI
+(`app.rs` with `app/views.rs` for the 3D and 2D views and `app/painting.rs` for the brush)
+plus `pen.rs`, pen input on Linux: a Wayland tablet client and an XInput2 pressure reader
+(Linux-only dependencies).
 
 The dependencies are newer than most training data: eframe/egui 0.36 (`App::ui(&mut self,
 ui, frame)`, `egui::Panel::top/right`), wgpu and naga 30, glam 0.34. Look signatures up in
@@ -61,9 +64,10 @@ Things that are easy to get wrong:
   the builder regroups triangles and splits vertices for tangents, so vertex and triangle
   indices do not match the source file.
 - **No stable IDs yet.** Sets, objects and parts are identified by `Vec` index (UI state
-  `expanded`/`focus`, the renderer's GPU sets, material ID colors). Reordering or removing
-  them must update all of these, and persistent data (strokes, project files) needs real IDs
-  first.
+  `expanded`/`focus`, the renderer's GPU sets, material ID colors, `Stroke::hidden_objects`
+  / `hidden_sets`, the undo history). Reordering or removing them must update all of these,
+  and project files need real IDs first. Strokes do have ids (`Model::next_stroke_id`,
+  unique per model).
 - **UV convention.** UVs are stored with the origin top-left (like glTF/wgpu); importers
   flip FBX and OBJ. Tangents are computed in the bottom-left convention so the bitangent
   points up in the image, as OpenGL-style normal maps (Blender, Unity, Godot) expect.
@@ -76,12 +80,34 @@ Things that are easy to get wrong:
   runs every frame and diffs only resolution, fill and alpha mode, so add any new
   GPU-relevant `TextureSet` field there. New geometry goes through `set_model`; `render`
   draws no meshes while the GPU set count differs from the model's.
+- **Strokes → GPU.** The app pushes a stroke onto `TextureSet::paint.strokes` when the button
+  goes down and appends dabs while it moves. `PaintRenderer::sync` (paint.rs) diffs each set's
+  strokes against what its layer holds by (stroke id, dab count): new dabs on the topmost
+  stroke are painted incrementally on top of a snapshot taken when that stroke started; a
+  removed topmost stroke (undo) restores the snapshot; anything else clears the layer and
+  repaints every stroke. So only ever append dabs to the topmost stroke, give new strokes new
+  ids, and keep everything that shapes the pixels inside the `Stroke` (brush values, camera,
+  hidden objects): replays must give the same result.
+- **Paint layer.** One premultiplied 16-bit float texture per `Channel` (`LAYER_FORMATS`):
+  colors as rgb·coverage + coverage, scalars as value·coverage in r and coverage in g. The
+  composite writes `CHANNEL_FORMATS` 0, 2 and 3 (the normal texture stays flat until the
+  layer stack) and reads each texel's paint from its nearest texel inside a UV island (the
+  jump-flood "seeds"), which pads past seams; then it rebuilds the mips.
+- **Buffers reused across draws** (stroke params, dabs, apply params) are written with
+  `queue.write_buffer` and submitted per draw: writes land before the next `submit`, so
+  several draws in one encoder would all see the last write.
+- **Occlusion.** A surface stroke stores its `StrokeCamera`; the renderer draws a depth map
+  for it at a fixed size (`DEPTH_MAP_SIZE`, not the window size) and skips texels behind it.
+  Backface culling compares with the stamp normal, as in Painter.
 - **egui color space.** egui expects gamma-encoded texture values. The viewport renders to an
   sRGB target and hands egui a non-sRGB (`Rgba8Unorm`) view of it; sampling the sRGB view
   makes the viewport look too dark.
 - **Rust ↔ WGSL contracts** break the render without a compile error:
-  `Uniforms`/`TextureSetUniforms` mirror the WGSL structs field for field (vec4/mat4 only;
-  update the size test); the order of `DisplayMode::ALL` is the shader's `DISPLAY_*` code;
+  `Uniforms`/`TextureSetUniforms` (viewport), `GpuDab`/`StrokeParams`/`ApplyParams`/
+  `FillUniforms`/`DepthCamera` (paint) and `UvUniforms` (2D view) mirror the WGSL structs field
+  for field (vec4/mat4 only; update the size tests); the order of `DisplayMode::ALL` is the
+  `DISPLAY_*` code in viewport.wgsl and uv_view.wgsl; `UvCamera::to_pixel` and `to_clip` in
+  uv_view.wgsl must agree;
   the alpha mode rides in `id_color.w`; highlighting uses the draw's first instance (1 =
   highlighted); the panorama mapping (`equirect_uv` in `viewport.wgsl` and
   `ibl_common.wgsl`, its inverse `equirect_direction` in `environment.rs`) and the SH basis
@@ -91,8 +117,16 @@ Things that are easy to get wrong:
   BRDF LUT is computed once.
 - **WGSL validation.** The naga test `shaders_are_valid_wgsl` in `viewport.rs` checks only the
   sources it lists; add new shader files there. `prefilter.wgsl` and `brdf_lut.wgsl` compile
-  only with `ibl_common.wgsl` prepended (`concat!`); `viewport.wgsl` stands alone, hence its
-  own copies of `PI` and `equirect_uv`. `set` is a reserved word.
+  only with `ibl_common.wgsl` prepended (`concat!`); the other shaders stand alone, hence
+  their own copies of helpers like `equirect_uv` or `srgb_to_linear`. `set` and `target`
+  are reserved words.
+- **Pointer input.** Both views run `paint_input` over the same frame's events; a press only
+  starts a stroke in the view whose response is hovered, Alt presses belong to navigation,
+  and a stroke also ends when the button is no longer down (the release can get lost).
+  Pen pressure arrives as the force of `egui::Event::Touch`: from winit on Windows (Windows
+  Ink), injected by `pen.rs` in `raw_input_hook` on Linux. On Wayland the pen reaches the app
+  only through the tablet protocol, so `pen.rs` also injects its pointer events; on X11 the
+  pen moves the pointer itself and `pen.rs` only adds the pressure.
 - **Tests never touch a GPU.** wgpu validation errors (layouts, formats, pipeline state)
   only show at runtime: after any renderer change, run the snapshot example (below).
 
@@ -132,7 +166,15 @@ cargo run --release -p ink_render --example snapshot -- model.fbx out.png displa
 
 The snapshot options are listed at the top of `crates/ink_render/examples/snapshot.rs`; the
 model may also be `sphere` or `cube`. `display=` takes a display mode label without spaces,
-case-insensitive (`basecolor`, `ambientocclusion`, …).
+case-insensitive (`basecolor`, `ambientocclusion`, …). It also paints test strokes through
+the real paint pipeline (`paint`, `erase`, `uv`, `live=`, `undo`, `nocull`, `nodepth`,
+`set=`, `only=`) and renders the 2D view (`2d`). A small OBJ with two parallel quads in
+different materials is the quickest occlusion test.
+
+To check that the app starts on Wayland, install `weston`, run
+`weston --backend=headless --socket=wl-test` with `XDG_RUNTIME_DIR` set to a private
+directory and start the app with `WAYLAND_DISPLAY=wl-test DISPLAY=`. Headless Weston has no
+tablet, so pens can't be tested here.
 
 To drive the real UI, start `Xvfb :99`, run the app with `DISPLAY=:99` and the model as its
 first argument (the file dialogs do nothing here: no xdg portal or zenity), and screenshot

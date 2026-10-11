@@ -177,8 +177,11 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 **Ansichten**
 
 - [x] `P0` 3D-Ansicht
-- [ ] `P0` **2D-Ansicht** (UV-Layout), in der man ebenfalls malen kann
-- [ ] `P0` Layouts **F1** 3D+2D, **F2** nur 3D, **F3** nur 2D, **F4** 3D und 2D tauschen
+- [x] `P0` **2D-Ansicht** (UV-Layout), in der man ebenfalls malen kann. Navigation wie in 3D,
+      Alt+Links dreht die Ansicht. Striche aus der 2D-Ansicht bleiben im UV-Raum, wie Painters
+      Alignment „UV“; Painters Standard (Tangent Wrap) überträgt sie auf die Oberfläche und
+      folgt mit den Alignment-Optionen (Kapitel 8).
+- [x] `P0` Layouts **F1** 3D+2D, **F2** nur 3D, **F3** nur 2D, **F4** 3D und 2D tauschen
 - [x] `P1` Kamera **perspektivisch (F5)** oder **orthografisch (F6)**
 - [ ] `P1` Brennweite / FOV einstellbar
 - [ ] `P1` UI ausblenden (Tab)
@@ -346,8 +349,8 @@ Taste in Klammern = Painter-Shortcut.
 
 **Malen und Füllen**
 
-- [ ] `P0` **Paint (1)**
-- [ ] `P0` **Eraser (2)**
+- [x] `P0` **Paint (1)**
+- [x] `P0` **Eraser (2)**
 - [ ] `P1` **Projection (3):** malt mit einer projizierten Textur, die sich mit W / E / R
       verschieben, drehen und skalieren lässt
 - [ ] `P1` **Polygon Fill (4):** füllt nach Dreieck, Polygon, Mesh oder UV-Insel. Ideal für
@@ -358,8 +361,10 @@ Taste in Klammern = Painter-Shortcut.
 
 **Strich-Hilfen**
 
-- [ ] `P0` **Gerade Linien:** Shift+Klick, mit Strg+Shift+Klick auf Winkel eingerastet
-- [ ] `P0` **Lazy Mouse (D):** Strichglättung
+- [x] `P0` **Gerade Linien:** Shift+Klick zieht eine Linie vom Ende des letzten Strichs, mit
+      Strg+Shift+Klick auf 15° eingerastet. Eine gestrichelte Hilfslinie zeigt sie vorher.
+- [x] `P0` **Lazy Mouse (D):** Strichglättung. Der Pinsel hängt an einer Schnur hinter dem
+      Mauszeiger; Abstand in Prozent der Ansichtshöhe, Standard 8.
 - [ ] `P1` **Symmetrie (L):** Spiegeln an X / Y / Z, lokal oder Welt; radiale Symmetrie
 - [ ] `P1` **Vorherigen Strich fortsetzen (A)**
 - [ ] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
@@ -384,31 +389,41 @@ Taste in Klammern = Painter-Shortcut.
 
 **Form und Strich**
 
-- [ ] `P0` **Size:** Strg+Rechts horizontal ziehen oder [ und ]. Der Größenraum ist wählbar
-      (Objekt, Welt, Bildschirm).
-- [ ] `P0` **Hardness:** Strg+Rechts vertikal ziehen
-- [ ] `P0` **Flow:** Strg+Links horizontal ziehen
-- [ ] `P0` **Stroke Opacity**
-- [ ] `P0` **Spacing**
-- [ ] `P1` **Angle:** Strg+Links vertikal ziehen. Option „Follow Path“.
+- [x] `P0` **Size:** Strg+Rechts horizontal ziehen oder [ und ]. Der Größenraum ist wählbar:
+      Object (relativ zum Modell, Standard) oder Viewport. Painters dritte Option „Texture“
+      (an den 2D-Zoom gekoppelt) fehlt noch.
+- [x] `P0` **Hardness:** Strg+Rechts vertikal ziehen
+- [x] `P0` **Flow:** Strg+Links horizontal ziehen
+- [x] `P0` **Stroke Opacity**
+- [x] `P0` **Spacing**
+- [ ] `P1` **Angle:** Strg+Links vertikal ziehen (umgesetzt). Option „Follow Path“ fehlt noch.
 - [ ] `P1` **Jitter:** Size, Flow, Angle, Position
 
 **Projektion**
 
-- [ ] `P0` **Backface Culling** mit Winkel
-- [ ] `P1` **Alignment:** Tangent Wrap, Tangent Planar, Camera, UV
+- [x] `P0` **Backface Culling** mit Winkel, gemessen zur Normale des Stempels wie in Painter
+- [x] `P0` **Verdeckte Flächen bleiben frei:** Jeder Strich merkt sich seine Kamera; was von dort
+      hinter anderen Flächen liegt, bekommt keine Farbe.
+- [ ] `P1` **Alignment:** Tangent Wrap (umgesetzt, Standard), Tangent Planar, Camera, UV
 
 **Tablet**
 
-- [ ] `P0` **Stiftdruck**, pro Parameter zuweisbar (Size, Flow, Opacity …)
-- [ ] `P1` **Stift-Neigung (Tilt)**
+- [x] `P0` **Stiftdruck** auf Size und Flow, je einzeln schaltbar, mit Mindestwerten und
+      Druckkurve (Linear, Ease In, Ease In Out). Wie in Painter wirkt Druck nicht auf die
+      Stroke Opacity.
+  - Windows: Windows Ink, wie Painter.
+  - Linux mit Wayland (GNOME, KDE): eigenes Tablet-Protokoll, denn diese Desktops geben Stifte
+    nur so weiter. Das Radierer-Ende des Stifts schaltet auf den Eraser.
+  - Linux mit X11: Der Stift bewegt die Maus, den Druck liest eine eigene XInput2-Verbindung.
+- [ ] `P1` **Stift-Neigung (Tilt)** ＋ (Painter unterstützt sie nicht)
 
 **Spitze und Material**
 
-- [ ] `P0` **Alpha:** Pinselform aus einem Graustufenbild
+- [x] `P0` **Alpha:** Pinselform aus einem Graustufenbild (PNG, JPEG; Bilder mit Transparenz
+      nutzen den Alphakanal). Dazu runde und eckige Spitzen mit Härte.
 - [ ] `P1` **Stencil**
-- [ ] `P0` **Material des Pinsels:** Wert oder Farbe pro Kanal; Kanäle einzeln ein- und
-      ausschaltbar
+- [x] `P0` **Material des Pinsels:** Wert oder Farbe pro Kanal; Kanäle einzeln ein- und
+      ausschaltbar. Der Eraser hat eigene Kanal-Schalter.
 - [ ] `P1` Material des Pinsels aus Textur oder Material aus dem Shelf
 
 **Presets**
@@ -597,7 +612,10 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 | | Berechnung pausieren | Shift+Esc |
 
 Umgesetzt sind Kamera, Umgebung, die Anzeige-Modi Material und Kanal (M, C / Shift+C),
-Fokus-Modus und Set-Auswahl; Mesh Map (B / Shift+B) folgt mit dem Baking. Unter Linux
+Fokus-Modus, Set-Auswahl, Paint und Eraser (1 / 2), Pinselgröße, Härte, Flow und Winkel,
+gerade Linien, Lazy Mouse, Rückgängig / Wiederholen und die Layouts F1 bis F4; Mesh Map
+(B / Shift+B) folgt mit dem Baking. [ und ] funktionieren auch, wenn AltGr als Strg+Alt
+ankommt (deutsche Tastatur unter Windows). Unter Linux
 verschieben viele Desktops Fenster mit Alt + Ziehen; die README erklärt, wie man das auf die
 Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) als Option.
 
@@ -617,7 +635,8 @@ Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) 
 
 ## 16. Undo, Leistung, Stabilität
 
-- [ ] `P0` **Undo / Redo** für alle Aktionen (Striche, Layer, Einstellungen)
+- [ ] `P0` **Undo / Redo** für alle Aktionen (Striche, Layer, Einstellungen). Striche sind
+      umgesetzt (Strg+Z, Strg+Y, Strg+Shift+Z), Einstellungen und Layer folgen.
 - [ ] `P1` **History-Fenster**
 - [ ] `P0` **Flüssiges Malen bei 4K pro Texture Set** auf einer Mittelklasse-GPU
 - [ ] `P0` **5 Texture Sets mit je 4K** in einem Projekt wie im Referenzprojekt
@@ -672,7 +691,9 @@ Diese Punkte müssen **vor** der Brush-Engine feststehen, weil später alles dar
    so geht die Auflösung jederzeit verlustfrei zu ändern, und die Bemalung übersteht einen
    Mesh-Re-Import. **Wir machen es genauso.** Pixel werden zusätzlich gecacht, damit nichts
    neu berechnet werden muss, solange sich nichts ändert. Dazu kommt eine Option „Layer
-   rastern“ für sehr schwere Layer.
+   rastern“ für sehr schwere Layer. *Seit Phase 3:* Ein Strich speichert seine Tupfer im
+   Weltraum (Striche aus der 2D-Ansicht im UV-Raum), die Pinsel-Einstellungen und die Kamera.
+   Der Paint Layer auf der GPU ist der Pixel-Cache; geändert wird nur, was neu ist.
 2. **Szene statt Einzel-Mesh.** Das Datenmodell bekommt Meshes (mit Namen) und Texture Sets
    (mit Material-Slot und Liste der UV-Tiles). Ein Texture Set besitzt Layer Stack, Kanäle und
    Auflösung.
@@ -686,7 +707,7 @@ Diese Punkte müssen **vor** der Brush-Engine feststehen, weil später alles dar
 6. **Projektdatei** als ZIP-Container mit JSON (Struktur, Strokes, Einstellungen) und
    Binärdaten (Mesh, gerasterte Caches als EXR). Das Format wird dokumentiert.
 7. **Undo** über Befehle (Command Pattern), die auf den Stroke-Daten arbeiten. Undo braucht so
-   nur wenig Speicher.
+   nur wenig Speicher. *Seit Phase 3* für Striche umgesetzt.
 
 ---
 
@@ -699,8 +720,8 @@ texturieren und exportieren.**
 |---|---|---|
 | 1 | **Viewport:** Import (FBX, glTF, OBJ), PBR- und Stylized-Shading, Kamera | ✅ fertig |
 | 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader (inkl. Emissive und Opacity), HDRI-Beleuchtung, Painter-Navigation | ✅ fertig |
-| 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ⏳ als Nächstes |
-| 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | |
+| 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ✅ fertig |
+| 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ⏳ als Nächstes |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | |
 | 6 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
 | 7 | **Generatoren und Bibliothek:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Shelf, Starter-Inhalte | |

@@ -7,10 +7,13 @@
 //!   nothing at all. A small client on a background thread shares winit's connection,
 //!   listens to the pen and hands it to egui as pointer events, plus touch events whose
 //!   force carries the pressure (as on Windows).
-//! - **X11:** the pen moves the mouse, without pressure.
+//! - **X11:** the pen moves the mouse pointer, so winit sees it as a mouse. A second
+//!   connection reads the pressure from XInput2 on a background thread, and it is handed
+//!   to egui as touch events while the pen is the device in use.
 
 use eframe::egui;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 
 /// Everything a pen reported between two `frame` events of the tablet protocol.
 #[derive(Clone, Debug, Default)]
@@ -41,12 +44,22 @@ pub enum PenNotice {
     EraserOut,
 }
 
+/// The pressure XInput2 last reported, and whether the pen was the last device to move.
+#[derive(Clone, Copy, Debug, Default)]
+struct X11Pressure {
+    value: f32,
+    pen: bool,
+}
+
 pub struct PenInput {
     frames: Option<Receiver<PenFrame>>,
     position: Option<egui::Pos2>,
     pressure: f32,
     touching: bool,
     eraser: bool,
+    x11: Option<Arc<Mutex<X11Pressure>>>,
+    /// The X11 pen is reported to egui as a touch.
+    x11_touching: bool,
 }
 
 /// Linux input codes of the pen's side buttons, mapped like GTK does.
@@ -57,13 +70,16 @@ const BTN_STYLUS3: u32 = 0x149;
 impl PenInput {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = channel();
-        let listening = start(cc, tx);
+        let x11 = Arc::new(Mutex::new(X11Pressure::default()));
+        let backend = start(cc, tx, x11.clone());
         Self {
-            frames: listening.then_some(rx),
+            frames: (backend == Some(Backend::Wayland)).then_some(rx),
             position: None,
             pressure: 1.0,
             touching: false,
             eraser: false,
+            x11: (backend == Some(Backend::X11)).then_some(x11),
+            x11_touching: false,
         }
     }
 
@@ -71,6 +87,30 @@ impl PenInput {
     /// `raw_input_hook`.
     pub fn feed(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) -> Vec<PenNotice> {
         let mut notices = Vec::new();
+        if let Some(x11) = &self.x11 {
+            let pressure = *x11.lock().unwrap_or_else(|e| e.into_inner());
+            let pos = ctx.input(|i| i.pointer.latest_pos()).unwrap_or_default();
+            let phase = match (pressure.pen, self.x11_touching) {
+                (true, false) => Some(egui::TouchPhase::Start),
+                (true, true) => Some(egui::TouchPhase::Move),
+                (false, true) => Some(egui::TouchPhase::End),
+                (false, false) => None,
+            };
+            if let Some(phase) = phase {
+                self.x11_touching = pressure.pen;
+                // Ahead of this frame's pointer events, so they paint with this pressure.
+                raw.events.insert(
+                    0,
+                    egui::Event::Touch {
+                        device_id: egui::TouchDeviceId(u64::from_le_bytes(*b"inkpen\0\0")),
+                        id: egui::TouchId(0),
+                        phase,
+                        pos,
+                        force: pressure.pen.then_some(pressure.value),
+                    },
+                );
+            }
+        }
         let Some(frames) = &self.frames else {
             return notices;
         };
@@ -152,44 +192,206 @@ impl PenInput {
     }
 }
 
-/// Starts listening to pens if the window is on Wayland. Returns whether it did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Backend {
+    Wayland,
+    X11,
+}
+
+/// Starts listening to pens on Linux. Returns which way, if any.
 #[cfg(target_os = "linux")]
-fn start(cc: &eframe::CreationContext<'_>, tx: Sender<PenFrame>) -> bool {
+fn start(
+    cc: &eframe::CreationContext<'_>,
+    tx: Sender<PenFrame>,
+    x11_pressure: Arc<Mutex<X11Pressure>>,
+) -> Option<Backend> {
     use raw_window_handle::{
         HasDisplayHandle as _, HasWindowHandle as _, RawDisplayHandle, RawWindowHandle,
     };
     let (Some(window), Ok(display), Ok(handle)) =
         (cc.winit_window(), cc.display_handle(), cc.window_handle())
     else {
-        return false;
+        return None;
     };
-    let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(surface)) =
-        (display.as_raw(), handle.as_raw())
-    else {
-        return false;
-    };
-    // Raw pointers are not Send; the window kept alive below keeps them valid.
-    let display = display.display.as_ptr() as usize;
-    let surface = surface.surface.as_ptr() as usize;
-    let window = window.clone();
-    let ctx = cc.egui_ctx.clone();
+    match (display.as_raw(), handle.as_raw()) {
+        (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(surface)) => {
+            // Raw pointers are not Send; the window kept alive below keeps them valid.
+            let display = display.display.as_ptr() as usize;
+            let surface = surface.surface.as_ptr() as usize;
+            let window = window.clone();
+            let ctx = cc.egui_ctx.clone();
+            std::thread::Builder::new()
+                .name("pen".into())
+                .spawn(move || {
+                    let _keep_alive = window;
+                    // SAFETY: the window holds winit's Wayland connection and surface, and
+                    // the thread holds the window.
+                    let result =
+                        unsafe { wayland::run(display as *mut _, surface as *mut _, tx, ctx) };
+                    if let Err(err) = result {
+                        log::warn!("No pen tablet support: {err}");
+                    }
+                })
+                .ok()
+                .map(|_| Backend::Wayland)
+        }
+        (_, RawWindowHandle::Xlib(handle)) => spawn_x11(handle.window as u32, x11_pressure),
+        (_, RawWindowHandle::Xcb(handle)) => spawn_x11(handle.window.get(), x11_pressure),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_x11(window: u32, pressure: Arc<Mutex<X11Pressure>>) -> Option<Backend> {
     std::thread::Builder::new()
         .name("pen".into())
         .spawn(move || {
-            let _keep_alive = window;
-            // SAFETY: the window holds winit's Wayland connection and surface, and the
-            // thread holds the window.
-            if let Err(err) = unsafe { wayland::run(display as *mut _, surface as *mut _, tx, ctx) }
-            {
-                log::warn!("No pen tablet support: {err}");
+            if let Err(err) = x11::run(window, pressure) {
+                log::warn!("No pen pressure: {err}");
             }
         })
-        .is_ok()
+        .ok()
+        .map(|_| Backend::X11)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn start(_cc: &eframe::CreationContext<'_>, _tx: Sender<PenFrame>) -> bool {
-    false
+fn start(
+    _cc: &eframe::CreationContext<'_>,
+    _tx: Sender<PenFrame>,
+    _x11_pressure: Arc<Mutex<X11Pressure>>,
+) -> Option<Backend> {
+    None
+}
+
+/// Pen pressure on X11 through XInput2.
+#[cfg(target_os = "linux")]
+mod x11 {
+    use super::X11Pressure;
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, Mutex};
+    use x11rb::connection::Connection;
+    use x11rb::protocol::Event;
+    use x11rb::protocol::xinput::{
+        self, ConnectionExt as _, DeviceClassData, EventMask, Fp3232, XIEventMask,
+    };
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    /// XInput2's id for "every device".
+    const ALL_DEVICES: xinput::DeviceId = 0;
+
+    /// The pressure axis of a device.
+    struct Axis {
+        number: u16,
+        min: f64,
+        max: f64,
+    }
+
+    /// Reads pressure for our window until the connection closes.
+    pub fn run(window: u32, shared: Arc<Mutex<X11Pressure>>) -> Result<(), String> {
+        let error = |e: &dyn std::fmt::Display| e.to_string();
+        let (conn, _) = x11rb::connect(None).map_err(|e| error(&e))?;
+        conn.xinput_xi_query_version(2, 0)
+            .map_err(|e| error(&e))?
+            .reply()
+            .map_err(|_| "the X server has no XInput2".to_owned())?;
+        let label = conn
+            .intern_atom(false, b"Abs Pressure")
+            .map_err(|e| error(&e))?
+            .reply()
+            .map_err(|e| error(&e))?
+            .atom;
+        let mut axes = pressure_axes(&conn, label)?;
+        let mut others: HashSet<xinput::DeviceId> = HashSet::new();
+        conn.xinput_xi_select_events(
+            window,
+            &[EventMask {
+                deviceid: ALL_DEVICES,
+                mask: vec![XIEventMask::MOTION],
+            }],
+        )
+        .map_err(|e| error(&e))?;
+        conn.flush().map_err(|e| error(&e))?;
+        loop {
+            let event = conn.wait_for_event().map_err(|e| error(&e))?;
+            let Event::XinputMotion(motion) = event else {
+                continue;
+            };
+            // Each motion arrives from the physical device and again from the master
+            // pointer; the physical one carries that device's own axes.
+            if motion.deviceid != motion.sourceid {
+                continue;
+            }
+            let device = motion.sourceid;
+            if !axes.contains_key(&device) && !others.contains(&device) {
+                // A device we haven't seen: plugged in after startup, or not a pen.
+                axes = pressure_axes(&conn, label)?;
+                if !axes.contains_key(&device) {
+                    others.insert(device);
+                }
+            }
+            let mut pressure = shared.lock().unwrap_or_else(|e| e.into_inner());
+            match axes.get(&device) {
+                Some(axis) => {
+                    if let Some(value) = valuator(&motion, axis.number) {
+                        let range = (axis.max - axis.min).max(1e-9);
+                        pressure.value = ((value - axis.min) / range).clamp(0.0, 1.0) as f32;
+                    }
+                    pressure.pen = true;
+                }
+                None => pressure.pen = false,
+            }
+        }
+    }
+
+    /// The devices that report pressure, by id.
+    fn pressure_axes(
+        conn: &impl Connection,
+        label: u32,
+    ) -> Result<HashMap<xinput::DeviceId, Axis>, String> {
+        let devices = conn
+            .xinput_xi_query_device(ALL_DEVICES)
+            .map_err(|e| e.to_string())?
+            .reply()
+            .map_err(|e| e.to_string())?;
+        let mut axes = HashMap::new();
+        for device in devices.infos {
+            for class in &device.classes {
+                if let DeviceClassData::Valuator(v) = &class.data
+                    && v.label == label
+                {
+                    axes.insert(
+                        device.deviceid,
+                        Axis {
+                            number: v.number,
+                            min: fixed(&v.min),
+                            max: fixed(&v.max),
+                        },
+                    );
+                }
+            }
+        }
+        Ok(axes)
+    }
+
+    /// The value of valuator `number` if the event carries it. `axisvalues` holds only the
+    /// valuators whose bit is set in `valuator_mask`, in order.
+    fn valuator(event: &xinput::MotionEvent, number: u16) -> Option<f64> {
+        let set = |bit: u16| {
+            event
+                .valuator_mask
+                .get(bit as usize / 32)
+                .is_some_and(|word| word & (1 << (bit % 32)) != 0)
+        };
+        if !set(number) {
+            return None;
+        }
+        let index = (0..number).filter(|&bit| set(bit)).count();
+        event.axisvalues.get(index).map(fixed)
+    }
+
+    fn fixed(v: &Fp3232) -> f64 {
+        v.integral as f64 + v.frac as f64 / 4_294_967_296.0
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -455,6 +657,8 @@ mod tests {
             pressure: 1.0,
             touching: false,
             eraser: false,
+            x11: None,
+            x11_touching: false,
         };
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
