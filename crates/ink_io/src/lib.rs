@@ -1,5 +1,6 @@
 //! Model and environment import, project files and texture export.
 
+pub mod export;
 pub mod project;
 
 use anyhow::{Context, Result, bail};
@@ -18,7 +19,9 @@ pub const ENVIRONMENT_EXTENSIONS: &[&str] = &["hdr", "exr"];
 pub const ALPHA_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
 /// Image formats [`load_texture`] reads.
-pub const TEXTURE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tga", "bmp", "exr", "hdr"];
+pub const TEXTURE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "tga", "bmp", "tif", "tiff", "exr", "hdr",
+];
 
 /// Loads a model file in world space, keeping its objects and materials. Every material
 /// becomes a texture set.
