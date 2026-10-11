@@ -31,11 +31,16 @@ impl Default for UvCamera {
 }
 
 impl UvCamera {
-    /// Shows the whole UV square, keeping the rotation.
-    pub fn frame(&mut self) {
+    /// Shows the whole UV square in a view of this size, keeping the rotation.
+    pub fn frame(&mut self, viewport: Vec2) {
+        let (sin, cos) = self.angle.sin_cos();
+        // Extent of the rotated square on screen, in UV units.
+        let extent = Vec2::new(cos.abs() + sin.abs(), sin.abs() + cos.abs());
+        let aspect = viewport.x.max(1.0) / viewport.y.max(1.0);
         *self = Self {
+            center: Vec2::splat(0.5),
+            height: 1.1 * extent.y.max(extent.x / aspect),
             angle: self.angle,
-            ..Self::default()
         };
     }
 
@@ -361,6 +366,20 @@ mod tests {
                 .distance(uv)
                 < 1e-5
         );
+    }
+
+    #[test]
+    fn framing_fits_narrow_views() {
+        let mut camera = UvCamera::default();
+        let narrow = Vec2::new(400.0, 800.0);
+        camera.frame(narrow);
+        for corner in [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE] {
+            let p = camera.to_pixel(corner, narrow);
+            assert!(
+                p.x >= 0.0 && p.x <= narrow.x && p.y >= 0.0 && p.y <= narrow.y,
+                "{p}"
+            );
+        }
     }
 
     #[test]

@@ -1222,7 +1222,11 @@ dependencies = [
  "ink_io",
  "ink_render",
  "log",
+ "raw-window-handle",
  "rfd",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 mod painting;
 mod views;
 
+use crate::pen::{PenInput, PenNotice};
 use eframe::egui::{self, Color32, Key, RichText, Sense};
 use eframe::egui_wgpu::RenderState;
 use ink_core::{AlphaMode, History, Mesh, Model};
@@ -46,6 +47,13 @@ pub struct InkApp {
     uv_wireframe: bool,
     /// Unsnapped 2D view rotation while snap-rotating.
     uv_rotation: Option<f32>,
+    /// Keep the UV square framed in the 2D view while its size changes, until the user
+    /// pans, zooms or rotates it.
+    uv_auto_frame: bool,
+    uv_framed_size: Option<[u32; 2]>,
+    pen: PenInput,
+    /// The tool to go back to when the pen's eraser end leaves.
+    tool_before_eraser: Option<ink_core::Tool>,
 }
 
 impl InkApp {
@@ -94,6 +102,10 @@ impl InkApp {
             uv_display: DisplayMode::Material,
             uv_wireframe: true,
             uv_rotation: None,
+            uv_auto_frame: true,
+            uv_framed_size: None,
+            pen: PenInput::new(cc),
+            tool_before_eraser: None,
         };
         app.set_model(render_state, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
 
@@ -109,7 +121,8 @@ impl InkApp {
         self.uv_view.set_model(&rs.device, &model);
         self.paint.reset();
         self.history.clear();
-        self.uv_camera.frame();
+        self.uv_auto_frame = true;
+        self.uv_framed_size = None;
         self.camera.frame(&model.bounds());
         self.selected_set = 0;
         // Expand single-set models right away; they have nothing else to show.
@@ -565,6 +578,23 @@ impl InkApp {
 }
 
 impl eframe::App for InkApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        for notice in self.pen.feed(ctx, raw_input) {
+            match notice {
+                // Flipping the pen erases, like in most painting programs.
+                PenNotice::EraserIn => {
+                    self.tool_before_eraser.get_or_insert(self.paint.tool);
+                    self.paint.tool = ink_core::Tool::Erase;
+                }
+                PenNotice::EraserOut => {
+                    if let Some(tool) = self.tool_before_eraser.take() {
+                        self.paint.tool = tool;
+                    }
+                }
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let Some(rs) = frame.wgpu_render_state().cloned() else {
             return;

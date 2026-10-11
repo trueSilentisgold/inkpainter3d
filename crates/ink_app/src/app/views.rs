@@ -182,6 +182,11 @@ impl InkApp {
 
         // Same navigation as in 3D: Alt+LMB rotates (Shift snaps to 90°), Alt+MMB or
         // Ctrl+Alt+LMB pans, Alt+RMB or the wheel zooms.
+        if alt && (left || middle || right)
+            || (response.hovered() && ui.input(|i| i.smooth_scroll_delta().y != 0.0))
+        {
+            self.uv_auto_frame = false;
+        }
         if alt && left && !ctrl {
             let angle = self.uv_rotation.get_or_insert(self.uv_camera.angle);
             *angle += delta.x * 0.01;
@@ -210,6 +215,11 @@ impl InkApp {
 
     fn uv_view(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let rounded = [rect.width().round() as u32, rect.height().round() as u32];
+        if self.uv_auto_frame && self.uv_framed_size != Some(rounded) {
+            self.uv_camera.frame(Vec2::new(rect.width(), rect.height()));
+            self.uv_framed_size = Some(rounded);
+        }
         self.navigate_uv(ui, &response, rect);
         self.paint_input(ui, &response, rect, View::Uv);
 
@@ -257,7 +267,8 @@ impl InkApp {
     /// Frames the model in 3D and the UV square in 2D (F).
     pub(super) fn frame_views(&mut self) {
         self.camera.frame(&self.model.bounds());
-        self.uv_camera.frame();
+        self.uv_auto_frame = true;
+        self.uv_framed_size = None;
     }
 
     pub(super) fn reset_hover(&mut self) {

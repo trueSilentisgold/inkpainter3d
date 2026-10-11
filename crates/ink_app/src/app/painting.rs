@@ -314,7 +314,7 @@ impl InkApp {
         };
         let brush = self.paint.brush().clone();
         let mut dabs = Vec::new();
-        let path = {
+        let mut path = {
             let project = self.projector(view, rect, &brush);
             let lazy = self.lazy_pixels(rect);
             StrokePath::start(
@@ -326,6 +326,15 @@ impl InkApp {
                 &mut dabs,
             )
         };
+        // Small brushes need finer steps along the path, or dabs would leave gaps.
+        if let Some(dab) = dabs.first() {
+            let size = Vec2::new(rect.width(), rect.height());
+            let pixel = match view {
+                View::Model => self.camera.view_height_at(dab.position) / size.y.max(1.0),
+                View::Uv => self.uv_camera.uv_per_pixel(size),
+            };
+            path.screen_step = (dab.radius / pixel * 0.5).clamp(0.25, 2.0);
+        }
         self.push_dabs(set, dabs);
         self.paint.stroke = Some(ActiveStroke {
             view,
@@ -441,6 +450,14 @@ impl InkApp {
         }
         let modifiers = ui.input(|i| i.modifiers);
         let pressed = |key| ui.input(|i| i.key_pressed(key));
+        // Before the Ctrl check: on German layouts [ and ] are AltGr+8 / 9, which Windows
+        // reports as Ctrl+Alt.
+        if pressed(Key::OpenBracket) {
+            self.paint.brush_mut().step_size(-1.0);
+        }
+        if pressed(Key::CloseBracket) {
+            self.paint.brush_mut().step_size(1.0);
+        }
         if modifiers.command {
             if pressed(Key::Z) {
                 if modifiers.shift {
@@ -459,12 +476,6 @@ impl InkApp {
         }
         if pressed(Key::Num2) {
             self.paint.tool = Tool::Erase;
-        }
-        if pressed(Key::OpenBracket) {
-            self.paint.brush_mut().step_size(-1.0);
-        }
-        if pressed(Key::CloseBracket) {
-            self.paint.brush_mut().step_size(1.0);
         }
         if pressed(Key::D) {
             self.paint.lazy_mouse = !self.paint.lazy_mouse;
