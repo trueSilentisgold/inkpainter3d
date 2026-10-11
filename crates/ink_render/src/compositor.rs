@@ -1817,7 +1817,9 @@ fn upload_image(
                 |v| (v * 255.0).round() as u8
             };
             let base: Vec<f32> = pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| {
                     [
                         to_linear(p[0]),
@@ -1831,7 +1833,9 @@ fn upload_image(
                 .into_iter()
                 .map(|(w, h, data)| {
                     let bytes = data
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .flat_map(|p| {
                             [
                                 from_linear(p[0]),
@@ -1853,7 +1857,9 @@ fn upload_image(
                 if srgb { srgb_to_linear(v) } else { v }
             };
             let base: Vec<f32> = pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| {
                     [
                         decode(p[0]),
