@@ -15,6 +15,22 @@ Alltag ersetzt. Vorbild ist Painter in Version 12.x (Stand Oktober 2026).
 4. **Linux ist Hauptplattform, Windows gleichwertig.** Painter gibt es für Linux nur mit
    Enterprise-Lizenz (RHEL) oder als Steam-Version (Ubuntu 22.04), und Mesa-Treiber werden nicht
    unterstützt. inkpainter3d soll auf jeder Vulkan-fähigen GPU laufen, auch mit Mesa (AMD, Intel).
+5. **Realistisches PBR hat Vorrang.** Stylized und Toon kommen auch, sind aber zweitrangig.
+   Ziel-Engines sind **Blender, Unity und Godot**.
+
+## Referenzprojekt
+
+Ein echtes Painter-Projekt (Painter 12.1.5) dient als Abnahmetest: **Was dort gebaut wurde, muss
+sich in inkpainter3d genauso bauen lassen.** Es enthält:
+
+- 5 Texture Sets mit je 4096², die sich einen Shader teilen: Körper, Extras, Ohren,
+  Alpha-Test-Karten (Fell, Schnurrhaare) und Alpha-Blend-Teile
+- Ordner, zum Teil mit Blend Mode *Multiply*
+- Fill Layer mit Masken; in einer Maske ein Blur-Filter mit Blend Mode *Replace*
+- Leuchtende Linien über den Emissive-Kanal
+- Kanäle Base Color, Roughness, Metallic, Normal, Height, Emissive, Opacity
+- Arbeit mit 3D- und 2D-Ansicht nebeneinander (Layout F1)
+- Materialien aus einer großen Asset-Bibliothek (Substance 3D Assets)
 
 ## Legende
 
@@ -162,8 +178,8 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 **Ansichten**
 
 - [ ] `P0` 3D-Ansicht
-- [ ] `P1` **2D-Ansicht** (UV-Layout), in der man ebenfalls malen kann
-- [ ] `P1` Layouts **F1** 3D+2D, **F2** nur 3D, **F3** nur 2D, **F4** 3D und 2D tauschen
+- [ ] `P0` **2D-Ansicht** (UV-Layout), in der man ebenfalls malen kann
+- [ ] `P0` Layouts **F1** 3D+2D, **F2** nur 3D, **F3** nur 2D, **F4** 3D und 2D tauschen
 - [ ] `P1` Kamera **perspektivisch (F5)** oder **orthografisch (F6)**, Brennweite / FOV
 - [ ] `P1` UI ausblenden (Tab)
 
@@ -206,8 +222,8 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 
 | Prio | Kanäle |
 |---|---|
-| `P0` | Base Color, Roughness, Metallic, Normal, Height |
-| `P1` | Ambient Occlusion, Emissive, Opacity, Specular / Glossiness (für Spec-Gloss), User-Kanäle (frei benennbar, mehrere) |
+| `P0` | Base Color, Roughness, Metallic, Normal, Height, Emissive, Opacity |
+| `P1` | Ambient Occlusion, Specular / Glossiness (für Spec-Gloss), User-Kanäle (frei benennbar, mehrere) |
 | `P2` | Specular Level, Displacement, Anisotropy, Transmission, IOR, Scattering (SSS), Sheen, Coat |
 | **＋** | **Ink** (Linienfarbe und -stärke für den Stylized-Look) |
 
@@ -219,7 +235,7 @@ lineare Daten. Bei User-Kanälen ist sie umschaltbar.
 - [ ] `P0` **PBR Metallic/Roughness** (GGX)
 - [x] `P0` ＋ **Stylized / Toon** mit Ink-Outline. Das Grundgerüst steht, wird aber erweitert.
 - [ ] `P1` **PBR Specular/Glossiness**
-- [ ] `P1` Opacity: Alpha Test und Alpha Blend
+- [ ] `P0` Opacity: Alpha Test und Alpha Blend
 - [ ] `P1` Unlit
 - [ ] `P1` Shader-Parameter pro Shader-Instanz (siehe 2.2)
 - [ ] `P2` Subsurface Scattering
@@ -315,7 +331,7 @@ eigenen Stapel:
 - [ ] `P0` **Paint**
 - [ ] `P0` **Fill**
 - [ ] `P1` **Levels**
-- [ ] `P1` **Filter** (siehe Kapitel 11)
+- [ ] `P1` **Filter** (siehe Kapitel 11); Blur schon `P0`
 - [ ] `P1` **Generator** (siehe Kapitel 11)
 - [ ] `P2` **Compare Mask**
 - [ ] `P2` **Anchor Point:** Zwischenergebnis des Stacks, das spätere Generatoren und Filter
@@ -473,7 +489,8 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 **Filter**
 
-- [ ] `P1` Blur, Sharpen, HSL / Farbkorrektur, Gradient Map, Height-zu-Normal
+- [ ] `P0` Blur
+- [ ] `P1` Sharpen, HSL / Farbkorrektur, Gradient Map, Height-zu-Normal
 - [ ] `P2` Directional Blur, Slope Blur, Warp, Baked Lighting
 - [ ] `P2` ＋ Stylized-Filter: Posterize, Hand-Painted-Look, Pixel Art
 
@@ -507,8 +524,11 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 - [ ] `P1` **Eigene Ressourcen importieren** (Bilder, Presets), entweder in die Bibliothek oder
       nur ins Projekt
 - [ ] `P2` Eigene Bibliotheks-Ordner (Sub-Libraries), Favoriten, Tags
-- [ ] `P2` ＋ **PBR-Materialordner importieren:** ein Ordner mit Base Color, Roughness, Normal …
+- [ ] `P1` ＋ **PBR-Materialordner importieren:** ein Ordner mit Base Color, Roughness, Normal …
       im Format von Poly Haven oder ambientCG wird automatisch ein Material
+- [ ] `P1` ＋ **Online-Bibliotheken im Shelf:** ambientCG und Poly Haven (zusammen mehrere
+      tausend CC0-Materialien) direkt durchsuchen und herunterladen. Das ist der Ersatz für
+      Substance 3D Assets, die nur mit Adobes Engine laufen.
 
 ---
 
@@ -516,9 +536,14 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 - [ ] `P0` **Export-Dialog** (Strg+Shift+E) mit Zielordner, Auswahl der Texture Sets und
       Vorschau der erzeugten Dateien
-- [ ] `P0` **Mitgelieferte Vorlagen:** Unreal Engine (Packed: Occlusion, Roughness, Metallic in
-      einer Textur), Unity (URP, HDRP), Godot, Blender, glTF PBR Metal Roughness, Document
-      Channels
+- [ ] `P0` **Mitgelieferte Vorlagen für Blender, Unity und Godot**, dazu glTF PBR Metal
+      Roughness und Document Channels. Alle drei Engines erwarten Normal Maps im
+      OpenGL-Format.
+  - Blender: Principled BSDF (Base Color mit Alpha, Roughness, Metallic, Normal, Emission)
+  - Unity: Albedo mit Alpha, Metallic mit Smoothness im Alpha-Kanal, Normal, Occlusion,
+    Emission; für HDRP zusätzlich die Mask Map
+  - Godot: StandardMaterial3D mit ORM-Textur (Occlusion, Roughness, Metallic)
+- [ ] `P1` Vorlagen für Unreal Engine (Packed), Arnold, USD
 - [ ] `P0` **Dateiformate** PNG, TGA, JPEG mit 8 Bit; `P1` PNG mit 16 Bit, TIFF, EXR (16 / 32
       Bit Float); `P2` PSD mit Layern, DDS
 - [ ] `P0` **Padding:** Dilation unendlich oder N Pixel, Dilation mit transparentem oder
@@ -585,7 +610,7 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 - [ ] `P1` Fenster-Layouts speichern und wiederherstellen; Standard-Layout ähnlich wie in
       Painter
 - [ ] `P1` Dunkles Design, skalierbar für HiDPI
-- [ ] `P2` Übersetzungen (Deutsch, Englisch)
+- [ ] `P1` Deutsche und englische Oberfläche
 
 ---
 
@@ -594,7 +619,7 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 - [ ] `P0` **Undo / Redo** für alle Aktionen (Striche, Layer, Einstellungen)
 - [ ] `P1` **History-Fenster**
 - [ ] `P0` **Flüssiges Malen bei 4K pro Texture Set** auf einer Mittelklasse-GPU
-- [ ] `P1` Mehrere 4K-Sets gleichzeitig im Projekt
+- [ ] `P0` **5 Texture Sets mit je 4K** in einem Projekt wie im Referenzprojekt
 - [ ] `P1` **Speicherbudget:** Caches werden ausgelagert, bevor der VRAM voll ist
 - [ ] `P0` Läuft unter **Vulkan** (Linux, Windows) und mit **Mesa** (AMD, Intel) sowie NVIDIA
 - [ ] `P0` Tests und CI für Windows und Linux (besteht bereits)
@@ -672,12 +697,12 @@ texturieren und exportieren.**
 | Phase | Inhalt | Status |
 |---|---|---|
 | 1 | **Viewport:** Import (FBX, glTF, OBJ), PBR- und Stylized-Shading, Kamera | ✅ fertig |
-| 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader, HDRI-Beleuchtung, Painter-Navigation | ⏳ als Nächstes |
-| 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo | |
+| 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader (inkl. Emissive und Opacity), HDRI-Beleuchtung, Painter-Navigation | ⏳ als Nächstes |
+| 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | |
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | |
-| 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Unreal, Unity, Godot, Blender, glTF | |
+| 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | |
 | 6 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
 | 7 | **Generatoren und Bibliothek:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Shelf, Starter-Inhalte | |
-| 8 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points, 2D-Ansicht | |
+| 8 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
 | 9 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 10 | **Feinschliff:** UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Python-API, Installer (AppImage / Flatpak, Windows) | |

@@ -54,13 +54,13 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | # | Phase | Status |
 |---|---|---|
 | 1 | **Viewport** — model import (FBX, glTF, OBJ), PBR and stylized shading, camera | ✅ done |
-| 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures, HDRI lighting, Painter-style navigation | ⏳ next |
-| 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo | |
+| 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures (incl. emissive and opacity), HDRI lighting, Painter-style navigation | ⏳ next |
+| 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | |
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | |
-| 5 | **Project and export** — project file, export templates for Unreal, Unity, Godot, Blender, glTF | |
+| 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | |
 | 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
 | 7 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
-| 8 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points, 2D view | |
+| 8 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
 | 9 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 10 | **Polish** — UDIM, smudge and clone, path tools, post effects, Python API, installers (AppImage / Flatpak, Windows) | |
 
