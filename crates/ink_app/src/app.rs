@@ -649,7 +649,7 @@ impl eframe::App for InkApp {
         // changes become undo steps; undo and redo (above) and strokes (in the views,
         // below) record their own.
         self.validate_selection();
-        let stack_before = self.begin_stack_edits();
+        let stack_before = self.begin_stack_edits(ui);
         self.layer_shortcuts(ui, self.layers_hovered);
         egui::Panel::top("tool bar").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -685,6 +685,7 @@ impl eframe::App for InkApp {
                 });
             });
         self.end_stack_edits(ui, stack_before);
+        self.sync_system_clipboard(ui);
         self.validate_selection();
         egui::CentralPanel::no_frame().show(ui, |ui| self.views(ui, &rs));
         // Full composites run a few chunks per frame.

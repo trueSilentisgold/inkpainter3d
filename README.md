@@ -73,7 +73,8 @@ inkpainter3d aims to be a capable alternative that:
     show, like Painter's; all of Painter's blend modes, including Passthrough for folders
     and the normal map modes
   - **masks** (white or black) on layers and folders, painted with a grayscale brush, with
-    paint, fill and levels effects; Shift + click turns a mask off
+    paint, fill and levels effects, reordered by drag and drop and copied like layers;
+    Shift + click turns a mask off
   - **fill layers** with a value or an image per channel (PNG, JPEG, TGA, BMP, EXR, HDR;
     normal maps in DirectX or OpenGL format), **UV** or **tri-planar** projection with
     scale, rotation, offset and hardness; height becomes normal detail

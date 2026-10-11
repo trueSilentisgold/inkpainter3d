@@ -545,7 +545,7 @@ impl InkApp {
         if pressed(Key::D) {
             self.paint.lazy_mouse = !self.paint.lazy_mouse;
         }
-        if pressed(Key::X) {
+        if pressed(Key::X) && self.paints_grayscale() {
             let gray = &mut self.paint.paint_brush.material.grayscale;
             *gray = 1.0 - *gray;
         }

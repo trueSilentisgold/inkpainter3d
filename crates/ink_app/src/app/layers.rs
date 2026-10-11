@@ -64,8 +64,12 @@ pub struct LayersState {
     /// Name of the next recorded edit; set by the action that makes it.
     label: Option<&'static str>,
     clipboard: Clipboard,
+    /// Something was copied that the system clipboard doesn't know about yet.
+    copied: bool,
     /// Layer being renamed and the name typed so far.
     renaming: Option<(u64, String)>,
+    /// Where the effect being dragged would land, found while drawing the rows.
+    effect_drop: Option<EffectDrop>,
     /// Images loaded for fills, offered again in every image slot.
     pub images: Vec<Arc<TextureImage>>,
 }
@@ -78,6 +82,8 @@ impl Default for LayersState {
             pending: None,
             label: None,
             clipboard: Clipboard::Empty,
+            copied: false,
+            effect_drop: None,
             renaming: None,
             images: Vec::new(),
         }
@@ -90,6 +96,8 @@ impl LayersState {
         self.pending = None;
         self.label = None;
         self.renaming = None;
+        // Copied strokes belong to the old model's surface.
+        self.clipboard = Clipboard::Empty;
     }
 }
 
@@ -103,6 +111,21 @@ enum Clipboard {
 /// Where a dragged layer would land, and the line that shows it.
 struct Drop {
     place: Place,
+    line: [egui::Pos2; 2],
+}
+
+/// The drag-and-drop payload of an effect, which moves within its mask.
+#[derive(Clone, Copy)]
+struct EffectDrag {
+    layer: u64,
+    effect: u64,
+}
+
+/// Where a dragged effect would land: before index `slot` of its mask's effects (bottom to
+/// top), and the line that shows it.
+#[derive(Clone, Copy)]
+struct EffectDrop {
+    slot: usize,
     line: [egui::Pos2; 2],
 }
 
@@ -143,14 +166,22 @@ impl InkApp {
         }
         for (set, slot) in self.layers.selections.iter_mut().enumerate() {
             let stack = &self.model.texture_sets[set].stack;
-            let valid = slot.as_ref().is_some_and(|s| {
-                stack.find(s.layer).is_some_and(|layer| match s.target {
-                    Target::Content => true,
-                    Target::Mask => layer.mask.is_some(),
-                    Target::Effect(e) => layer.mask.as_ref().is_some_and(|m| m.effect(e).is_some()),
-                })
-            });
-            if !valid {
+            // A mask or effect that went away leaves the selection on what holds it: an
+            // effect's mask, a mask's layer. Only a layer that went away moves it elsewhere.
+            if let Some(selection) = slot.as_mut()
+                && let Some(layer) = stack.find(selection.layer)
+            {
+                let mask = layer.mask.as_ref();
+                if let Target::Effect(e) = selection.target
+                    && mask.is_none_or(|m| m.effect(e).is_none())
+                {
+                    selection.target = Target::Mask;
+                }
+                if selection.target == Target::Mask && mask.is_none() {
+                    selection.target = Target::Content;
+                }
+            }
+            if slot.as_ref().is_none_or(|s| stack.find(s.layer).is_none()) {
                 *slot = stack.layers.last().map(|l| Selection::layer(l.id));
             }
             if let Some(selection) = slot {
@@ -203,12 +234,16 @@ impl InkApp {
     // ---- Undo of stack edits ----
 
     /// Remembers the selected set's stack before the panels that edit it run.
-    pub(super) fn begin_stack_edits(&mut self) -> Option<(usize, LayerStack)> {
+    pub(super) fn begin_stack_edits(&mut self, ui: &egui::Ui) -> Option<(usize, LayerStack)> {
+        // A value still being typed is done once the user clicks elsewhere: the click's own
+        // edit becomes a step of its own.
+        let typed_then_clicked =
+            ui.ctx().text_edit_focused() && ui.input(|i| i.pointer.any_pressed());
         if self
             .layers
             .pending
             .as_ref()
-            .is_some_and(|p| p.set != self.selected_set)
+            .is_some_and(|p| p.set != self.selected_set || typed_then_clicked)
         {
             self.commit_stack_edit();
         }
@@ -367,6 +402,7 @@ impl InkApp {
                 .and_then(|l| l.mask.as_ref()?.effect(id))
             {
                 self.layers.clipboard = Clipboard::Effect(effect.clone());
+                self.layers.copied = true;
             }
             return;
         }
@@ -379,6 +415,21 @@ impl InkApp {
         let order: Vec<u64> = stack.iter().map(|l| l.id).collect();
         layers.sort_by_key(|l| order.iter().position(|&id| id == l.id));
         self.layers.clipboard = Clipboard::Layers(layers);
+        self.layers.copied = true;
+    }
+
+    /// Puts the names of what was copied on the system clipboard: Ctrl+V only arrives as a
+    /// paste while it holds text.
+    pub(super) fn sync_system_clipboard(&mut self, ui: &egui::Ui) {
+        if !std::mem::take(&mut self.layers.copied) {
+            return;
+        }
+        let names: Vec<&str> = match &self.layers.clipboard {
+            Clipboard::Empty => return,
+            Clipboard::Layers(layers) => layers.iter().map(|l| l.name.as_str()).collect(),
+            Clipboard::Effect(effect) => vec![effect.label()],
+        };
+        ui.ctx().copy_text(names.join("\n"));
     }
 
     fn cut_selected(&mut self) {
@@ -546,14 +597,17 @@ impl InkApp {
             if pressed(Key::G) {
                 self.group_selected();
             }
-            if over_stack && pressed(Key::C) {
-                self.copy_selected();
-            }
-            if over_stack && pressed(Key::X) {
-                self.cut_selected();
-            }
-            if over_stack && pressed(Key::V) {
-                self.paste();
+        }
+        if over_stack {
+            // Ctrl+C / X / V arrive as clipboard events, not as key presses.
+            let events = ui.input(|i| i.events.clone());
+            for event in events {
+                match event {
+                    egui::Event::Copy => self.copy_selected(),
+                    egui::Event::Cut => self.cut_selected(),
+                    egui::Event::Paste(_) => self.paste(),
+                    _ => {}
+                }
             }
         }
         if over_stack && !command && pressed(Key::Delete) {
@@ -579,8 +633,10 @@ impl InkApp {
                 if stack.layers.is_empty() {
                     ui.label(RichText::new("No layers. Add one with the buttons above.").weak());
                 }
+                self.layers.effect_drop = None;
                 self.layer_rows(ui, &stack, &stack.layers, None, 0, dragged, &mut drop);
             });
+        self.drop_effect(ui);
         if let Some(id) = dragged {
             if let Some(drop) = &drop {
                 ui.painter()
@@ -748,7 +804,7 @@ impl InkApp {
             if let Some(id) = dragged
                 && id != layer.id
                 && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
-                && row.rect.contains(pointer)
+                && row.interact_rect.contains(pointer)
             {
                 // Upper part: above this layer; lower part: below it; the middle of a
                 // folder: into it, on top.
@@ -786,8 +842,8 @@ impl InkApp {
             }
             // The mask's effects, listed under the layer as in Painter.
             if let Some(mask) = &layer.mask {
-                for effect in mask.effects.iter().rev() {
-                    self.effect_row(ui, layer.id, effect, depth + 1);
+                for (index, effect) in mask.effects.iter().enumerate().rev() {
+                    self.effect_row(ui, layer.id, index, effect, depth + 1);
                 }
             }
             if let Content::Folder(folder) = &layer.content
@@ -823,7 +879,7 @@ impl InkApp {
             ui.painter()
                 .rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
         }
-        if row.drag_started() {
+        if row.drag_started_by(egui::PointerButton::Primary) {
             egui::DragAndDrop::set_payload(ui.ctx(), layer.id);
             if !main && !extra {
                 self.select(Selection::layer(layer.id));
@@ -1108,12 +1164,80 @@ impl InkApp {
         }
     }
 
-    fn effect_row(&mut self, ui: &mut egui::Ui, layer: u64, effect: &Effect, depth: usize) {
+    /// Moves a dragged effect within its mask when the button is released over the list.
+    fn drop_effect(&mut self, ui: &egui::Ui) {
+        let Some(drag) = egui::DragAndDrop::payload::<EffectDrag>(ui.ctx()).map(|p| *p) else {
+            return;
+        };
+        if let Some(drop) = self.layers.effect_drop {
+            ui.painter()
+                .line_segment(drop.line, Line::new(2.0, ui.visuals().selection.bg_fill));
+        }
+        if !ui.input(|i| i.pointer.any_released()) {
+            return;
+        }
+        egui::DragAndDrop::clear_payload(ui.ctx());
+        let Some(drop) = self.layers.effect_drop.take() else {
+            return;
+        };
+        if let Some(mask) = self.mask_mut(drag.layer)
+            && let Some(from) = mask.effects.iter().position(|e| e.id == drag.effect)
+        {
+            let to = if from < drop.slot {
+                drop.slot - 1
+            } else {
+                drop.slot
+            };
+            if to != from {
+                let effect = mask.effects.remove(from);
+                mask.effects.insert(to, effect);
+                self.label("Move effect");
+            }
+        }
+    }
+
+    fn effect_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        layer: u64,
+        index: usize,
+        effect: &Effect,
+        depth: usize,
+    ) {
         let selected = self
             .selection()
             .is_some_and(|s| s.layer == layer && s.target == Target::Effect(effect.id));
         let width = ui.available_width();
-        let (rect, row) = ui.allocate_exact_size(egui::vec2(width, 24.0), Sense::click());
+        let (rect, row) = ui.allocate_exact_size(egui::vec2(width, 24.0), Sense::click_and_drag());
+        // Effects are reordered by dragging them within their mask, as in Painter.
+        if row.drag_started_by(egui::PointerButton::Primary) {
+            egui::DragAndDrop::set_payload(
+                ui.ctx(),
+                EffectDrag {
+                    layer,
+                    effect: effect.id,
+                },
+            );
+            self.select(Selection {
+                target: Target::Effect(effect.id),
+                ..Selection::layer(layer)
+            });
+        }
+        if let Some(drag) = egui::DragAndDrop::payload::<EffectDrag>(ui.ctx()).map(|p| *p)
+            && drag.layer == layer
+            && drag.effect != effect.id
+            && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+            && row.interact_rect.contains(pointer)
+        {
+            // The list shows the topmost effect first: the upper half drops above.
+            let above = pointer.y < rect.center().y;
+            let y = if above { rect.top() } else { rect.bottom() };
+            let left = rect.left() + depth as f32 * INDENT;
+            self.layers.effect_drop = Some(EffectDrop {
+                slot: if above { index + 1 } else { index },
+                line: [egui::pos2(left, y), egui::pos2(rect.right(), y)],
+            });
+        }
         let visuals = ui.visuals().clone();
         if selected {
             ui.painter()

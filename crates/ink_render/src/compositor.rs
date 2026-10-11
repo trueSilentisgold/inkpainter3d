@@ -236,7 +236,12 @@ impl Builder<'_> {
             a: 1.0,
         };
         let painted = self.has_paint(mask.paint.id, 0);
-        let effects: Vec<_> = mask.effects.iter().filter(|e| e.visible).collect();
+        // Disable leaves an effect out, as for layers.
+        let effects: Vec<_> = mask
+            .effects
+            .iter()
+            .filter(|e| e.visible && e.blend != BlendMode::Disable)
+            .collect();
         if !painted && effects.is_empty() {
             self.program
                 .steps

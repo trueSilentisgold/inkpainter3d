@@ -160,6 +160,9 @@ Things that are easy to get wrong:
   stroke whose view was hidden (F2 / F3), whose release got lost or when focus is lost.
   The start of Shift+click lines is kept on the model (world position or UV), not on screen.
   The views are not focusable and Tab is dropped, so keyboard focus can't swallow shortcuts.
+  Ctrl+C / X / V never arrive as key presses: egui-winit turns them into `Event::Copy`,
+  `Event::Cut` and `Event::Paste`, the last only while the system clipboard holds text, so
+  copying layers also puts their names there (`sync_system_clipboard`).
   Pen pressure arrives as the force of `egui::Event::Touch`: from winit on Windows (Windows
   Ink), injected by `pen.rs` in `raw_input_hook` on Linux. On Wayland the pen reaches the app
   only through the tablet protocol, so `pen.rs` also injects its pointer events; on X11 the
