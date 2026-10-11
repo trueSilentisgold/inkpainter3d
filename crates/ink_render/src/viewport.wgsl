@@ -46,6 +46,7 @@ const DISPLAY_NORMAL: u32 = 5u;
 const DISPLAY_EMISSIVE: u32 = 6u;
 const DISPLAY_OPACITY: u32 = 7u;
 const DISPLAY_AO: u32 = 8u;
+const DISPLAY_HEIGHT: u32 = 9u;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -140,13 +141,16 @@ struct Surface {
     normal: vec3<f32>,
     // Raw normal map texel for the normal channel view.
     normal_texel: vec3<f32>,
+    // Height from the normal map's alpha, -1 to 1.
+    height: f32,
 }
 
 fn surface(in: VsOut, front: bool) -> Surface {
     let base = textureSample(base_color_map, material_sampler, in.uv);
     let surf = textureSample(surface_map, material_sampler, in.uv);
     let emissive = textureSample(emissive_map, material_sampler, in.uv).rgb;
-    let normal_texel = textureSample(normal_map, material_sampler, in.uv).rgb;
+    let normal_sample = textureSample(normal_map, material_sampler, in.uv);
+    let normal_texel = normal_sample.rgb;
 
     let n = normalize(in.normal);
     var t = in.tangent.xyz - n * dot(in.tangent.xyz, n);
@@ -167,6 +171,7 @@ fn surface(in: VsOut, front: bool) -> Surface {
     s.emissive = emissive;
     s.normal = select(-mapped, mapped, front);
     s.normal_texel = normal_texel;
+    s.height = normal_sample.a * 2.0 - 1.0;
     return s;
 }
 
@@ -230,6 +235,8 @@ fn fs_mesh(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         case DISPLAY_EMISSIVE: { color = s.emissive; }
         case DISPLAY_OPACITY: { color = show_data(vec3<f32>(s.opacity)); }
         case DISPLAY_AO: { color = show_data(vec3<f32>(s.ao)); }
+        // Positive heights, as Painter shows the height channel.
+        case DISPLAY_HEIGHT: { color = show_data(vec3<f32>(clamp(s.height, 0.0, 1.0))); }
         default: {
             if u.viewport.z > 0.5 {
                 color = shade_toon(s, v) * u.env.y;

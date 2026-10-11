@@ -1125,6 +1125,28 @@ mod tests {
     }
 
     #[test]
+    fn shaders_know_every_display_mode() {
+        // Material and base color are the shaders' default branches.
+        for mode in &DisplayMode::ALL[2..] {
+            let code = format!(": u32 = {}u;", mode.code());
+            for (name, source) in [
+                ("viewport.wgsl", include_str!("viewport.wgsl")),
+                ("uv_view.wgsl", include_str!("uv_view.wgsl")),
+            ] {
+                if *mode == DisplayMode::BaseColor && name == "uv_view.wgsl" {
+                    continue;
+                }
+                assert!(
+                    source
+                        .lines()
+                        .any(|l| l.starts_with("const DISPLAY_") && l.ends_with(&code)),
+                    "{name} has no DISPLAY_ constant for {mode:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn id_colors_differ_between_neighbours() {
         let a = texture_set_color(0);
         let b = texture_set_color(1);

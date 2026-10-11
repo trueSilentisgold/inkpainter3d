@@ -30,6 +30,7 @@ const DISPLAY_NORMAL: u32 = 5u;
 const DISPLAY_EMISSIVE: u32 = 6u;
 const DISPLAY_OPACITY: u32 = 7u;
 const DISPLAY_AO: u32 = 8u;
+const DISPLAY_HEIGHT: u32 = 9u;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
@@ -88,6 +89,11 @@ fn channel(uv: vec2<f32>) -> vec3<f32> {
         case DISPLAY_EMISSIVE: { return textureSample(emissive_map, material_sampler, uv).rgb; }
         case DISPLAY_OPACITY: { return show_data(vec3<f32>(textureSample(base_color_map, material_sampler, uv).a)); }
         case DISPLAY_AO: { return show_data(vec3<f32>(surface.b)); }
+        case DISPLAY_HEIGHT: {
+            // Positive heights, as Painter shows the height channel.
+            let height = textureSample(normal_map, material_sampler, uv).a * 2.0 - 1.0;
+            return show_data(vec3<f32>(clamp(height, 0.0, 1.0)));
+        }
         default: { return textureSample(base_color_map, material_sampler, uv).rgb; }
     }
 }
