@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use glam::{Mat3, Mat4, Vec2, Vec3};
-use ink_core::{AlphaImage, DEFAULT_MATERIAL, Model, ModelBuilder};
+use ink_core::{AlphaImage, DEFAULT_MATERIAL, Model, ModelBuilder, Texels, TextureImage};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -14,6 +14,9 @@ pub const ENVIRONMENT_EXTENSIONS: &[&str] = &["hdr", "exr"];
 
 /// Image formats [`load_alpha`] reads.
 pub const ALPHA_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+
+/// Image formats [`load_texture`] reads.
+pub const TEXTURE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tga", "bmp", "exr", "hdr"];
 
 /// Loads a model file in world space, keeping its objects and materials. Every material
 /// becomes a texture set.
@@ -319,6 +322,43 @@ pub fn load_alpha(path: &Path) -> Result<AlphaImage> {
         .unwrap_or_default();
     let (width, height) = gray.dimensions();
     Ok(AlphaImage::new(name, width, height, gray.into_raw()))
+}
+
+/// Largest side of a texture for fills; bigger images are scaled down when loaded.
+pub const MAX_TEXTURE_SIZE: u32 = 8192;
+
+/// Loads an image for a fill layer or fill effect. 8- and 16-bit images keep their encoding
+/// (the renderer decodes sRGB where the image is used as a color); HDR and EXR files are
+/// linear floats.
+pub fn load_texture(path: &Path) -> Result<TextureImage> {
+    let mut image =
+        image::open(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    if image.width() == 0 || image.height() == 0 {
+        bail!("Image is empty");
+    }
+    if image.width().max(image.height()) > MAX_TEXTURE_SIZE {
+        image = image.resize(
+            MAX_TEXTURE_SIZE,
+            MAX_TEXTURE_SIZE,
+            image::imageops::FilterType::Triangle,
+        );
+    }
+    let (width, height) = (image.width(), image.height());
+    let texels = match &image {
+        image::DynamicImage::ImageRgb32F(_) | image::DynamicImage::ImageRgba32F(_) => {
+            Texels::RgbaF32(image.into_rgba32f().into_raw())
+        }
+        image::DynamicImage::ImageLuma16(_)
+        | image::DynamicImage::ImageLumaA16(_)
+        | image::DynamicImage::ImageRgb16(_)
+        | image::DynamicImage::ImageRgba16(_) => Texels::Rgba16(image.into_rgba16().into_raw()),
+        _ => Texels::Rgba8(image.into_rgba8().into_raw()),
+    };
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(TextureImage::new(name, width, height, texels))
 }
 
 /// An equirectangular HDR environment, linear RGBA, rows top to bottom.

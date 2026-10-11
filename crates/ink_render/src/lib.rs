@@ -1,8 +1,12 @@
-//! GPU rendering: the 3D viewport, the 2D (UV) view and the brush strokes.
+//! GPU rendering: the 3D viewport, the 2D (UV) view, the brush strokes and the layer
+//! stack compositor.
 
 pub mod camera;
+mod compositor;
 pub mod environment;
 mod paint;
+mod region;
+mod tiles;
 pub mod uv_view;
 pub mod viewport;
 

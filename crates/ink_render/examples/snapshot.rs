@@ -6,7 +6,17 @@
 //! ```
 //!
 //! `model.fbx` may also be `sphere` or `cube`. Options: `display=normal`, `yaw=35`, `toon`,
-//! `rough=0.2`, `metal=1`, `color=0.9,0.6,0.2` (sRGB), `env=file.hdr`.
+//! `env=file.hdr`.
+//!
+//! Layer stack of the painted texture set, to check the compositor: `color=0.9,0.6,0.2`
+//! (sRGB), `rough=0.2`, `metal=1` (a fill layer at the bottom with these values);
+//! `fill=0.2,0.5,0.9` (a fill layer on top with this base color), `image=file.png` (its base
+//! color image), `normalmap=file.png` (its normal image; `opengl` if it is not DirectX),
+//! `heightmap=file.png` (its height image), `triplanar` and `scale=4` (its projection);
+//! `mask` (the fill gets a black mask and the strokes paint into it), `levels` (an inverting
+//! levels effect in that mask); `blend=multiply` and `opacity=0.5` (blending of the top
+//! layer's color, roughness and metallic); `folder` (puts the top layer in a folder),
+//! `passthrough` (that folder passes through); `height` (strokes paint only height 1).
 //!
 //! Brush strokes through the middle of the view, to check the paint pipeline: `paint`
 //! (horizontal, red and shiny), `erase` (vertical eraser stroke), `uv` (a diagonal stroke
@@ -19,7 +29,8 @@
 use anyhow::{Context, Result};
 use glam::Vec2;
 use ink_core::{
-    Alpha, Brush, BrushMaterial, Channel, ChannelSet, Mesh, Model, Stroke, StrokePath, StrokeSpace,
+    Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect, EffectKind,
+    Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath, StrokeSpace,
     Tool, surface_dab, uv_dab,
 };
 use ink_render::{
@@ -27,6 +38,7 @@ use ink_render::{
     ViewportSettings, wgpu,
 };
 use std::path::Path;
+use std::sync::Arc;
 
 const SIZE: [u32; 2] = [1280, 800];
 
@@ -142,6 +154,25 @@ fn main() -> Result<()> {
             .with_context(|| format!("no texture set {name}"))?,
         None => center.map_or(0, |hit| model.parts[hit.part].texture_set),
     };
+    let target = build_stack(&mut model, set, &option, &flag)?;
+    for layer in model.texture_sets[set].stack.iter() {
+        let b = layer.blending.get(Channel::BaseColor);
+        eprintln!(
+            "Layer {} ({:?}): {} {:.0}%{}",
+            layer.name,
+            layer.kind(),
+            b.mode.label(),
+            b.opacity * 100.0,
+            if layer.mask.is_some() { ", masked" } else { "" }
+        );
+    }
+    if flag("height") {
+        for (_, _, material, _, _) in &mut strokes {
+            material.channels = ChannelSet::NONE;
+            material.channels.set(Channel::Height, true);
+            material.values.height = 1.0;
+        }
+    }
     let model_radius = model.bounds().radius();
     for (tool, space, material, from, to) in strokes {
         let project = |p: Vec2, _pressure: f32| match space {
@@ -186,7 +217,7 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             dabs: Vec::new(),
         };
-        let (stroke_id, paint) = (stroke.id, paint_id(&model, set));
+        let (stroke_id, paint) = (stroke.id, target);
         let layer = model.texture_sets[set].stack.paint_mut(paint).unwrap();
         layer.strokes.push(std::sync::Arc::new(stroke));
         for chunk in dabs.chunks(live) {
@@ -205,10 +236,9 @@ fn main() -> Result<()> {
         None => flag("undo") as usize,
     };
     for _ in 0..undo {
-        let paint = paint_id(&model, set);
         model.texture_sets[set]
             .stack
-            .paint_mut(paint)
+            .paint_mut(target)
             .unwrap()
             .strokes
             .pop();
@@ -218,6 +248,10 @@ fn main() -> Result<()> {
     }
     let started = std::time::Instant::now();
     renderer.sync_texture_sets(&device, &queue, &model, false);
+    // Layer stack changes are composited a few chunks per sync.
+    while renderer.is_compositing() {
+        renderer.sync_texture_sets(&device, &queue, &model, false);
+    }
     device.poll(wgpu::PollType::wait_indefinitely())?;
     eprintln!("Final sync took {:?}", started.elapsed());
     let settings = ViewportSettings {
@@ -298,12 +332,127 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// The topmost paint layer of a texture set.
-fn paint_id(model: &Model, set: usize) -> u64 {
-    model.texture_sets[set]
-        .stack
-        .paint_layers()
-        .last()
-        .expect("a paint layer")
-        .id
+/// Builds the texture set's layer stack from the options. Returns the paint layer the
+/// strokes go into.
+fn build_stack<'a>(
+    model: &mut Model,
+    set: usize,
+    option: &impl Fn(&str) -> Option<&'a str>,
+    flag: &impl Fn(&str) -> bool,
+) -> Result<u64> {
+    let floats = |key: &str| -> Result<Option<Vec<f32>>> {
+        option(key)
+            .map(|v| {
+                v.split(',')
+                    .map(str::parse)
+                    .collect::<Result<Vec<f32>, _>>()
+            })
+            .transpose()
+            .map_err(Into::into)
+    };
+    let Model {
+        ids, texture_sets, ..
+    } = model;
+    let stack = &mut texture_sets[set].stack;
+    let mut target = match &stack.layers[0].content {
+        Content::Paint(p) => p.id,
+        _ => unreachable!("new stacks hold a paint layer"),
+    };
+
+    let (color, rough, metal) = (floats("color")?, floats("rough")?, floats("metal")?);
+    if color.is_some() || rough.is_some() || metal.is_some() {
+        let mut base = Layer::new(LayerKind::Fill, "Base".into(), ids);
+        if let Content::Fill(fill) = &mut base.content {
+            fill.channels = ChannelSet::NONE;
+            if let Some(c) = color {
+                fill.channels.set(Channel::BaseColor, true);
+                fill.values.base_color = [c[0], c[1], c[2]];
+            }
+            if let Some(r) = rough {
+                fill.channels.set(Channel::Roughness, true);
+                fill.values.roughness = r[0];
+            }
+            if let Some(m) = metal {
+                fill.channels.set(Channel::Metallic, true);
+                fill.values.metallic = m[0];
+            }
+        }
+        stack.layers.insert(0, base);
+    }
+
+    let mut top = stack.layers.last().map(|l| l.id).expect("a layer");
+    if let Some(c) = floats("fill")? {
+        let mut layer = Layer::new(LayerKind::Fill, "Fill layer 1".into(), ids);
+        if let Content::Fill(fill) = &mut layer.content {
+            fill.values.base_color = [c[0], c[1], c[2]];
+            let load = |key: &str| -> Result<Option<Arc<ink_core::TextureImage>>> {
+                option(key)
+                    .map(|path| ink_io::load_texture(Path::new(path)).map(Arc::new))
+                    .transpose()
+            };
+            if let Some(image) = load("image")? {
+                fill.images[Channel::BaseColor.index()] = Some(image);
+            }
+            if let Some(image) = load("normalmap")? {
+                fill.channels.set(Channel::Normal, true);
+                fill.images[Channel::Normal.index()] = Some(image);
+                fill.normal_directx = !flag("opengl");
+            }
+            if let Some(image) = load("heightmap")? {
+                fill.channels.set(Channel::Height, true);
+                fill.images[Channel::Height.index()] = Some(image);
+            }
+            if flag("triplanar") {
+                fill.projection.mode = ProjectionMode::TriPlanar;
+            }
+            if let Some(scale) = floats("scale")? {
+                fill.projection.scale = [scale[0], scale[0]];
+            }
+        }
+        if flag("mask") {
+            let mut mask = Mask::new(0.0, ids.next());
+            target = mask.paint.id;
+            if flag("levels") {
+                let levels = Levels {
+                    output: [1.0, 0.0],
+                    ..Default::default()
+                };
+                mask.effects
+                    .push(Effect::new(ids.next(), EffectKind::Levels(levels)));
+            }
+            layer.mask = Some(mask);
+        }
+        top = layer.id;
+        stack.layers.push(layer);
+    }
+    let layer = stack.find_mut(top).expect("just added");
+    for channel in [Channel::BaseColor, Channel::Roughness, Channel::Metallic] {
+        let blend = layer.blending.get_mut(channel);
+        if let Some(name) = option("blend") {
+            blend.mode = *BlendMode::ALL
+                .iter()
+                .find(|m| {
+                    m.label()
+                        .split(" (")
+                        .next()
+                        .unwrap_or_default()
+                        .replace(' ', "")
+                        .eq_ignore_ascii_case(name)
+                })
+                .with_context(|| format!("unknown blend mode {name}"))?;
+        }
+        if let Some(opacity) = option("opacity") {
+            blend.opacity = opacity.parse()?;
+        }
+    }
+    if flag("folder") {
+        let folder = stack.group(&[top], ids).expect("the layer is in the stack");
+        if flag("passthrough") {
+            let folder = stack.find_mut(folder).expect("just made");
+            for channel in Channel::ALL {
+                folder.blending.get_mut(channel).mode = BlendMode::Passthrough;
+            }
+        }
+    }
+    Ok(target)
 }

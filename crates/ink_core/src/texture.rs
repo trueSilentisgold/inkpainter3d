@@ -8,7 +8,9 @@ pub enum Texels {
     /// 8 bits per component, as most PNG and JPEG files: sRGB-encoded where the image is a
     /// color, raw data (roughness, height, normals) otherwise.
     Rgba8(Vec<u8>),
-    /// Linear floats, from 16-bit and HDR files.
+    /// 16 bits per component, e.g. 16-bit PNG height maps; encoded like [`Self::Rgba8`].
+    Rgba16(Vec<u16>),
+    /// Linear floats, from HDR and EXR files.
     RgbaF32(Vec<f32>),
 }
 
@@ -29,6 +31,7 @@ impl TextureImage {
         let len = (width * height * 4) as usize;
         match &texels {
             Texels::Rgba8(v) => assert_eq!(v.len(), len),
+            Texels::Rgba16(v) => assert_eq!(v.len(), len),
             Texels::RgbaF32(v) => assert_eq!(v.len(), len),
         }
         Self {

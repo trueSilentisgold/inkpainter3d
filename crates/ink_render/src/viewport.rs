@@ -1,18 +1,19 @@
 use crate::camera::OrbitCamera;
+use crate::compositor::{Compositor, GpuComposite};
 use crate::environment::{self, Environment, IblBaker, SPECULAR_MIPS};
-use crate::paint::{GpuPaint, PaintRenderer};
+use crate::paint::PaintCaches;
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu::{self, util::DeviceExt};
 use glam::Quat;
-use ink_core::{AlphaMode, ChannelValues, Model, TextureSet};
+use ink_core::{AlphaMode, Model, TextureSet};
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub(crate) const SAMPLE_COUNT: u32 = 4;
 const DISPLAY_VIEW_FORMATS: [wgpu::TextureFormat; 1] = [wgpu::TextureFormat::Rgba8Unorm];
 
-/// Channel textures of a texture set as the viewport samples them.
-/// Base color + opacity, normal, roughness / metallic / AO, emissive.
+/// Channel textures of a texture set as the viewport samples them: base color + opacity,
+/// normal (alpha: height, see composite_resolve.wgsl), roughness / metallic / AO, emissive.
 pub(crate) const CHANNEL_FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
     wgpu::TextureFormat::Rgba8Unorm,
@@ -39,10 +40,12 @@ pub enum DisplayMode {
     Emissive,
     Opacity,
     AmbientOcclusion,
+    /// Positive heights, as Painter shows the height channel.
+    Height,
 }
 
 impl DisplayMode {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Material,
         Self::MaterialId,
         Self::BaseColor,
@@ -52,9 +55,12 @@ impl DisplayMode {
         Self::Emissive,
         Self::Opacity,
         Self::AmbientOcclusion,
+        Self::Height,
     ];
-    const CHANNELS: [Self; 7] = [
+    /// In the order of the texture set's channels, like Painter's C key.
+    const CHANNELS: [Self; 8] = [
         Self::BaseColor,
+        Self::Height,
         Self::Roughness,
         Self::Metallic,
         Self::Normal,
@@ -74,6 +80,7 @@ impl DisplayMode {
             Self::Emissive => "Emissive",
             Self::Opacity => "Opacity",
             Self::AmbientOcclusion => "Ambient occlusion",
+            Self::Height => "Height",
         }
     }
 
@@ -89,7 +96,8 @@ impl DisplayMode {
         Self::CHANNELS[next]
     }
 
-    /// Must match the DISPLAY_* constants in viewport.wgsl and uv_view.wgsl.
+    /// Must match the DISPLAY_* constants in viewport.wgsl and uv_view.wgsl. The order of
+    /// [`Self::ALL`] is the code, so new modes go at its end.
     pub(crate) fn code(self) -> f32 {
         Self::ALL.iter().position(|&m| m == self).unwrap_or(0) as f32
     }
@@ -210,8 +218,7 @@ struct GpuTextureSet {
     textures: Vec<wgpu::Texture>,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    /// Created with the first stroke.
-    paint: Option<GpuPaint>,
+    composite: GpuComposite,
 }
 
 /// Offscreen color target shown in egui, multisampled, with depth.
@@ -345,7 +352,8 @@ pub struct ViewportRenderer {
     mesh: Option<GpuMesh>,
     sets: Vec<GpuTextureSet>,
     targets: Option<Targets>,
-    paint: PaintRenderer,
+    paint: PaintCaches,
+    compositor: Compositor,
 }
 
 impl ViewportRenderer {
@@ -554,7 +562,8 @@ impl ViewportRenderer {
             &clamp_sampler,
         );
 
-        let paint = PaintRenderer::new(device, queue, &Vertex::layout());
+        let paint = PaintCaches::new(device, queue, &Vertex::layout());
+        let compositor = Compositor::new(device, &Vertex::layout());
         Self {
             mesh_pipeline,
             blend_pipeline,
@@ -574,6 +583,7 @@ impl ViewportRenderer {
             sets: Vec::new(),
             targets: None,
             paint,
+            compositor,
         }
     }
 
@@ -613,12 +623,13 @@ impl ViewportRenderer {
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh vertices"),
                 contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
+                // Storage too: the compositor reads triangles for tri-planar projections.
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             }),
             indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh indices"),
                 contents: bytemuck::cast_slice(&mesh.indices),
-                usage: wgpu::BufferUsages::INDEX,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
             }),
         });
         self.sets.clear();
@@ -626,10 +637,11 @@ impl ViewportRenderer {
         self.sync_texture_sets(device, queue, model, false);
     }
 
-    /// Brings the GPU textures in line with the texture sets after their settings or
-    /// strokes changed. Cheap when nothing changed; call it once per frame, after input.
+    /// Brings the GPU textures in line with the texture sets after their layers, strokes or
+    /// settings changed. Cheap when nothing changed; call it once per frame, after input.
     /// While `stroke_in_progress`, only the painted area of the textures is updated, and
-    /// the rest follows when the stroke ends.
+    /// the rest follows when the stroke ends. Other changes to a layer stack are
+    /// composited a few chunks per frame: keep calling while [`Self::is_compositing`].
     pub fn sync_texture_sets(
         &mut self,
         device: &wgpu::Device,
@@ -637,112 +649,62 @@ impl ViewportRenderer {
         model: &Model,
         stroke_in_progress: bool,
     ) {
+        let Some(mesh) = &self.mesh else {
+            return;
+        };
         self.sets.truncate(model.texture_sets.len());
         for (index, set) in model.texture_sets.iter().enumerate() {
             let uniforms = TextureSetUniforms {
                 id_color: id_color(index, set.alpha_mode),
             };
-            let fill_changed = false;
-            if let Some(gpu) = self.sets.get_mut(index)
-                && gpu.resolution == set.resolution
-            {
-                if gpu.alpha_mode != set.alpha_mode {
-                    gpu.alpha_mode = set.alpha_mode;
-                    queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&uniforms));
+            match self.sets.get_mut(index) {
+                Some(gpu) if gpu.resolution == set.resolution => {
+                    if gpu.alpha_mode != set.alpha_mode {
+                        gpu.alpha_mode = set.alpha_mode;
+                        queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&uniforms));
+                    }
                 }
-            } else {
-                let gpu = self.create_texture_set(device, queue, set, &uniforms);
-                match self.sets.get_mut(index) {
-                    Some(slot) => *slot = gpu,
-                    None => self.sets.push(gpu),
+                slot => {
+                    let gpu = create_texture_set(
+                        device,
+                        queue,
+                        &self.set_layout,
+                        &self.material_sampler,
+                        &self.compositor,
+                        model,
+                        mesh,
+                        index,
+                        set,
+                        &uniforms,
+                    );
+                    match slot {
+                        Some(slot) => *slot = gpu,
+                        None => self.sets.push(gpu),
+                    }
                 }
             }
+            let changed = self.paint.sync_set(device, queue, model, mesh, index);
             let gpu = &mut self.sets[index];
-            let painted = self.mesh.as_ref().is_some_and(|mesh| {
-                self.paint.sync(
-                    device,
-                    queue,
-                    model,
-                    mesh,
-                    index,
-                    &mut gpu.paint,
-                    &gpu.textures,
-                    fill_changed,
-                    stroke_in_progress,
-                )
-            });
-            if fill_changed && !painted {
-                fill_channels(device, queue, &gpu.textures, &ChannelValues::default());
-            }
+            self.compositor.composite(
+                device,
+                queue,
+                model,
+                mesh,
+                (&mesh.vertices, &mesh.indices),
+                &self.paint,
+                index,
+                &mut gpu.composite,
+                &gpu.textures,
+                &changed,
+                stroke_in_progress,
+            );
         }
     }
 
-    fn create_texture_set(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        set: &TextureSet,
-        uniforms: &TextureSetUniforms,
-    ) -> GpuTextureSet {
-        let resolution = set.resolution.max(1);
-        let textures: Vec<wgpu::Texture> = CHANNEL_FORMATS
-            .iter()
-            .map(|&format| {
-                device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(&format!("{} channels", set.name)),
-                    size: wgpu::Extent3d {
-                        width: resolution,
-                        height: resolution,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: resolution.ilog2() + 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                })
-            })
-            .collect();
-        fill_channels(device, queue, &textures, &ChannelValues::default());
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("texture set uniforms"),
-            contents: bytemuck::bytes_of(uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let views: Vec<wgpu::TextureView> = textures
-            .iter()
-            .map(|t| t.create_view(&Default::default()))
-            .collect();
-        let mut entries = vec![wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }];
-        for (i, view) in views.iter().enumerate() {
-            entries.push(wgpu::BindGroupEntry {
-                binding: i as u32 + 1,
-                resource: wgpu::BindingResource::TextureView(view),
-            });
-        }
-        entries.push(wgpu::BindGroupEntry {
-            binding: 5,
-            resource: wgpu::BindingResource::Sampler(&self.material_sampler),
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("texture set bind group"),
-            layout: &self.set_layout,
-            entries: &entries,
-        });
-        GpuTextureSet {
-            resolution: set.resolution,
-            alpha_mode: set.alpha_mode,
-            textures,
-            uniforms: uniform_buffer,
-            bind_group,
-            paint: None,
-        }
+    /// Whether a texture set's layer stack is still being composited; the views should be
+    /// redrawn until it is done.
+    pub fn is_compositing(&self) -> bool {
+        self.sets.iter().any(|s| s.composite.is_pending())
     }
 
     /// Recreates the render targets if the size changed. Returns true when the
@@ -916,42 +878,106 @@ fn create_global_bind_group(
     })
 }
 
-/// Clears every mip level of the channel textures to the uniform values.
-fn fill_channels(
+/// A texture set's channel textures and compositing state. The textures start out with
+/// the values of an empty layer stack until the first composite.
+#[allow(clippy::too_many_arguments)]
+fn create_texture_set(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    textures: &[wgpu::Texture],
-    fill: &ChannelValues,
-) {
-    let lin = |c: [f32; 3]| c.map(|v| srgb_to_linear(v) as f64);
-    let [r, g, b] = lin(fill.base_color);
-    let [er, eg, eb] = lin(fill.emissive);
+    set_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    compositor: &Compositor,
+    model: &Model,
+    mesh: &GpuMesh,
+    index: usize,
+    set: &TextureSet,
+    uniforms: &TextureSetUniforms,
+) -> GpuTextureSet {
+    let resolution = set.resolution.max(1);
+    let textures: Vec<wgpu::Texture> = CHANNEL_FORMATS
+        .iter()
+        .map(|&format| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&format!("{} channels", set.name)),
+                size: wgpu::Extent3d {
+                    width: resolution,
+                    height: resolution,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: resolution.ilog2() + 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            })
+        })
+        .collect();
+    fill_channels(device, queue, &textures);
+    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("texture set uniforms"),
+        contents: bytemuck::bytes_of(uniforms),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let views: Vec<wgpu::TextureView> = textures
+        .iter()
+        .map(|t| t.create_view(&Default::default()))
+        .collect();
+    let mut entries = vec![wgpu::BindGroupEntry {
+        binding: 0,
+        resource: uniform_buffer.as_entire_binding(),
+    }];
+    for (i, view) in views.iter().enumerate() {
+        entries.push(wgpu::BindGroupEntry {
+            binding: i as u32 + 1,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+    }
+    entries.push(wgpu::BindGroupEntry {
+        binding: 5,
+        resource: wgpu::BindingResource::Sampler(sampler),
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("texture set bind group"),
+        layout: set_layout,
+        entries: &entries,
+    });
+    GpuTextureSet {
+        resolution: set.resolution,
+        alpha_mode: set.alpha_mode,
+        textures,
+        uniforms: uniform_buffer,
+        bind_group,
+        composite: compositor.create_set(device, queue, model, mesh, index, resolution),
+    }
+}
+
+/// Clears every mip level of the channel textures to what an empty layer stack shows:
+/// Painter's defaults (base color 0.5 linear, roughness 0.3, flat normal, height 0).
+fn fill_channels(device: &wgpu::Device, queue: &wgpu::Queue, textures: &[wgpu::Texture]) {
     // Clear colors are linear; sRGB targets encode them.
     let colors = [
         wgpu::Color {
-            r,
-            g,
-            b,
-            a: fill.opacity as f64,
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+            a: 1.0,
         },
         wgpu::Color {
             r: 0.5,
             g: 0.5,
             b: 1.0,
-            a: 1.0,
+            a: 0.5,
         },
         wgpu::Color {
-            r: fill.roughness as f64,
-            g: fill.metallic as f64,
+            r: 0.3,
+            g: 0.0,
             b: 1.0,
             a: 1.0,
         },
-        wgpu::Color {
-            r: er,
-            g: eg,
-            b: eb,
-            a: 1.0,
-        },
+        wgpu::Color::BLACK,
     ];
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("fill channels"),
@@ -1044,8 +1070,16 @@ mod tests {
         validate("paint_dabs.wgsl", include_str!("paint_dabs.wgsl"));
         validate("paint_seeds.wgsl", include_str!("paint_seeds.wgsl"));
         validate("paint_depth.wgsl", include_str!("paint_depth.wgsl"));
-        validate("paint_apply.wgsl", include_str!("paint_apply.wgsl"));
-        validate("paint_composite.wgsl", include_str!("paint_composite.wgsl"));
+        validate("paint_tiles.wgsl", include_str!("paint_tiles.wgsl"));
+        validate("composite.wgsl", include_str!("composite.wgsl"));
+        validate(
+            "composite_resolve.wgsl",
+            include_str!("composite_resolve.wgsl"),
+        );
+        validate(
+            "composite_geometry.wgsl",
+            include_str!("composite_geometry.wgsl"),
+        );
         validate("mipmap.wgsl", include_str!("mipmap.wgsl"));
         validate("uv_view.wgsl", include_str!("uv_view.wgsl"));
         validate(
@@ -1074,11 +1108,12 @@ mod tests {
     fn display_modes_cycle_through_channels() {
         let mut mode = DisplayMode::Material;
         let mut seen = Vec::new();
-        for _ in 0..7 {
+        for _ in 0..8 {
             mode = mode.cycle_channel(true);
             seen.push(mode);
         }
         assert_eq!(seen[0], DisplayMode::BaseColor);
+        assert_eq!(seen[1], DisplayMode::Height);
         assert_eq!(mode.cycle_channel(true), DisplayMode::BaseColor);
         assert_eq!(
             DisplayMode::BaseColor.cycle_channel(false),
@@ -1086,6 +1121,7 @@ mod tests {
         );
         assert_eq!(DisplayMode::Material.code(), 0.0);
         assert_eq!(DisplayMode::AmbientOcclusion.code(), 8.0);
+        assert_eq!(DisplayMode::Height.code(), 9.0);
     }
 
     #[test]

@@ -12,25 +12,26 @@ use crate::stroke::PaintLayer;
 use crate::texture::TextureImage;
 use std::sync::Arc;
 
-/// How a layer's channel is combined with what lies below. The order is Painter's and
-/// the `BLEND_*` codes in the compositor's shader.
+/// How a layer's channel is combined with what lies below. The order is Painter's (its
+/// blending mode list) and the `BLEND_*` codes in the compositor's shader.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum BlendMode {
     #[default]
     Normal,
-    /// Folders only: the children blend with the layers below the folder as if the folder
+    /// Folders: the children blend with the layers below the folder as if the folder
     /// weren't there.
     Passthrough,
     /// The layer leaves this channel alone.
     Disable,
-    /// The layer's value replaces what lies below, regardless of the layer's own coverage.
+    /// The layer's value and coverage replace what lies below, also where the layer is
+    /// empty.
     Replace,
     Multiply,
     Divide,
     InverseDivide,
     Darken,
     Lighten,
-    LinearBurn,
+    LinearDodge,
     Subtract,
     InverseSubtract,
     Difference,
@@ -38,9 +39,9 @@ pub enum BlendMode {
     SignedAddition,
     Overlay,
     Screen,
-    LinearDodge,
-    ColorDodge,
+    LinearBurn,
     ColorBurn,
+    ColorDodge,
     SoftLight,
     HardLight,
     VividLight,
@@ -66,7 +67,7 @@ impl BlendMode {
         Self::InverseDivide,
         Self::Darken,
         Self::Lighten,
-        Self::LinearBurn,
+        Self::LinearDodge,
         Self::Subtract,
         Self::InverseSubtract,
         Self::Difference,
@@ -74,9 +75,9 @@ impl BlendMode {
         Self::SignedAddition,
         Self::Overlay,
         Self::Screen,
-        Self::LinearDodge,
-        Self::ColorDodge,
+        Self::LinearBurn,
         Self::ColorBurn,
+        Self::ColorDodge,
         Self::SoftLight,
         Self::HardLight,
         Self::VividLight,
@@ -102,17 +103,17 @@ impl BlendMode {
             Self::InverseDivide => "Inverse Divide",
             Self::Darken => "Darken (Min)",
             Self::Lighten => "Lighten (Max)",
-            Self::LinearBurn => "Linear Burn",
+            Self::LinearDodge => "Linear Dodge (Add)",
             Self::Subtract => "Subtract",
             Self::InverseSubtract => "Inverse Subtract",
             Self::Difference => "Difference",
             Self::Exclusion => "Exclusion",
-            Self::SignedAddition => "Signed Addition",
+            Self::SignedAddition => "Signed Addition (AddSub)",
             Self::Overlay => "Overlay",
             Self::Screen => "Screen",
-            Self::LinearDodge => "Linear Dodge (Add)",
-            Self::ColorDodge => "Color Dodge",
+            Self::LinearBurn => "Linear Burn",
             Self::ColorBurn => "Color Burn",
+            Self::ColorDodge => "Color Dodge",
             Self::SoftLight => "Soft Light",
             Self::HardLight => "Hard Light",
             Self::VividLight => "Vivid Light",
@@ -128,41 +129,42 @@ impl BlendMode {
         }
     }
 
-    /// The abbreviation on a layer row, next to the opacity.
+    /// The abbreviation on a layer row, above the opacity ("Norm", "Ldge", "NMdt" as in
+    /// Painter).
     pub fn short_label(self) -> &'static str {
         match self {
             Self::Normal => "Norm",
-            Self::Passthrough => "Pass",
-            Self::Disable => "Dis",
+            Self::Passthrough => "Pthr",
+            Self::Disable => "Dsbl",
             Self::Replace => "Repl",
             Self::Multiply => "Mul",
             Self::Divide => "Div",
             Self::InverseDivide => "IDiv",
             Self::Darken => "Dark",
-            Self::Lighten => "Light",
-            Self::LinearBurn => "LBurn",
+            Self::Lighten => "Ligh",
+            Self::LinearDodge => "Ldge",
             Self::Subtract => "Sub",
             Self::InverseSubtract => "ISub",
             Self::Difference => "Diff",
             Self::Exclusion => "Excl",
-            Self::SignedAddition => "SAdd",
-            Self::Overlay => "Over",
+            Self::SignedAddition => "AdSb",
+            Self::Overlay => "Ovrl",
             Self::Screen => "Scrn",
-            Self::LinearDodge => "LDdg",
-            Self::ColorDodge => "CDdg",
-            Self::ColorBurn => "CBurn",
-            Self::SoftLight => "SoftL",
-            Self::HardLight => "HardL",
-            Self::VividLight => "VivL",
+            Self::LinearBurn => "Lbrn",
+            Self::ColorBurn => "Cbrn",
+            Self::ColorDodge => "Cdge",
+            Self::SoftLight => "SftL",
+            Self::HardLight => "HrdL",
+            Self::VividLight => "VvdL",
             Self::LinearLight => "LinL",
             Self::PinLight => "PinL",
             Self::Tint => "Tint",
-            Self::Saturation => "Sat",
-            Self::Color => "Col",
-            Self::Value => "Val",
-            Self::NormalMapCombine => "NMC",
-            Self::NormalMapDetail => "NMD",
-            Self::NormalMapInverseDetail => "NMID",
+            Self::Saturation => "Satu",
+            Self::Color => "Colr",
+            Self::Value => "Valu",
+            Self::NormalMapCombine => "NMcb",
+            Self::NormalMapDetail => "NMdt",
+            Self::NormalMapInverseDetail => "NMid",
         }
     }
 
@@ -171,12 +173,13 @@ impl BlendMode {
         Self::ALL.iter().position(|&m| m == self).unwrap_or(0) as u32
     }
 
-    /// Whether the mode is offered for layers that are not folders.
+    /// Whether the mode is offered for layers that are not folders. Painter's Passthrough
+    /// on layers (cloning what lies below) comes with the filters.
     pub fn for_layers(self) -> bool {
         self != Self::Passthrough
     }
 
-    /// Modes that mix only grayscale values, offered for mask effects.
+    /// Modes that work on grayscale values, offered for mask effects.
     pub fn for_masks(self) -> bool {
         !matches!(
             self,
@@ -212,6 +215,15 @@ impl ChannelBlend {
 pub struct Blending([ChannelBlend; Channel::COUNT]);
 
 impl Blending {
+    /// Painter's defaults for new layers and folders: Normal, but Linear Dodge (Add) for
+    /// height and Normal Map Detail for normals, all at full opacity.
+    pub fn new_layer() -> Self {
+        let mut blending = Self::uniform(BlendMode::Normal);
+        blending.get_mut(Channel::Height).mode = BlendMode::LinearDodge;
+        blending.get_mut(Channel::Normal).mode = BlendMode::NormalMapDetail;
+        blending
+    }
+
     /// The same mode at full opacity for every channel.
     pub fn uniform(mode: BlendMode) -> Self {
         Self([ChannelBlend { mode, opacity: 1.0 }; Channel::COUNT])
@@ -272,15 +284,22 @@ pub struct Fill {
     pub values: ChannelValues,
     /// Per channel, in [`Channel::ALL`] order.
     pub images: [Option<Arc<TextureImage>>; Channel::COUNT],
+    /// Whether the normal channel's image is a DirectX normal map (green points down), as
+    /// Painter assumes for loaded normal maps; OpenGL otherwise.
+    pub normal_directx: bool,
     pub projection: Projection,
 }
 
 impl Default for Fill {
+    /// As in Painter since version 11, a new fill sets only the base color.
     fn default() -> Self {
+        let mut channels = ChannelSet::NONE;
+        channels.set(Channel::BaseColor, true);
         Self {
-            channels: ChannelSet::ALL,
+            channels,
             values: ChannelValues::default(),
             images: Default::default(),
+            normal_directx: true,
             projection: Projection::default(),
         }
     }
@@ -464,29 +483,23 @@ pub struct Layer {
 }
 
 impl Layer {
-    /// An empty layer of the kind, with Painter's default blending: Normal for layers,
-    /// Passthrough for folders.
+    /// An empty layer of the kind, with Painter's default blending (see
+    /// [`Blending::new_layer`]); folders blend like layers too.
     pub fn new(kind: LayerKind, name: String, ids: &mut Ids) -> Self {
         let id = ids.next();
-        let (content, mode) = match kind {
-            LayerKind::Paint => (
-                Content::Paint(PaintLayer::new(ids.next())),
-                BlendMode::Normal,
-            ),
-            LayerKind::Fill => (Content::Fill(Fill::default()), BlendMode::Normal),
-            LayerKind::Folder => (
-                Content::Folder(Folder {
-                    layers: Vec::new(),
-                    expanded: true,
-                }),
-                BlendMode::Passthrough,
-            ),
+        let content = match kind {
+            LayerKind::Paint => Content::Paint(PaintLayer::new(ids.next())),
+            LayerKind::Fill => Content::Fill(Fill::default()),
+            LayerKind::Folder => Content::Folder(Folder {
+                layers: Vec::new(),
+                expanded: true,
+            }),
         };
         Self {
             id,
             name,
             visible: true,
-            blending: Blending::uniform(mode),
+            blending: Blending::new_layer(),
             content,
             mask: None,
         }
@@ -989,6 +1002,31 @@ mod tests {
         assert!((levels.apply(0.4) - 0.5).abs() < 1e-6);
         assert_eq!(levels.apply(0.9), 1.0);
         assert_eq!(Levels::default().apply(0.3), 0.3);
+    }
+
+    #[test]
+    fn new_layers_blend_like_painter() {
+        let mut ids = Ids::default();
+        for kind in [LayerKind::Paint, LayerKind::Fill, LayerKind::Folder] {
+            let layer = Layer::new(kind, String::new(), &mut ids);
+            assert_eq!(layer.blending.get(Channel::BaseColor), ChannelBlend::NORMAL);
+            assert_eq!(
+                layer.blending.get(Channel::Height).mode,
+                BlendMode::LinearDodge
+            );
+            assert_eq!(
+                layer.blending.get(Channel::Normal).mode,
+                BlendMode::NormalMapDetail
+            );
+        }
+        let Content::Fill(fill) = Layer::new(LayerKind::Fill, String::new(), &mut ids).content
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            fill.channels.iter().collect::<Vec<_>>(),
+            [Channel::BaseColor]
+        );
     }
 
     #[test]
