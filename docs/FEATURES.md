@@ -62,6 +62,15 @@ Alltag ersetzt. Vorbild ist Painter in Version 12.x (Stand Oktober 2026).
   hat einen eigenen Layer Stack, eigene Texturen und eine eigene Auflösung.
 - Ein Mesh kann mehrere Materialien haben, und ein Material kann auf mehreren Meshes liegen.
 
+**Zwei Wege, einem Mesh mehrere Materialien zu geben.** Beide lassen sich kombinieren.
+
+| | Über das Modell (Texture Sets) | Über Masken im Layer Stack (Kapitel 5.1) |
+|---|---|---|
+| Festgelegt | im 3D-Programm, pro Polygon | in inkpainter3d, frei per Maske |
+| Grenze | harte Kante an Polygongrenzen | beliebig, auch weich |
+| Export | eigene Texturdateien pro Material | alles in denselben Texturen |
+| Typisch | Haut, Kleidung, Glas | Stahl, Lack, Rost und Schmutz auf derselben Fläche |
+
 ### 2.1 Import
 
 - [ ] `P0` Beim Import bleiben **Materialzuweisung und Mesh-Namen erhalten**: aus FBX
@@ -219,6 +228,41 @@ lineare Daten. Bei User-Kanälen ist sie umschaltbar.
 ---
 
 ## 5. Layer Stack
+
+### 5.1 Materialien stapeln (Grundprinzip)
+
+Jedes Texture Set hat einen Layer Stack. Ein Material darauf ist ein **Fill Layer** mit
+optionaler **Maske**. Die Reihenfolge im Stack ist die Priorität: **Das oberste Material
+gewinnt**, aber nur dort, wo seine Maske es zulässt.
+
+```
+Layer Stack von Body_MAT                 Ergebnis
+  3  Rost         [Maske]                Rost, wo seine Maske weiß ist
+  2  Roter Lack   [Maske]                Lack, wo seine Maske weiß ist und kein Rost liegt
+  1  Stahl        (keine Maske)          Stahl überall sonst
+```
+
+- [ ] `P0` **Ohne Maske** deckt ein Material das ganze Texture Set ab. Alles darunter ist
+      verdeckt.
+- [ ] `P0` **Mit Maske:** Weiß zeigt dieses Material, Schwarz lässt die Materialien darunter
+      durch, Grau mischt beide. Graustufen ergeben weiche Übergänge, z. B. abgeplatzten Lack
+      an Kanten.
+- [ ] `P0` **Priorität ändern** durch Verschieben im Stack per Drag & Drop.
+- [ ] `P0` **Pro Kanal:** Ein Material gewinnt nur in den Kanälen, die es eingeschaltet hat.
+      Ein „Nass“-Layer, der nur Roughness setzt, lässt die Farbe darunter stehen.
+- [ ] `P0` **Deckkraft und Blend Mode** verändern das Ergebnis: Bei *Normal* mit 100 % gilt
+      „oben gewinnt“, bei weniger Deckkraft oder anderen Modi wird gemischt.
+- [ ] `P0` **Ordner mit Maske:** Mehrere Layer lassen sich gruppieren und gemeinsam maskieren,
+      z. B. „Lack“ zusammen mit „Kratzer im Lack“.
+- [ ] `P1` **Woher Masken kommen:** gemalt, Polygon Fill (Mesh, Polygon, UV-Insel), Geometry
+      Mask (nach Mesh-Name), Color Selection aus der ID-Map, Generatoren wie Edge Wear oder
+      Dirt.
+- [ ] `P1` **Material auf ein Teil ziehen:** Strg+Drag & Drop eines Materials auf das Modell
+      erzeugt einen Fill Layer, dessen Maske nur das Teil unter dem Mauszeiger abdeckt.
+- [ ] `P2` ＋ **„Nach Mesh“-Ansicht** der Texture-Set-Liste zeigt pro Mesh, welche Material-Layer
+      darauf wirken.
+
+### 5.2 Layer
 
 **Layer-Typen**
 
@@ -572,6 +616,7 @@ Was inkpainter3d zusätzlich können soll:
 | Funktion | Kapitel |
 |---|---|
 | Meshes innerhalb eines Texture Sets einzeln ausblenden; Baum Material ↔ Mesh; Material-ID-Ansicht | 2.2 |
+| Pro Mesh sehen, welche Material-Layer darauf wirken | 5.1 |
 | Stylized-Shading mit Ink-Outline im Viewport | 4 |
 | Ink-Kanal | 4 |
 | **Vektor-Layer:** Bézier-Pfade, die auf der Oberfläche verankert und jederzeit editierbar sind; SVG-Decals | eigener Meilenstein |
