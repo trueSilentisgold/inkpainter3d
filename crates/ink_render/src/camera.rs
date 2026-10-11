@@ -1,6 +1,6 @@
 use glam::camera::rh::{proj::directx, view};
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
-use ink_core::Aabb;
+use ink_core::{Aabb, StrokeCamera};
 
 /// Turntable camera orbiting around a target point (Y up).
 #[derive(Clone, Debug)]
@@ -63,6 +63,52 @@ impl OrbitCamera {
     /// Unit vector from the eye towards the target.
     pub fn forward(&self) -> Vec3 {
         (self.target - self.eye()).normalize()
+    }
+
+    /// World space direction of the top of the screen.
+    pub fn up(&self) -> Vec3 {
+        self.view().row(1).truncate()
+    }
+
+    /// World size of the viewport's height at `point`, e.g. for brushes sized on screen.
+    pub fn view_height_at(&self, point: Vec3) -> f32 {
+        let height = 2.0 * (self.fov_y * 0.5).tan();
+        if self.orthographic {
+            self.distance * height
+        } else {
+            (point - self.eye()).dot(self.forward()).max(1e-4) * height
+        }
+    }
+
+    /// The camera as stored with a stroke, for a view of the given aspect ratio.
+    pub fn stroke_camera(&self, aspect: f32) -> StrokeCamera {
+        let height = 2.0 * (self.fov_y * 0.5).tan();
+        StrokeCamera {
+            view_proj: self.projection(aspect) * self.view(),
+            eye: self.eye(),
+            forward: self.forward(),
+            aspect,
+            orthographic: self.orthographic,
+            height: if self.orthographic {
+                self.distance * height
+            } else {
+                height
+            },
+        }
+    }
+
+    /// Screen position in pixels from the top left of a world point, if it is in front of
+    /// the camera.
+    pub fn project(&self, point: Vec3, viewport: Vec2) -> Option<Vec2> {
+        let clip = self.projection(viewport.x / viewport.y) * self.view() * point.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let ndc = clip.xy() / clip.w;
+        Some(Vec2::new(
+            (ndc.x + 1.0) * 0.5 * viewport.x,
+            (1.0 - ndc.y) * 0.5 * viewport.y,
+        ))
     }
 
     /// World space ray through a point of the viewport, given in pixels from the top left.
@@ -149,6 +195,26 @@ mod tests {
             assert!(off_axis.length() < 1e-3, "orthographic: {orthographic}");
             assert!((dir - cam.forward()).length() < 1e-4);
         }
+    }
+
+    #[test]
+    fn project_inverts_ray() {
+        for orthographic in [false, true] {
+            let cam = OrbitCamera {
+                orthographic,
+                ..Default::default()
+            };
+            let size = Vec2::new(800.0, 600.0);
+            let pixel = Vec2::new(123.0, 456.0);
+            let (origin, dir) = cam.ray(pixel, size);
+            let point = origin + dir * 3.0;
+            let back = cam.project(point, size).unwrap();
+            assert!(back.distance(pixel) < 0.05, "{back}");
+        }
+        let cam = OrbitCamera::default();
+        let h = cam.view_height_at(cam.target);
+        assert!((h - 2.0 * cam.distance * (cam.fov_y * 0.5).tan()).abs() < 1e-4);
+        assert!(cam.up().dot(cam.forward()).abs() < 1e-5);
     }
 
     #[test]

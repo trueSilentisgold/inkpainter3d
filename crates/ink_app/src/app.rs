@@ -1,12 +1,16 @@
-use eframe::egui::{self, Color32, Key, PointerButton, RichText, Sense};
+mod painting;
+mod views;
+
+use eframe::egui::{self, Color32, Key, RichText, Sense};
 use eframe::egui_wgpu::RenderState;
-use glam::Vec2;
-use ink_core::{AlphaMode, Mesh, Model};
+use ink_core::{AlphaMode, History, Mesh, Model};
 use ink_render::{
-    DisplayMode, Highlight, OrbitCamera, ShadingMode, ViewportRenderer, ViewportSettings,
-    texture_set_color, wgpu,
+    DisplayMode, Highlight, OrbitCamera, ShadingMode, UvCamera, UvView, ViewportRenderer,
+    ViewportSettings, texture_set_color,
 };
+use painting::PaintState;
 use std::path::{Path, PathBuf};
+use views::Layout;
 
 const RESOLUTIONS: [u32; 6] = [128, 256, 512, 1024, 2048, 4096];
 
@@ -30,6 +34,18 @@ pub struct InkApp {
     /// Unsnapped camera angles while snap-rotating (Alt+Shift+LMB).
     snap_angles: Option<(f32, f32)>,
     status: String,
+    paint: PaintState,
+    history: History,
+    layout: Layout,
+    /// F4: 2D view on the left, 3D on the right.
+    layout_swapped: bool,
+    uv_view: UvView,
+    uv_texture: Option<egui::TextureId>,
+    uv_camera: UvCamera,
+    uv_display: DisplayMode,
+    uv_wireframe: bool,
+    /// Unsnapped 2D view rotation while snap-rotating.
+    uv_rotation: Option<f32>,
 }
 
 impl InkApp {
@@ -52,6 +68,7 @@ impl InkApp {
             &environment.pixels,
         );
 
+        let uv_view = UvView::new(device, &renderer);
         let mut app = Self {
             model: Model::from_mesh(Mesh::default()),
             camera: OrbitCamera::default(),
@@ -66,6 +83,17 @@ impl InkApp {
             hover_info: None,
             snap_angles: None,
             status: format!("GPU: {} ({:?})", info.name, info.backend),
+            paint: PaintState::default(),
+            history: History::default(),
+            // Painter opens with the 3D and 2D views side by side.
+            layout: Layout::Both,
+            layout_swapped: false,
+            uv_view,
+            uv_texture: None,
+            uv_camera: UvCamera::default(),
+            uv_display: DisplayMode::Material,
+            uv_wireframe: true,
+            uv_rotation: None,
         };
         app.set_model(render_state, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
 
@@ -78,6 +106,10 @@ impl InkApp {
 
     fn set_model(&mut self, rs: &RenderState, model: Model) {
         self.renderer.set_model(&rs.device, &rs.queue, &model);
+        self.uv_view.set_model(&rs.device, &model);
+        self.paint.reset();
+        self.history.clear();
+        self.uv_camera.frame();
         self.camera.frame(&model.bounds());
         self.selected_set = 0;
         // Expand single-set models right away; they have nothing else to show.
@@ -189,6 +221,26 @@ impl InkApp {
                     ui.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+            ui.menu_button("Edit", |ui| {
+                if ui
+                    .add_enabled(
+                        self.history.can_undo(),
+                        egui::Button::new("Undo").shortcut_text("Ctrl+Z"),
+                    )
+                    .clicked()
+                {
+                    self.undo();
+                }
+                if ui
+                    .add_enabled(
+                        self.history.can_redo(),
+                        egui::Button::new("Redo").shortcut_text("Ctrl+Y"),
+                    )
+                    .clicked()
+                {
+                    self.redo();
+                }
+            });
             ui.menu_button("Primitives", |ui| {
                 if ui.button("Sphere").clicked() {
                     self.set_model(rs, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
@@ -199,9 +251,15 @@ impl InkApp {
             });
             ui.menu_button("View", |ui| {
                 if ui.button("Frame model (F)").clicked() {
-                    self.camera.frame(&self.model.bounds());
+                    self.frame_views();
                 }
                 ui.checkbox(&mut self.camera.orthographic, "Orthographic (F5 / F6)");
+                ui.separator();
+                ui.radio_value(&mut self.layout, Layout::Both, "3D / 2D (F1)");
+                ui.radio_value(&mut self.layout, Layout::Model, "3D only (F2)");
+                ui.radio_value(&mut self.layout, Layout::Uv, "2D only (F3)");
+                ui.checkbox(&mut self.layout_swapped, "Swap 3D and 2D (F4)");
+                ui.checkbox(&mut self.uv_wireframe, "UV wireframe in 2D");
                 ui.separator();
                 for mode in DisplayMode::ALL {
                     ui.radio_value(&mut self.settings.display, mode, mode.label());
@@ -474,7 +532,19 @@ impl InkApp {
         let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
         let pressed = |key| ui.input(|i| i.key_pressed(key));
         if pressed(Key::F) {
-            self.camera.frame(&self.model.bounds());
+            self.frame_views();
+        }
+        if pressed(Key::F1) {
+            self.layout = Layout::Both;
+        }
+        if pressed(Key::F2) {
+            self.layout = Layout::Model;
+        }
+        if pressed(Key::F3) {
+            self.layout = Layout::Uv;
+        }
+        if pressed(Key::F4) {
+            self.layout_swapped = !self.layout_swapped;
         }
         if pressed(Key::F5) {
             self.camera.orthographic = false;
@@ -491,151 +561,6 @@ impl InkApp {
         if alt && pressed(Key::Q) {
             self.toggle_focus();
         }
-    }
-
-    fn navigate(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
-        let (alt, shift, ctrl) =
-            ui.input(|i| (i.modifiers.alt, i.modifiers.shift, i.modifiers.command));
-        let delta = response.drag_delta();
-        let left = response.dragged_by(PointerButton::Primary);
-        let middle = response.dragged_by(PointerButton::Middle);
-        let right = response.dragged_by(PointerButton::Secondary);
-
-        // Painter navigation: Alt+LMB rotate (Shift snaps to 90°), Alt+MMB or Ctrl+Alt+LMB
-        // pan, Alt+RMB or wheel zoom, Shift+RMB rotate the environment.
-        if alt && left && shift && !ctrl {
-            const SPEED: f32 = 0.008;
-            let (yaw, pitch) = self
-                .snap_angles
-                .get_or_insert((self.camera.yaw, self.camera.pitch));
-            *yaw -= delta.x * SPEED;
-            *pitch += delta.y * SPEED;
-            let (yaw, pitch) = (*yaw, *pitch);
-            self.camera.set_snapped(yaw, pitch);
-        } else {
-            self.snap_angles = None;
-            if alt && left && !ctrl {
-                self.camera.orbit(delta.x, delta.y);
-            } else if alt && (middle || (left && ctrl)) {
-                self.camera.pan(delta.x, delta.y, rect.height());
-            } else if alt && right {
-                self.camera.zoom((delta.x - delta.y) * 0.015);
-            } else if shift && right && !alt {
-                self.settings.environment_rotation += delta.x * 0.01;
-            }
-        }
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta().y);
-            if scroll != 0.0 {
-                self.camera.zoom(scroll / 50.0);
-            }
-        }
-    }
-
-    /// Texture set selection with Ctrl+Alt+right click, and what is under the cursor.
-    fn pick(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) {
-        let pointer = response.hover_pos().filter(|_| !response.dragged());
-        let hit = pointer.and_then(|pos| {
-            let local = pos - rect.min;
-            let (origin, dir) = self.camera.ray(
-                Vec2::new(local.x, local.y),
-                Vec2::new(rect.width(), rect.height()),
-            );
-            self.model.pick(origin, dir)
-        });
-        let part = hit.map(|h| self.model.parts[h.part].clone());
-        self.hover_info = part.as_ref().map(|p| {
-            format!(
-                "{}  ·  {}",
-                self.model.objects[p.object].name, self.model.texture_sets[p.texture_set].name
-            )
-        });
-
-        let (alt, ctrl) = ui.input(|i| (i.modifiers.alt, i.modifiers.command));
-        if alt
-            && ctrl
-            && response.secondary_clicked()
-            && let Some(part) = part
-        {
-            self.select_set(part.texture_set);
-            self.expanded[part.texture_set] = true;
-            self.status = format!(
-                "Selected texture set {}",
-                self.model.texture_sets[part.texture_set].name
-            );
-        }
-    }
-
-    fn viewport(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        self.navigate(ui, &response, rect);
-        self.pick(ui, &response, rect);
-
-        let ppp = ui.ctx().pixels_per_point();
-        let size = [
-            (rect.width() * ppp).round() as u32,
-            (rect.height() * ppp).round() as u32,
-        ];
-        let device = &rs.device;
-        self.renderer
-            .sync_texture_sets(device, &rs.queue, &self.model);
-        if self.renderer.resize(device, size) {
-            let view = self
-                .renderer
-                .output_view()
-                .expect("targets exist after resize");
-            let mut egui_renderer = rs.renderer.write();
-            match self.viewport_texture {
-                Some(id) => egui_renderer.update_egui_texture_from_wgpu_texture(
-                    device,
-                    view,
-                    wgpu::FilterMode::Linear,
-                    id,
-                ),
-                None => {
-                    self.viewport_texture = Some(egui_renderer.register_native_texture(
-                        device,
-                        view,
-                        wgpu::FilterMode::Linear,
-                    ))
-                }
-            }
-        }
-        self.renderer.render(
-            device,
-            &rs.queue,
-            &self.camera,
-            &self.settings,
-            &self.model,
-            self.hover,
-        );
-
-        if let Some(id) = self.viewport_texture {
-            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().image(id, rect, uv, Color32::WHITE);
-        }
-
-        // Display mode dropdown, like Painter's at the top of each view.
-        let combo_rect =
-            egui::Rect::from_min_size(rect.min + egui::vec2(10.0, 8.0), egui::vec2(180.0, 24.0));
-        ui.scope_builder(egui::UiBuilder::new().max_rect(combo_rect), |ui| {
-            egui::ComboBox::from_id_salt("display mode")
-                .selected_text(self.settings.display.label())
-                .width(160.0)
-                .show_ui(ui, |ui| {
-                    for mode in DisplayMode::ALL {
-                        ui.selectable_value(&mut self.settings.display, mode, mode.label());
-                    }
-                });
-        });
-        ui.painter().text(
-            rect.left_bottom() + egui::vec2(10.0, -10.0),
-            egui::Align2::LEFT_BOTTOM,
-            "Rotate: Alt+LMB   Pan: Alt+MMB   Zoom: Alt+RMB / Wheel   Light: Shift+RMB   \
-             Select set: Ctrl+Alt+RMB   Frame: F",
-            egui::FontId::proportional(12.0),
-            Color32::from_gray(140),
-        );
     }
 }
 
@@ -661,14 +586,18 @@ impl eframe::App for InkApp {
                 .unwrap_or_default();
             if ink_io::ENVIRONMENT_EXTENSIONS.contains(&ext.as_str()) {
                 self.load_environment(&rs, path);
+            } else if ink_io::ALPHA_EXTENSIONS.contains(&ext.as_str()) {
+                self.load_alpha(path);
             } else {
                 self.load_model(&rs, path);
             }
         }
 
         self.shortcuts(ui);
-        self.hover = Highlight::default();
+        self.paint_shortcuts(ui);
+        self.reset_hover();
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &rs));
+        egui::Panel::top("tool bar").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&self.status).small());
@@ -679,12 +608,24 @@ impl eframe::App for InkApp {
                 }
             });
         });
+        egui::Panel::left("tools")
+            .resizable(false)
+            .exact_size(76.0)
+            .show(ui, |ui| self.tool_strip(ui));
         egui::Panel::right("panels")
-            .default_size(330.0)
+            .default_size(340.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.texture_set_list(ui);
                     ui.add_space(10.0);
+                    let title = match self.paint.tool {
+                        ink_core::Tool::Paint => "PROPERTIES - PAINT",
+                        ink_core::Tool::Erase => "PROPERTIES - ERASER",
+                    };
+                    egui::CollapsingHeader::new(RichText::new(title).small().strong())
+                        .id_salt("properties")
+                        .default_open(true)
+                        .show(ui, |ui| self.properties_panel(ui));
                     egui::CollapsingHeader::new(
                         RichText::new("TEXTURE SET SETTINGS").small().strong(),
                     )
@@ -695,7 +636,7 @@ impl eframe::App for InkApp {
                         .show(ui, |ui| self.display_settings(ui, &rs));
                 });
             });
-        egui::CentralPanel::no_frame().show(ui, |ui| self.viewport(ui, &rs));
+        egui::CentralPanel::no_frame().show(ui, |ui| self.views(ui, &rs));
     }
 }
 

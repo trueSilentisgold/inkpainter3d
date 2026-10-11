@@ -1,18 +1,19 @@
 use crate::camera::OrbitCamera;
 use crate::environment::{self, Environment, IblBaker, SPECULAR_MIPS};
+use crate::paint::{GpuPaint, PaintRenderer};
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu::{self, util::DeviceExt};
 use glam::Quat;
 use ink_core::{AlphaMode, ChannelValues, Model, TextureSet};
 
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SAMPLE_COUNT: u32 = 4;
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(crate) const SAMPLE_COUNT: u32 = 4;
 const DISPLAY_VIEW_FORMATS: [wgpu::TextureFormat; 1] = [wgpu::TextureFormat::Rgba8Unorm];
 
 /// Channel textures of a texture set as the viewport samples them.
 /// Base color + opacity, normal, roughness / metallic / AO, emissive.
-const CHANNEL_FORMATS: [wgpu::TextureFormat; 4] = [
+pub(crate) const CHANNEL_FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
     wgpu::TextureFormat::Rgba8Unorm,
     wgpu::TextureFormat::Rgba8Unorm,
@@ -88,8 +89,8 @@ impl DisplayMode {
         Self::CHANNELS[next]
     }
 
-    /// Must match the DISPLAY_* constants in viewport.wgsl.
-    fn code(self) -> f32 {
+    /// Must match the DISPLAY_* constants in viewport.wgsl and uv_view.wgsl.
+    pub(crate) fn code(self) -> f32 {
         Self::ALL.iter().position(|&m| m == self).unwrap_or(0) as f32
     }
 }
@@ -148,7 +149,7 @@ impl Highlight {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
+pub(crate) struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
     uv: [f32; 2],
@@ -180,28 +181,150 @@ struct TextureSetUniforms {
     id_color: [f32; 4],
 }
 
-struct GpuMesh {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
+impl Vertex {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        0 => Float32x3,
+        1 => Float32x3,
+        2 => Float32x2,
+        3 => Float32x4
+    ];
+
+    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<Self>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBUTES,
+        }
+    }
+}
+
+pub(crate) struct GpuMesh {
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
 }
 
 struct GpuTextureSet {
     resolution: u32,
     fill: ChannelValues,
     alpha_mode: AlphaMode,
+    /// Channel textures with mips, in `CHANNEL_FORMATS` order.
     textures: Vec<wgpu::Texture>,
     uniforms: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    /// Created with the first stroke.
+    paint: Option<GpuPaint>,
 }
 
-struct Targets {
-    size: [u32; 2],
-    msaa: wgpu::TextureView,
-    resolve: wgpu::Texture,
-    resolve_view: wgpu::TextureView,
+/// Offscreen color target shown in egui, multisampled, with depth.
+pub(crate) struct Targets {
+    pub size: [u32; 2],
+    pub msaa: wgpu::TextureView,
+    pub resolve: wgpu::Texture,
+    pub resolve_view: wgpu::TextureView,
     /// Same pixels without sRGB decoding: egui expects gamma-encoded texture values.
-    display_view: wgpu::TextureView,
-    depth: wgpu::TextureView,
+    pub display_view: wgpu::TextureView,
+    pub depth: wgpu::TextureView,
+}
+
+impl Targets {
+    pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+        let size = [size[0].max(1), size[1].max(1)];
+        let texture = |label: &str, format: wgpu::TextureFormat, samples, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: samples,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage,
+                // Lets the color output also be viewed without sRGB decoding.
+                view_formats: if format == COLOR_FORMAT {
+                    &DISPLAY_VIEW_FORMATS
+                } else {
+                    &[]
+                },
+            })
+        };
+        let resolve = texture(
+            "view color",
+            COLOR_FORMAT,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+        );
+        Self {
+            size,
+            msaa: texture(
+                "view msaa",
+                COLOR_FORMAT,
+                SAMPLE_COUNT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            )
+            .create_view(&Default::default()),
+            resolve_view: resolve.create_view(&Default::default()),
+            display_view: resolve.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(DISPLAY_VIEW_FORMATS[0]),
+                ..Default::default()
+            }),
+            resolve,
+            depth: texture(
+                "view depth",
+                DEPTH_FORMAT,
+                SAMPLE_COUNT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            )
+            .create_view(&Default::default()),
+        }
+    }
+
+    /// Replaces the targets if the size changed. Returns true when the display view was
+    /// replaced and must be re-registered with the UI.
+    pub fn ensure(targets: &mut Option<Self>, device: &wgpu::Device, size: [u32; 2]) -> bool {
+        let size = [size[0].max(1), size[1].max(1)];
+        if targets.as_ref().is_some_and(|t| t.size == size) {
+            return false;
+        }
+        *targets = Some(Self::new(device, size));
+        true
+    }
+
+    /// A pass that clears the color to `clear` and the depth to 1, resolving into
+    /// `resolve`.
+    pub fn begin_pass<'a>(
+        &self,
+        encoder: &'a mut wgpu::CommandEncoder,
+        clear: wgpu::Color,
+    ) -> wgpu::RenderPass<'a> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("view pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.msaa,
+                depth_slice: None,
+                resolve_target: Some(&self.resolve_view),
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear),
+                    store: wgpu::StoreOp::Discard,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
+    }
 }
 
 /// Renders the model into an offscreen texture that the UI displays.
@@ -223,6 +346,7 @@ pub struct ViewportRenderer {
     mesh: Option<GpuMesh>,
     sets: Vec<GpuTextureSet>,
     targets: Option<Targets>,
+    paint: PaintRenderer,
 }
 
 impl ViewportRenderer {
@@ -297,16 +421,7 @@ impl ViewportRenderer {
             immediate_size: 0,
         });
 
-        let vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: size_of::<Vertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![
-                0 => Float32x3,
-                1 => Float32x3,
-                2 => Float32x2,
-                3 => Float32x4
-            ],
-        };
+        let vertex_layout = Vertex::layout();
 
         struct PipelineDesc<'a> {
             label: &'a str,
@@ -440,6 +555,7 @@ impl ViewportRenderer {
             &clamp_sampler,
         );
 
+        let paint = PaintRenderer::new(device, queue, &Vertex::layout());
         Self {
             mesh_pipeline,
             blend_pipeline,
@@ -458,6 +574,7 @@ impl ViewportRenderer {
             mesh: None,
             sets: Vec::new(),
             targets: None,
+            paint,
         }
     }
 
@@ -506,34 +623,52 @@ impl ViewportRenderer {
             }),
         });
         self.sets.clear();
+        self.paint.reset();
         self.sync_texture_sets(device, queue, model);
     }
 
-    /// Brings the GPU textures in line with the texture sets after their settings changed.
-    /// Cheap when nothing changed, so it can run every frame.
+    /// Brings the GPU textures in line with the texture sets after their settings or
+    /// strokes changed. Cheap when nothing changed, so it can run every frame.
     pub fn sync_texture_sets(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, model: &Model) {
         self.sets.truncate(model.texture_sets.len());
         for (index, set) in model.texture_sets.iter().enumerate() {
             let uniforms = TextureSetUniforms {
                 id_color: id_color(index, set.alpha_mode),
             };
+            let mut fill_changed = false;
             if let Some(gpu) = self.sets.get_mut(index)
                 && gpu.resolution == set.resolution
             {
                 if gpu.fill != set.fill {
                     gpu.fill = set.fill;
-                    fill_channels(device, queue, &gpu.textures, &set.fill);
+                    fill_changed = true;
                 }
                 if gpu.alpha_mode != set.alpha_mode {
                     gpu.alpha_mode = set.alpha_mode;
                     queue.write_buffer(&gpu.uniforms, 0, bytemuck::bytes_of(&uniforms));
                 }
-                continue;
+            } else {
+                let gpu = self.create_texture_set(device, queue, set, &uniforms);
+                match self.sets.get_mut(index) {
+                    Some(slot) => *slot = gpu,
+                    None => self.sets.push(gpu),
+                }
             }
-            let gpu = self.create_texture_set(device, queue, set, &uniforms);
-            match self.sets.get_mut(index) {
-                Some(slot) => *slot = gpu,
-                None => self.sets.push(gpu),
+            let gpu = &mut self.sets[index];
+            let painted = self.mesh.as_ref().is_some_and(|mesh| {
+                self.paint.sync(
+                    device,
+                    queue,
+                    model,
+                    mesh,
+                    index,
+                    &mut gpu.paint,
+                    &gpu.textures,
+                    fill_changed,
+                )
+            });
+            if fill_changed && !painted {
+                fill_channels(device, queue, &gpu.textures, &set.fill);
             }
         }
     }
@@ -603,75 +738,34 @@ impl ViewportRenderer {
             textures,
             uniforms: uniform_buffer,
             bind_group,
+            paint: None,
         }
     }
 
     /// Recreates the render targets if the size changed. Returns true when the
     /// output texture view was replaced and must be re-registered with the UI.
     pub fn resize(&mut self, device: &wgpu::Device, size: [u32; 2]) -> bool {
-        let size = [size[0].max(1), size[1].max(1)];
-        if self.targets.as_ref().is_some_and(|t| t.size == size) {
-            return false;
-        }
-        let texture = |label: &str, format: wgpu::TextureFormat, samples, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: samples,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage,
-                // Lets the color output also be viewed without sRGB decoding.
-                view_formats: if format == COLOR_FORMAT {
-                    &DISPLAY_VIEW_FORMATS
-                } else {
-                    &[]
-                },
-            })
-        };
-        let resolve = texture(
-            "viewport color",
-            COLOR_FORMAT,
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-        );
-        self.targets = Some(Targets {
-            size,
-            msaa: texture(
-                "viewport msaa",
-                COLOR_FORMAT,
-                SAMPLE_COUNT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            )
-            .create_view(&Default::default()),
-            resolve_view: resolve.create_view(&Default::default()),
-            display_view: resolve.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(DISPLAY_VIEW_FORMATS[0]),
-                ..Default::default()
-            }),
-            resolve,
-            depth: texture(
-                "viewport depth",
-                DEPTH_FORMAT,
-                SAMPLE_COUNT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            )
-            .create_view(&Default::default()),
-        });
-        true
+        Targets::ensure(&mut self.targets, device, size)
     }
 
     /// The resolved color output for display in egui (sRGB-encoded values, read without
     /// decoding). Only valid after [`Self::resize`] was called once.
     pub fn output_view(&self) -> Option<&wgpu::TextureView> {
         self.targets.as_ref().map(|t| &t.display_view)
+    }
+
+    pub(crate) fn mesh(&self) -> Option<&GpuMesh> {
+        self.mesh.as_ref()
+    }
+
+    pub(crate) fn set_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.set_layout
+    }
+
+    /// The texture set's channel textures as `@group(1)` of viewport.wgsl, once the GPU
+    /// sets match the model.
+    pub(crate) fn set_bind_group(&self, set: usize) -> Option<&wgpu::BindGroup> {
+        self.sets.get(set).map(|s| &s.bind_group)
     }
 
     /// The resolved color output texture, e.g. for screenshots.
@@ -699,29 +793,7 @@ impl ViewportRenderer {
             label: Some("viewport"),
         });
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("viewport pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &targets.msaa,
-                    depth_slice: None,
-                    resolve_target: Some(&targets.resolve_view),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Discard,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &targets.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = targets.begin_pass(&mut encoder, wgpu::Color::BLACK);
             pass.set_bind_group(0, &self.global_bind_group, &[]);
             pass.set_pipeline(&self.background_pipeline);
             pass.draw(0..3, 0..1);
@@ -940,7 +1012,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
     }
 }
 
-fn srgb_to_linear(c: f32) -> f32 {
+pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
         c / 12.92
     } else {
@@ -966,6 +1038,13 @@ mod tests {
     #[test]
     fn shaders_are_valid_wgsl() {
         validate("viewport.wgsl", include_str!("viewport.wgsl"));
+        validate("paint_dabs.wgsl", include_str!("paint_dabs.wgsl"));
+        validate("paint_seeds.wgsl", include_str!("paint_seeds.wgsl"));
+        validate("paint_depth.wgsl", include_str!("paint_depth.wgsl"));
+        validate("paint_apply.wgsl", include_str!("paint_apply.wgsl"));
+        validate("paint_composite.wgsl", include_str!("paint_composite.wgsl"));
+        validate("mipmap.wgsl", include_str!("mipmap.wgsl"));
+        validate("uv_view.wgsl", include_str!("uv_view.wgsl"));
         validate(
             "prefilter.wgsl",
             concat!(

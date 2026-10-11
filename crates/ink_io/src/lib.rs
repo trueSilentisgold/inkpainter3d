@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use glam::{Mat3, Mat4, Vec2, Vec3};
-use ink_core::{DEFAULT_MATERIAL, Model, ModelBuilder};
+use ink_core::{AlphaImage, DEFAULT_MATERIAL, Model, ModelBuilder};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -11,6 +11,9 @@ pub const SUPPORTED_EXTENSIONS: &[&str] = &["fbx", "glb", "gltf", "obj"];
 
 /// File extensions accepted by [`load_environment`].
 pub const ENVIRONMENT_EXTENSIONS: &[&str] = &["hdr", "exr"];
+
+/// Image formats [`load_alpha`] reads.
+pub const ALPHA_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
 /// Loads a model file in world space, keeping its objects and materials. Every material
 /// becomes a texture set.
@@ -279,6 +282,35 @@ fn load_obj(path: &Path, out: &mut ModelBuilder) -> Result<()> {
 fn pad<T: Copy>(mut v: Vec<T>, len: usize, fill: T) -> Vec<T> {
     v.resize(len, fill);
     v
+}
+
+/// Loads a brush alpha: white paints, black does not. Images with transparency use their
+/// alpha channel, others their brightness.
+pub fn load_alpha(path: &Path) -> Result<AlphaImage> {
+    let image = image::open(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 {
+        bail!("Alpha image is empty");
+    }
+    let transparent = image.pixels().any(|p| p[3] < 255);
+    let pixels = image
+        .pixels()
+        .map(|p| {
+            if transparent {
+                p[3]
+            } else {
+                let [r, g, b, _] = p.0.map(f32::from);
+                (0.2126 * r + 0.7152 * g + 0.0722 * b).round() as u8
+            }
+        })
+        .collect();
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(AlphaImage::new(name, width, height, pixels))
 }
 
 /// An equirectangular HDR environment, linear RGBA, rows top to bottom.
@@ -569,5 +601,29 @@ Connections:  {
         assert_eq!(env.width, 2 * env.height);
         assert_eq!(env.pixels.len(), (env.width * env.height) as usize);
         assert!(env.pixels.iter().any(|p| p[0] > 1.0), "should be HDR");
+    }
+
+    #[test]
+    fn alphas_use_transparency_or_brightness() {
+        let dir = std::env::temp_dir().join("inkpainter3d-alpha-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let gray = dir.join("gray.png");
+        image::GrayImage::from_fn(4, 2, |x, _| image::Luma([(x * 80) as u8]))
+            .save(&gray)
+            .unwrap();
+        let alpha = load_alpha(&gray).unwrap();
+        assert_eq!(
+            (alpha.width, alpha.height, alpha.name.as_str()),
+            (4, 2, "gray")
+        );
+        assert_eq!(&alpha.pixels[..4], &[0, 80, 160, 240]);
+
+        let cutout = dir.join("cutout.png");
+        image::RgbaImage::from_fn(2, 1, |x, _| {
+            image::Rgba([0, 0, 0, if x == 0 { 0 } else { 200 }])
+        })
+        .save(&cutout)
+        .unwrap();
+        assert_eq!(load_alpha(&cutout).unwrap().pixels, [0, 200]);
     }
 }

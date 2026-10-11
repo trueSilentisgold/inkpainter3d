@@ -1,5 +1,7 @@
+use crate::bvh::Bvh;
 use crate::mesh::{Aabb, Mesh};
-use glam::Vec3;
+use crate::stroke::PaintLayer;
+use glam::{Vec2, Vec3};
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -56,8 +58,10 @@ pub struct TextureSet {
     /// Texture size in pixels (square).
     pub resolution: u32,
     pub alpha_mode: AlphaMode,
-    /// Content of the channels until the layer stack exists; becomes the bottom fill layer.
+    /// Content of the channels below the paint; becomes the bottom fill layer of the
+    /// layer stack.
     pub fill: ChannelValues,
+    pub paint: PaintLayer,
 }
 
 impl TextureSet {
@@ -70,6 +74,7 @@ impl TextureSet {
             resolution: Self::DEFAULT_RESOLUTION,
             alpha_mode: AlphaMode::default(),
             fill: ChannelValues::default(),
+            paint: PaintLayer::default(),
         }
     }
 }
@@ -99,6 +104,9 @@ pub struct Model {
     pub texture_sets: Vec<TextureSet>,
     /// Grouped by texture set, then object.
     pub parts: Vec<Part>,
+    /// Built from `mesh`; rebuild it with [`Self::rebuild_bvh`] after changing the geometry.
+    bvh: Bvh,
+    last_stroke_id: u64,
 }
 
 /// Result of [`Model::pick`].
@@ -110,6 +118,9 @@ pub struct Hit {
     /// Distance along the ray.
     pub distance: f32,
     pub position: Vec3,
+    /// Interpolated vertex normal, facing the ray's origin.
+    pub normal: Vec3,
+    pub uv: Vec2,
 }
 
 impl Model {
@@ -172,36 +183,74 @@ impl Model {
             .sum()
     }
 
+    /// A new id for a [`crate::stroke::Stroke`], unique within this model.
+    pub fn next_stroke_id(&mut self) -> u64 {
+        self.last_stroke_id += 1;
+        self.last_stroke_id
+    }
+
+    /// Index of the part that contains the triangle.
+    pub fn part_of_triangle(&self, triangle: u32) -> usize {
+        let index = triangle * 3;
+        self.parts
+            .partition_point(|p| p.indices.end <= index)
+            .min(self.parts.len().saturating_sub(1))
+    }
+
     /// Finds the closest triangle hit by the ray, considering only visible parts.
     /// Triangles are hit from both sides.
     pub fn pick(&self, origin: Vec3, dir: Vec3) -> Option<Hit> {
-        let inv_dir = dir.recip();
-        let mut best: Option<Hit> = None;
-        for (index, part) in self.parts.iter().enumerate() {
-            if !self.is_part_visible(part) {
-                continue;
-            }
-            let max = best.map_or(f32::INFINITY, |h| h.distance);
-            if !ray_hits_box(origin, inv_dir, &part.bounds, max) {
-                continue;
-            }
-            let indices =
-                &self.mesh.indices[part.indices.start as usize..part.indices.end as usize];
-            for (i, tri) in indices.as_chunks::<3>().0.iter().enumerate() {
-                let [a, b, c] = tri.map(|v| self.mesh.positions[v as usize]);
-                if let Some(t) = ray_triangle(origin, dir, a, b, c)
-                    && best.is_none_or(|h| t < h.distance)
-                {
-                    best = Some(Hit {
-                        part: index,
-                        triangle: part.indices.start as usize / 3 + i,
-                        distance: t,
-                        position: origin + dir * t,
-                    });
-                }
-            }
+        let hit = self.bvh.raycast(&self.mesh, origin, dir, |t| {
+            self.is_part_visible(&self.parts[self.part_of_triangle(t)])
+        })?;
+        let corners = self.triangle_vertices(hit.triangle);
+        let [wa, wb, wc] = [
+            1.0 - hit.barycentric.x - hit.barycentric.y,
+            hit.barycentric.x,
+            hit.barycentric.y,
+        ];
+        let lerp3 = |v: &[Vec3]| v[corners[0]] * wa + v[corners[1]] * wb + v[corners[2]] * wc;
+        let mut normal = lerp3(&self.mesh.normals).normalize_or(Vec3::Y);
+        if normal.dot(dir) > 0.0 {
+            normal = -normal;
         }
-        best
+        let uvs = &self.mesh.uvs;
+        Some(Hit {
+            part: self.part_of_triangle(hit.triangle),
+            triangle: hit.triangle as usize,
+            distance: hit.distance,
+            position: origin + dir * hit.distance,
+            normal,
+            uv: uvs[corners[0]] * wa + uvs[corners[1]] * wb + uvs[corners[2]] * wc,
+        })
+    }
+
+    /// Appends the triangles of the parts `accept` lets through that may lie within
+    /// `radius` of `center`.
+    pub fn triangles_near(
+        &self,
+        center: Vec3,
+        radius: f32,
+        accept: impl Fn(&Part) -> bool,
+        out: &mut Vec<u32>,
+    ) {
+        self.bvh.triangles_near(
+            center,
+            radius,
+            |t| accept(&self.parts[self.part_of_triangle(t)]),
+            out,
+        );
+    }
+
+    /// Vertex indices of a triangle.
+    pub fn triangle_vertices(&self, triangle: u32) -> [usize; 3] {
+        let i = triangle as usize * 3;
+        [0, 1, 2].map(|k| self.mesh.indices[i + k] as usize)
+    }
+
+    /// Must be called after `mesh` positions or indices changed.
+    pub fn rebuild_bvh(&mut self) {
+        self.bvh = Bvh::new(&self.mesh);
     }
 }
 
@@ -329,6 +378,8 @@ impl ModelBuilder {
 
         Model {
             name,
+            bvh: Bvh::new(&mesh),
+            last_stroke_id: 0,
             mesh,
             objects: used_objects
                 .into_iter()
@@ -341,38 +392,6 @@ impl ModelBuilder {
             parts,
         }
     }
-}
-
-fn ray_hits_box(origin: Vec3, inv_dir: Vec3, b: &Aabb, max: f32) -> bool {
-    let t0 = (b.min - origin) * inv_dir;
-    let t1 = (b.max - origin) * inv_dir;
-    let near = t0.min(t1).max_element();
-    let far = t0.max(t1).min_element();
-    near <= far && far >= 0.0 && near <= max
-}
-
-/// Möller–Trumbore, two-sided. Returns the distance along the ray.
-fn ray_triangle(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
-    let e1 = b - a;
-    let e2 = c - a;
-    let p = dir.cross(e2);
-    let det = e1.dot(p);
-    if det.abs() < 1e-12 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    let s = origin - a;
-    let u = s.dot(p) * inv;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = s.cross(e1);
-    let v = dir.dot(q) * inv;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let t = e2.dot(q) * inv;
-    (t > 0.0).then_some(t)
 }
 
 #[cfg(test)]
