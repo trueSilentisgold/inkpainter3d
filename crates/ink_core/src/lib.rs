@@ -23,7 +23,7 @@ pub use layer::{
 pub use mesh::{Aabb, Mesh};
 pub use model::{
     AlphaMode, ChannelValues, DEFAULT_MATERIAL, FLAT_NORMAL, Hit, Ids, MeshObject, Model,
-    ModelBuilder, Part, TextureSet,
+    ModelBuilder, NormalFormat, Part, TextureSet,
 };
 pub use stroke::{
     Dab, DabSpacer, LazyMouse, PaintLayer, Stroke, StrokeCamera, StrokePath, StrokeSpace,

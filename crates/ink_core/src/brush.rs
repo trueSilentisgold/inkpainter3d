@@ -89,6 +89,23 @@ impl Channel {
     pub fn index(self) -> usize {
         self as usize
     }
+
+    /// A stable name for files (projects, export templates); never changes.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::BaseColor => "base_color",
+            Self::Height => "height",
+            Self::Roughness => "roughness",
+            Self::Metallic => "metallic",
+            Self::Normal => "normal",
+            Self::Emissive => "emissive",
+            Self::Opacity => "opacity",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.key() == key)
+    }
 }
 
 /// A set of channels, e.g. the channels a brush paints.
