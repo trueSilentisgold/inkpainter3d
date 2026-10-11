@@ -318,20 +318,6 @@ impl InkApp {
         }
     }
 
-    /// The paint layer strokes go into: the topmost one of the selected texture set.
-    fn paint_target(&self) -> Option<(usize, u64)> {
-        let set = self.selected_set;
-        let paint = self
-            .model
-            .texture_sets
-            .get(set)?
-            .stack
-            .paint_layers()
-            .last()?
-            .id;
-        Some((set, paint))
-    }
-
     /// Adds a stroke with the brush to the paint target.
     fn new_stroke(
         &mut self,
@@ -339,7 +325,12 @@ impl InkApp {
         rect: egui::Rect,
         brush: &Brush,
     ) -> Option<(usize, u64, u64)> {
-        let (set, paint) = self.paint_target()?;
+        let Some((set, paint)) = self.paint_target() else {
+            self.status = self.not_paintable_reason().to_owned();
+            return None;
+        };
+        // A layer edit still going on (a value being typed) is recorded before the stroke.
+        self.commit_stack_edit();
         let stroke = Stroke {
             id: self.model.next_id(),
             tool: self.paint.tool,
@@ -498,6 +489,7 @@ impl InkApp {
         if self.paint.is_painting() {
             return;
         }
+        self.commit_stack_edit();
         match self.history.undo(&mut self.model) {
             Some(label) => self.status = format!("Undo: {label}"),
             None => self.status = "Nothing to undo".into(),
@@ -508,14 +500,15 @@ impl InkApp {
         if self.paint.is_painting() {
             return;
         }
+        self.commit_stack_edit();
         match self.history.redo(&mut self.model) {
             Some(label) => self.status = format!("Redo: {label}"),
             None => self.status = "Nothing to redo".into(),
         }
     }
 
-    /// Tool and brush shortcuts: 1 Paint, 2 Eraser, [ and ] size, D lazy mouse,
-    /// Ctrl+Z / Ctrl+Y undo and redo.
+    /// Tool and brush shortcuts: 1 Paint, 2 Eraser, [ and ] size, D lazy mouse, X inverts
+    /// the grayscale painted into masks, Ctrl+Z / Ctrl+Y undo and redo.
     pub(super) fn paint_shortcuts(&mut self, ui: &egui::Ui) {
         if ui.ctx().text_edit_focused() {
             return;
@@ -551,6 +544,10 @@ impl InkApp {
         }
         if pressed(Key::D) {
             self.paint.lazy_mouse = !self.paint.lazy_mouse;
+        }
+        if pressed(Key::X) {
+            let gray = &mut self.paint.paint_brush.material.grayscale;
+            *gray = 1.0 - *gray;
         }
     }
 
@@ -750,6 +747,7 @@ impl InkApp {
     /// The Properties panel for the current tool: brush, alpha and material.
     pub(super) fn properties_panel(&mut self, ui: &mut egui::Ui) {
         let tool = self.paint.tool;
+        let grayscale = self.paints_grayscale();
         let mut load_alpha = false;
         let alphas = self.paint.alphas.clone();
         let brush = self.paint.brush_mut();
@@ -857,14 +855,45 @@ impl InkApp {
                 }
             });
 
-        section(
-            ui,
-            match tool {
-                Tool::Paint => "MATERIAL",
-                Tool::Erase => "CHANNELS",
-            },
-        );
         let material = &mut brush.material;
+        if grayscale {
+            // Masks and their paint effects hold one grayscale value; the eraser just
+            // takes paint away.
+            if tool == Tool::Paint {
+                section(ui, "GRAYSCALE");
+                ui.horizontal(|ui| {
+                    ui.add(egui::Slider::new(&mut material.grayscale, 0.0..=1.0));
+                    if ui
+                        .button("⬌")
+                        .on_hover_text("Invert: paint black instead of white (X)")
+                        .clicked()
+                    {
+                        material.grayscale = 1.0 - material.grayscale;
+                    }
+                });
+            }
+        } else {
+            section(
+                ui,
+                match tool {
+                    Tool::Paint => "MATERIAL",
+                    Tool::Erase => "CHANNELS",
+                },
+            );
+            Self::material_grid(ui, tool, material);
+        }
+
+        if load_alpha
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Alpha images", ink_io::ALPHA_EXTENSIONS)
+                .pick_file()
+        {
+            self.load_alpha(&path);
+        }
+    }
+
+    /// Channel toggles and values of the brush material.
+    fn material_grid(ui: &mut egui::Ui, tool: Tool, material: &mut ink_core::BrushMaterial) {
         egui::Grid::new("material")
             .num_columns(2)
             .spacing([12.0, 6.0])
@@ -891,14 +920,6 @@ impl InkApp {
                     ui.end_row();
                 }
             });
-
-        if load_alpha
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("Alpha images", ink_io::ALPHA_EXTENSIONS)
-                .pick_file()
-        {
-            self.load_alpha(&path);
-        }
     }
 
     pub(super) fn load_alpha(&mut self, path: &std::path::Path) {

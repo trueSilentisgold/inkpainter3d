@@ -1,3 +1,4 @@
+mod layers;
 mod painting;
 mod views;
 
@@ -9,6 +10,7 @@ use ink_render::{
     DisplayMode, Highlight, OrbitCamera, ShadingMode, UvCamera, UvView, ViewportRenderer,
     ViewportSettings, texture_set_color,
 };
+use layers::LayersState;
 use painting::PaintState;
 use std::path::{Path, PathBuf};
 use views::Layout;
@@ -36,6 +38,10 @@ pub struct InkApp {
     snap_angles: Option<(f32, f32)>,
     status: String,
     paint: PaintState,
+    layers: LayersState,
+    /// Whether the pointer was over the layer stack last frame; Ctrl+C / X / V and Delete
+    /// act on layers only there, as in Painter.
+    layers_hovered: bool,
     history: History,
     layout: Layout,
     /// F4: 2D view on the left, 3D on the right.
@@ -92,6 +98,8 @@ impl InkApp {
             snap_angles: None,
             status: format!("GPU: {} ({:?})", info.name, info.backend),
             paint: PaintState::default(),
+            layers: LayersState::default(),
+            layers_hovered: false,
             history: History::default(),
             // Painter opens with the 3D and 2D views side by side.
             layout: Layout::Both,
@@ -120,6 +128,7 @@ impl InkApp {
         self.renderer.set_model(&rs.device, &rs.queue, &model);
         self.uv_view.set_model(&rs.device, &model);
         self.paint.reset();
+        self.layers.reset(model.texture_sets.len());
         self.history.clear();
         self.uv_auto_frame = true;
         self.uv_framed_size = None;
@@ -415,6 +424,36 @@ impl InkApp {
         }
     }
 
+    fn layers_section(&mut self, ui: &mut egui::Ui) {
+        let response = egui::CollapsingHeader::new(RichText::new("LAYERS").small().strong())
+            .id_salt("layers")
+            .default_open(true)
+            .show(ui, |ui| self.layer_stack_panel(ui));
+        let rect = response
+            .body_response
+            .map_or(response.header_response.rect, |b| {
+                b.rect.union(response.header_response.rect)
+            });
+        self.layers_hovered = ui.rect_contains_pointer(rect);
+    }
+
+    fn properties_section(&mut self, ui: &mut egui::Ui) {
+        let title = self
+            .selection_properties_title()
+            .unwrap_or(match self.paint.tool {
+                ink_core::Tool::Paint => "PROPERTIES - PAINT",
+                ink_core::Tool::Erase => "PROPERTIES - ERASER",
+            });
+        egui::CollapsingHeader::new(RichText::new(title).small().strong())
+            .id_salt("properties")
+            .default_open(true)
+            .show(ui, |ui| {
+                if !self.selection_properties(ui) {
+                    self.properties_panel(ui);
+                }
+            });
+    }
+
     fn texture_set_settings(&mut self, ui: &mut egui::Ui) {
         let Some(set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
@@ -606,6 +645,12 @@ impl eframe::App for InkApp {
         self.paint_shortcuts(ui);
         self.reset_hover();
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &rs));
+        // Everything that edits the layer stack runs between these two calls, so that its
+        // changes become undo steps; undo and redo (above) and strokes (in the views,
+        // below) record their own.
+        self.validate_selection();
+        let stack_before = self.begin_stack_edits();
+        self.layer_shortcuts(ui, self.layers_hovered);
         egui::Panel::top("tool bar").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -627,14 +672,8 @@ impl eframe::App for InkApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     self.texture_set_list(ui);
                     ui.add_space(10.0);
-                    let title = match self.paint.tool {
-                        ink_core::Tool::Paint => "PROPERTIES - PAINT",
-                        ink_core::Tool::Erase => "PROPERTIES - ERASER",
-                    };
-                    egui::CollapsingHeader::new(RichText::new(title).small().strong())
-                        .id_salt("properties")
-                        .default_open(true)
-                        .show(ui, |ui| self.properties_panel(ui));
+                    self.layers_section(ui);
+                    self.properties_section(ui);
                     egui::CollapsingHeader::new(
                         RichText::new("TEXTURE SET SETTINGS").small().strong(),
                     )
@@ -645,7 +684,13 @@ impl eframe::App for InkApp {
                         .show(ui, |ui| self.display_settings(ui, &rs));
                 });
             });
+        self.end_stack_edits(ui, stack_before);
+        self.validate_selection();
         egui::CentralPanel::no_frame().show(ui, |ui| self.views(ui, &rs));
+        // Full composites run a few chunks per frame.
+        if self.renderer.is_compositing() {
+            ui.ctx().request_repaint();
+        }
     }
 }
 
