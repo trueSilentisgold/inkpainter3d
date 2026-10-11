@@ -5,4 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+bevy_mikktspace = "1"
 glam.workspace = true

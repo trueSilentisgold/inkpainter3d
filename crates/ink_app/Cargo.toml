@@ -18,3 +18,11 @@ rfd.workspace = true
 log.workspace = true
 env_logger.workspace = true
 anyhow.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+raw-window-handle = "0.6"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-cursor = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+x11rb = { version = "0.13", features = ["xinput"] }

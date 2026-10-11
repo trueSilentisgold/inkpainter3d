@@ -1,6 +1,6 @@
 use glam::camera::rh::{proj::directx, view};
-use glam::{Mat4, Vec3};
-use ink_core::Aabb;
+use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
+use ink_core::{Aabb, StrokeCamera};
 
 /// Turntable camera orbiting around a target point (Y up).
 #[derive(Clone, Debug)]
@@ -12,6 +12,8 @@ pub struct OrbitCamera {
     pub pitch: f32,
     pub distance: f32,
     pub fov_y: f32,
+    /// Orthographic projection; `distance` then sets the visible height.
+    pub orthographic: bool,
 }
 
 impl Default for OrbitCamera {
@@ -22,6 +24,7 @@ impl Default for OrbitCamera {
             pitch: 0.35,
             distance: 4.0,
             fov_y: 40f32.to_radians(),
+            orthographic: false,
         }
     }
 }
@@ -43,10 +46,85 @@ impl OrbitCamera {
     }
 
     pub fn projection(&self, aspect: f32) -> Mat4 {
-        let near = (self.distance * 0.01).max(1e-4);
+        let aspect = aspect.max(1e-4);
         let far = self.distance * 100.0 + 100.0;
         // wgpu uses the DirectX convention: NDC depth in [0, 1], Y up.
-        directx::perspective(self.fov_y, aspect.max(1e-4), near, far)
+        if self.orthographic {
+            let h = self.distance * (self.fov_y * 0.5).tan();
+            let w = h * aspect;
+            // The near plane lies behind the eye so nothing gets clipped when zoomed in.
+            directx::orthographic(-w, w, -h, h, -far, far)
+        } else {
+            let near = (self.distance * 0.01).max(1e-4);
+            directx::perspective(self.fov_y, aspect, near, far)
+        }
+    }
+
+    /// Unit vector from the eye towards the target.
+    pub fn forward(&self) -> Vec3 {
+        (self.target - self.eye()).normalize()
+    }
+
+    /// World space direction of the top of the screen.
+    pub fn up(&self) -> Vec3 {
+        self.view().row(1).truncate()
+    }
+
+    /// World size of the viewport's height at `point`, e.g. for brushes sized on screen.
+    pub fn view_height_at(&self, point: Vec3) -> f32 {
+        let height = 2.0 * (self.fov_y * 0.5).tan();
+        if self.orthographic {
+            self.distance * height
+        } else {
+            (point - self.eye()).dot(self.forward()).max(1e-4) * height
+        }
+    }
+
+    /// The camera as stored with a stroke, for a view of the given aspect ratio.
+    pub fn stroke_camera(&self, aspect: f32) -> StrokeCamera {
+        let height = 2.0 * (self.fov_y * 0.5).tan();
+        StrokeCamera {
+            view_proj: self.projection(aspect) * self.view(),
+            eye: self.eye(),
+            forward: self.forward(),
+            aspect,
+            orthographic: self.orthographic,
+            height: if self.orthographic {
+                self.distance * height
+            } else {
+                height
+            },
+        }
+    }
+
+    /// Screen position in pixels from the top left of a world point, if it is in front of
+    /// the camera.
+    pub fn project(&self, point: Vec3, viewport: Vec2) -> Option<Vec2> {
+        let clip = self.projection(viewport.x / viewport.y) * self.view() * point.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let ndc = clip.xy() / clip.w;
+        Some(Vec2::new(
+            (ndc.x + 1.0) * 0.5 * viewport.x,
+            (1.0 - ndc.y) * 0.5 * viewport.y,
+        ))
+    }
+
+    /// World space ray through a point of the viewport, given in pixels from the top left.
+    /// Returns origin and unit direction.
+    pub fn ray(&self, pixel: Vec2, viewport: Vec2) -> (Vec3, Vec3) {
+        let ndc = Vec2::new(
+            pixel.x / viewport.x * 2.0 - 1.0,
+            1.0 - pixel.y / viewport.y * 2.0,
+        );
+        let inv = (self.projection(viewport.x / viewport.y) * self.view()).inverse();
+        let unproject = |z: f32| {
+            let p = inv * ndc.extend(z).extend(1.0);
+            p.xyz() / p.w
+        };
+        let (near, far) = (unproject(0.0), unproject(1.0));
+        (near, (far - near).normalize())
     }
 
     /// Rotates by a mouse delta in pixels.
@@ -54,6 +132,14 @@ impl OrbitCamera {
         const SPEED: f32 = 0.008;
         self.yaw -= dx * SPEED;
         self.pitch = (self.pitch + dy * SPEED).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+    }
+
+    /// Sets yaw and pitch to the nearest multiple of 90 degrees of the given angles,
+    /// for snapping to front, side, back, top and bottom views.
+    pub fn set_snapped(&mut self, yaw: f32, pitch: f32) {
+        let step = std::f32::consts::FRAC_PI_2;
+        self.yaw = (yaw / step).round() * step;
+        self.pitch = ((pitch / step).round() * step).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
     }
 
     /// Moves the target in the view plane so the point under the cursor follows the mouse.
@@ -93,6 +179,52 @@ mod tests {
         cam.frame(&bounds);
         assert_eq!(cam.target, Vec3::new(10.0, 0.0, 0.0));
         assert!(cam.eye().distance(cam.target) > bounds.radius());
+    }
+
+    #[test]
+    fn ray_through_center_hits_target() {
+        for orthographic in [false, true] {
+            let cam = OrbitCamera {
+                orthographic,
+                ..Default::default()
+            };
+            let size = Vec2::new(800.0, 600.0);
+            let (origin, dir) = cam.ray(size * 0.5, size);
+            let to_target = cam.target - origin;
+            let off_axis = to_target - dir * to_target.dot(dir);
+            assert!(off_axis.length() < 1e-3, "orthographic: {orthographic}");
+            assert!((dir - cam.forward()).length() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn project_inverts_ray() {
+        for orthographic in [false, true] {
+            let cam = OrbitCamera {
+                orthographic,
+                ..Default::default()
+            };
+            let size = Vec2::new(800.0, 600.0);
+            let pixel = Vec2::new(123.0, 456.0);
+            let (origin, dir) = cam.ray(pixel, size);
+            let point = origin + dir * 3.0;
+            let back = cam.project(point, size).unwrap();
+            assert!(back.distance(pixel) < 0.05, "{back}");
+        }
+        let cam = OrbitCamera::default();
+        let h = cam.view_height_at(cam.target);
+        assert!((h - 2.0 * cam.distance * (cam.fov_y * 0.5).tan()).abs() < 1e-4);
+        assert!(cam.up().dot(cam.forward()).abs() < 1e-5);
+    }
+
+    #[test]
+    fn snapping_picks_axis_views() {
+        let mut cam = OrbitCamera::default();
+        cam.set_snapped(1.7, 0.3);
+        assert!((cam.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert_eq!(cam.pitch, 0.0);
+        cam.set_snapped(0.0, 1.4);
+        assert_eq!(cam.pitch, OrbitCamera::PITCH_LIMIT);
     }
 
     #[test]
