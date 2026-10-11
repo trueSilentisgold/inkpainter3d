@@ -89,12 +89,12 @@ sich in inkpainter3d genauso bauen lassen.** Es enthält:
 
 ### 2.1 Import
 
-- [ ] `P0` Beim Import bleiben **Materialzuweisung und Mesh-Namen erhalten**: aus FBX
+- [x] `P0` Beim Import bleiben **Materialzuweisung und Mesh-Namen erhalten**: aus FBX
       (Material pro Polygon), glTF (Material pro Primitive) und OBJ (`usemtl`).
       *Heute fasst der Import alles zu einem Mesh zusammen und verwirft die Materialien.*
-- [ ] `P0` Jedes Material wird ein Texture Set. Meshes ohne Material landen in einem
+- [x] `P0` Jedes Material wird ein Texture Set. Meshes ohne Material landen in einem
       Standard-Set.
-- [ ] `P0` **Tangenten nach MikkTSpace**, damit Normal Maps in Unreal, Unity, Godot und Blender
+- [x] `P0` **Tangenten nach MikkTSpace**, damit Normal Maps in Unreal, Unity, Godot und Blender
       genauso aussehen wie in inkpainter3d.
 
 ### 2.2 Texture-Set-Liste
@@ -115,13 +115,13 @@ Texture Sets                              [Menü ▾] [◎ Fokus]
 
 Wie in Painter:
 
-- [ ] `P0` **Ein Auge pro Texture Set** blendet das Set im Viewport ein und aus.
-- [ ] `P0` Menü mit **Alle zeigen**, **Alle ausblenden** und **Sichtbarkeit umkehren**.
-- [ ] `P0` **Fokus-Modus** (Alt+Q): Nur das aktive Set ist sichtbar, ein zweiter Klick hebt
+- [x] `P0` **Ein Auge pro Texture Set** blendet das Set im Viewport ein und aus.
+- [x] `P0` Menü mit **Alle zeigen**, **Alle ausblenden** und **Sichtbarkeit umkehren**.
+- [x] `P0` **Fokus-Modus** (Alt+Q): Nur das aktive Set ist sichtbar, ein zweiter Klick hebt
       das wieder auf.
-- [ ] `P0` **Auswahl:** Genau ein Set ist aktiv. Layer Stack, Texture Set Settings und Shader
+- [x] `P0` **Auswahl:** Genau ein Set ist aktiv. Layer Stack, Texture Set Settings und Shader
       Settings zeigen immer das aktive Set.
-- [ ] `P0` **Set im Viewport wählen:** Strg+Alt+Rechtsklick auf das Modell aktiviert das Set
+- [x] `P0` **Set im Viewport wählen:** Strg+Alt+Rechtsklick auf das Modell aktiviert das Set
       unter dem Mauszeiger.
 - [ ] `P1` **Umbenennen** per Doppelklick (der Name wird beim Export verwendet), auf den
       Originalnamen zurücksetzen, eine Beschreibung pro Set.
@@ -133,18 +133,18 @@ Wie in Painter:
 Über Painter hinaus (**＋**). Painter kann einzelne Meshes innerhalb eines Texture Sets nicht
 ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 
-- [ ] `P0` ＋ **Jedes Set lässt sich aufklappen** und zeigt die Meshes, die dieses Material
+- [x] `P0` ＋ **Jedes Set lässt sich aufklappen** und zeigt die Meshes, die dieses Material
       benutzen, mit Dreiecksanzahl.
-- [ ] `P0` ＋ **Ein Auge pro Mesh** blendet einzelne Meshes aus, auch innerhalb eines Sets.
+- [x] `P0` ＋ **Ein Auge pro Mesh** blendet einzelne Meshes aus, auch innerhalb eines Sets.
       Ausgeblendete Meshes werden nicht bemalt, sodass man darunter malen kann.
-- [ ] `P0` ＋ **Hervorheben beim Überfahren:** Fährt man in der Liste über ein Set oder Mesh,
+- [x] `P0` ＋ **Hervorheben beim Überfahren:** Fährt man in der Liste über ein Set oder Mesh,
       leuchtet es im Viewport auf.
 - [ ] `P1` ＋ **Umgekehrte Ansicht „Nach Mesh“:** Mesh → seine Materialien. Meshes mit mehreren
       Materialien bekommen ein Symbol (⧉).
-- [ ] `P1` ＋ **Material-ID-Ansicht im Viewport:** Jedes Texture Set erscheint in einer eigenen
+- [x] `P1` ＋ **Material-ID-Ansicht im Viewport:** Jedes Texture Set erscheint in einer eigenen
       Farbe, damit man auf einen Blick sieht, was wozu gehört.
-- [ ] `P1` ＋ **Info unter dem Mauszeiger:** In der Statusleiste stehen Mesh-Name, Texture Set und
-      UV-Tile unter dem Cursor.
+- [x] `P1` ＋ **Info unter dem Mauszeiger:** In der Statusleiste stehen Mesh-Name und Texture Set
+      unter dem Cursor; das UV-Tile kommt mit dem UDIM-Workflow dazu.
 - [ ] `P2` ＋ **Material im Programm neu zuweisen:** ein Mesh in ein anderes Texture Set
       verschieben, ohne zurück ins 3D-Programm zu müssen.
 
@@ -177,25 +177,26 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 
 **Ansichten**
 
-- [ ] `P0` 3D-Ansicht
+- [x] `P0` 3D-Ansicht
 - [ ] `P0` **2D-Ansicht** (UV-Layout), in der man ebenfalls malen kann
 - [ ] `P0` Layouts **F1** 3D+2D, **F2** nur 3D, **F3** nur 2D, **F4** 3D und 2D tauschen
-- [ ] `P1` Kamera **perspektivisch (F5)** oder **orthografisch (F6)**, Brennweite / FOV
+- [x] `P1` Kamera **perspektivisch (F5)** oder **orthografisch (F6)**
+- [ ] `P1` Brennweite / FOV einstellbar
 - [ ] `P1` UI ausblenden (Tab)
 
 **Beleuchtung**
 
-- [ ] `P0` **HDRI-Umgebung (Image Based Lighting).** Ersetzt die jetzige Platzhalter-Beleuchtung.
-- [ ] `P0` **Umgebung drehen mit Shift+Rechts ziehen**, dazu Belichtung,
+- [x] `P0` **HDRI-Umgebung (Image Based Lighting).** Ersetzt die jetzige Platzhalter-Beleuchtung.
+- [x] `P0` **Umgebung drehen mit Shift+Rechts ziehen**, dazu Belichtung,
       Hintergrund-Deckkraft und Hintergrund-Unschärfe.
-- [ ] `P0` Mitgelieferte HDRIs (CC0, z. B. von Poly Haven)
+- [x] `P0` Mitgelieferte HDRIs (CC0, z. B. von Poly Haven)
 - [ ] `P1` Schatten
 - [ ] `P1` Viewport-Ambient-Occlusion
 
 **Anzeige-Modi**
 
-- [ ] `P0` **Material (M):** fertiges Material
-- [ ] `P0` **Kanal (C / Shift+C):** einzelnen Kanal durchschalten, z. B. nur Roughness
+- [x] `P0` **Material (M):** fertiges Material
+- [x] `P0` **Kanal (C / Shift+C):** einzelnen Kanal durchschalten, z. B. nur Roughness
 - [ ] `P1` **Mesh Map (B / Shift+B):** gebackene Maps durchschalten
 - [ ] `P1` Maske eines Layers anzeigen (Alt+Klick auf die Maske)
 - [ ] `P1` ＋ Wireframe und UV-Nähte als Overlay
@@ -232,10 +233,10 @@ lineare Daten. Bei User-Kanälen ist sie umschaltbar.
 
 **Shader**
 
-- [ ] `P0` **PBR Metallic/Roughness** (GGX)
+- [x] `P0` **PBR Metallic/Roughness** (GGX)
 - [x] `P0` ＋ **Stylized / Toon** mit Ink-Outline. Das Grundgerüst steht, wird aber erweitert.
 - [ ] `P1` **PBR Specular/Glossiness**
-- [ ] `P0` Opacity: Alpha Test und Alpha Blend
+- [x] `P0` Opacity: Alpha Test und Alpha Blend
 - [ ] `P1` Unlit
 - [ ] `P1` Shader-Parameter pro Shader-Instanz (siehe 2.2)
 - [ ] `P2` Subsurface Scattering
@@ -596,9 +597,9 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 | | UI ausblenden | Tab |
 | | Berechnung pausieren | Shift+Esc |
 
-> **Achtung:** Die heutige Navigation weicht ab. Rechte Maustaste allein dreht, Shift+Rechts
-> verschiebt. Das wird auf das Painter-Schema umgestellt, weil Shift+Rechts dort die Umgebung
-> dreht. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) als Option.
+Kamera, Umgebung, Anzeige-Modi, Fokus-Modus und die Set-Auswahl sind so umgesetzt. Unter Linux
+verschieben viele Desktops Fenster mit Alt + Ziehen; die README erklärt, wie man das auf die
+Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) als Option.
 
 ---
 
@@ -697,8 +698,8 @@ texturieren und exportieren.**
 | Phase | Inhalt | Status |
 |---|---|---|
 | 1 | **Viewport:** Import (FBX, glTF, OBJ), PBR- und Stylized-Shading, Kamera | ✅ fertig |
-| 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader (inkl. Emissive und Opacity), HDRI-Beleuchtung, Painter-Navigation | ⏳ als Nächstes |
-| 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | |
+| 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader (inkl. Emissive und Opacity), HDRI-Beleuchtung, Painter-Navigation | ✅ fertig |
+| 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ⏳ als Nächstes |
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | |
 | 6 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |

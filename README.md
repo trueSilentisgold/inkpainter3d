@@ -6,7 +6,7 @@ inkpainter3d lets you paint directly onto 3D models with a layer-based, non-dest
 and export the result as texture maps for game engines and renderers. It runs natively on
 **Windows and Linux** and will always be **free**.
 
-> **Status:** early development. Phase 1 (viewport and model import) is done; next are texture sets and the material foundation.
+> **Status:** early development. Phases 1 and 2 (viewport, texture sets, HDRI lighting) are done; the brush engine is next.
 
 ---
 
@@ -35,12 +35,23 @@ inkpainter3d aims to be a capable alternative that:
 
 ### Available now
 - Model import: **FBX** (binary and ASCII), **glTF** (`.gltf`, `.glb`), **OBJ**
+  - every material becomes a **texture set**, object names are kept
   - automatic axis and unit conversion (Z-up, centimeters, … → Y-up meters)
   - triangulation of n-gons, node hierarchy transforms, mirrored objects
-- Viewport with two shading modes
-  - **PBR** (metallic / roughness, GGX)
+  - MikkTSpace tangents, so normal maps match Blender, Unity and Godot
+- **Texture set list** like Painter's, plus more
+  - show / hide per texture set, show all, hide all, invert, focus mode (Alt+Q)
+  - expand a texture set to see which meshes use it, and show / hide single meshes
+  - hovering a texture set or mesh highlights it in the viewport
+  - select the texture set under the cursor with Ctrl+Alt+right click
+- Texture set settings: size (128 to 4096), opacity mode (opaque, alpha test, alpha blend)
+  and uniform channel values (base color, roughness, metallic, emissive, opacity)
+- Viewport
+  - **PBR** with image based lighting from HDR panoramas (`.hdr`, `.exr`), rotation,
+    exposure, background opacity and blur; a CC0 studio HDRI is built in
   - **Stylized**: banded toon shading, rim light, ink outline with adjustable color and width
-- Orbit / pan / zoom camera, drag-and-drop loading
+  - display modes: material, material ID (one color per texture set) and single channels
+  - perspective and orthographic camera, drag-and-drop loading of models and HDRIs
 
 ### Planned
 See the [roadmap](#roadmap).
@@ -54,8 +65,8 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | # | Phase | Status |
 |---|---|---|
 | 1 | **Viewport** — model import (FBX, glTF, OBJ), PBR and stylized shading, camera | ✅ done |
-| 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures (incl. emissive and opacity), HDRI lighting, Painter-style navigation | ⏳ next |
-| 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | |
+| 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures (incl. emissive and opacity), HDRI lighting, Painter-style navigation | ✅ done |
+| 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | ⏳ next |
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | |
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | |
 | 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
@@ -80,18 +91,39 @@ On Linux you need the usual windowing development packages, e.g. on Debian/Ubunt
 sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev
 ```
 
-Models can also be opened via **File → Open model…** or dropped onto the window.
+Models can also be opened via **File → Open model…** or dropped onto the window; HDR panoramas
+via **File → Load environment…** or the same way.
+
+To check rendering without a window, e.g. on a server, render a snapshot to PNG:
+
+```sh
+cargo run --release -p ink_render --example snapshot -- model.fbx out.png display=materialid
+```
 
 ## Controls
 
+The same as in Substance 3D Painter.
+
 | Action | Input |
 |---|---|
-| Orbit | Alt + left mouse, or right mouse |
-| Pan | Middle mouse, or Shift + right mouse |
-| Zoom | Mouse wheel |
+| Rotate | Alt + left mouse (add Shift to snap to 90°) |
+| Pan | Alt + middle mouse, or Ctrl + Alt + left mouse |
+| Zoom | Alt + right mouse, or mouse wheel |
+| Rotate environment | Shift + right mouse |
 | Frame model | F |
+| Perspective / orthographic | F5 / F6 |
+| Material / next channel / previous channel | M / C / Shift + C |
+| Focus on selected texture set | Alt + Q |
+| Select texture set under cursor | Ctrl + Alt + right click |
 
 The left mouse button on its own is reserved for painting.
+
+**Linux:** many desktops move windows with Alt + drag, which swallows the camera controls.
+Switch the window manager to the Super key instead:
+
+- GNOME: `gsettings set org.gnome.desktop.wm.preferences mouse-button-modifier '<Super>'`
+- KDE Plasma: System Settings → Window Management → Window Behavior → Window Actions →
+  Modifier key: Meta
 
 ## Architecture
 
@@ -100,12 +132,17 @@ Written in Rust on top of [wgpu](https://wgpu.rs) (Vulkan / DirectX 12 / Metal) 
 
 | Crate | Purpose |
 |---|---|
-| `ink_core` | Data model: meshes; later the layer stack, masks, vector paths and undo |
-| `ink_io` | Model import (ufbx, gltf, tobj); later texture export |
-| `ink_render` | wgpu viewport renderer, camera and WGSL shaders |
+| `ink_core` | Data model: meshes, objects and texture sets, picking; later the layer stack, masks, vector paths and undo |
+| `ink_io` | Model import (ufbx, gltf, tobj), HDR environments; later texture export |
+| `ink_render` | wgpu viewport renderer, image based lighting, camera and WGSL shaders |
 | `ink_app` | Application window and UI (eframe / egui) |
 
 CI builds, lints and tests every push on Windows and Linux.
+
+## Credits
+
+The built-in environment is [Studio Small 09](https://polyhaven.com/a/studio_small_09) by
+Poly Haven, released under CC0.
 
 ## License
 
