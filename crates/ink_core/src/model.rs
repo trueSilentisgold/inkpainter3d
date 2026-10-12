@@ -29,9 +29,10 @@ pub enum AlphaMode {
 }
 
 /// How normal maps encode the tangent space's y axis: OpenGL (y up, as Blender, Unity and
-/// Godot expect) or DirectX (y down). A project setting, as in Painter: it is the default for
-/// normal maps loaded into fills and for normal maps written by the export. Inside the
-/// program, normals are always OpenGL-style.
+/// Godot expect) or DirectX (y down). The project's setting, as in Painter: it decides the
+/// normal map of the document channels export (and later of baked normal maps). The layer
+/// stack is independent of it: normal maps in fills say their own format, and inside the
+/// program normals are always OpenGL-style.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NormalFormat {
     OpenGl,

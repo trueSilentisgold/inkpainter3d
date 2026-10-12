@@ -216,16 +216,19 @@ pub const TEMPLATES: &[Template] = &[
             map("$mesh_$textureSet_Emissive", Rgb(Emissive)),
         ],
     },
+    // As Painter's: separate maps named so that Blender's Node Wrangler connects them
+    // (Ctrl+Shift+T); the displacement is the height, 0.5 at the surface.
     Template {
         key: "blender_principled_bsdf",
         label: "Blender (Principled BSDF)",
         maps: &[
-            map("$mesh_$textureSet_BaseColor", RgbA(BaseColor, Opacity)),
-            map("$mesh_$textureSet_Roughness", Gray(Roughness)),
+            map("$mesh_$textureSet_BaseColor", Rgb(BaseColor)),
             map("$mesh_$textureSet_Metallic", Gray(Metallic)),
+            map("$mesh_$textureSet_Roughness", Gray(Roughness)),
             map("$mesh_$textureSet_Normal", Rgb(NormalOpenGl)),
-            map("$mesh_$textureSet_Height", Gray(Height)),
             map("$mesh_$textureSet_Emission", Rgb(Emissive)),
+            map("$mesh_$textureSet_Alpha", Gray(Opacity)),
+            map("$mesh_$textureSet_Displacement", Gray(Height)),
         ],
     },
     Template {

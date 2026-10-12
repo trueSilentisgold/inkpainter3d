@@ -1,5 +1,7 @@
+mod export;
 mod layers;
 mod painting;
+mod project;
 mod views;
 
 use crate::pen::{PenInput, PenNotice};
@@ -12,6 +14,7 @@ use ink_render::{
 };
 use layers::LayersState;
 use painting::PaintState;
+use project::{Leave, ProjectState};
 use std::path::{Path, PathBuf};
 use views::Layout;
 
@@ -24,6 +27,8 @@ pub struct InkApp {
     renderer: ViewportRenderer,
     viewport_texture: Option<egui::TextureId>,
     environment_name: String,
+    /// The panorama file shown, None for the default one; saved with the project.
+    environment_path: Option<PathBuf>,
     /// Texture set whose settings (and later layers) are edited.
     selected_set: usize,
     /// Texture sets expanded in the list to show their meshes.
@@ -60,6 +65,11 @@ pub struct InkApp {
     pen: PenInput,
     /// The tool to go back to when the pen's eraser end leaves.
     tool_before_eraser: Option<ink_core::Tool>,
+    project: ProjectState,
+    /// The Export textures window, while it is open.
+    export: Option<export::ExportWindow>,
+    /// The window closes at the end of the frame.
+    quit_requested: bool,
 }
 
 impl InkApp {
@@ -90,6 +100,7 @@ impl InkApp {
             renderer,
             viewport_texture: None,
             environment_name: environment.name,
+            environment_path: None,
             selected_set: 0,
             expanded: Vec::new(),
             focus: None,
@@ -114,12 +125,21 @@ impl InkApp {
             uv_framed_size: None,
             pen: PenInput::new(cc),
             tool_before_eraser: None,
+            project: ProjectState::default(),
+            export: None,
+            quit_requested: false,
         };
         app.set_model(render_state, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
+        app.mark_saved();
 
-        // Allow `inkpainter3d model.glb` from the command line.
+        // `inkpainter3d project.ink3d` opens a project, `inkpainter3d model.glb` starts one.
         if let Some(path) = std::env::args_os().nth(1) {
-            app.load_model(render_state, Path::new(&path));
+            let path = PathBuf::from(path);
+            if is_project(&path) {
+                app.start_open(path);
+            } else {
+                app.load_model(render_state, &path);
+            }
         }
         Ok(app)
     }
@@ -140,6 +160,7 @@ impl InkApp {
         self.model = model;
     }
 
+    /// A new project from a mesh file with the default settings, without asking.
     fn load_model(&mut self, rs: &RenderState, path: &Path) {
         match ink_io::load_model(path) {
             Ok(model) => {
@@ -151,6 +172,8 @@ impl InkApp {
                     model.mesh.triangle_count()
                 );
                 self.set_model(rs, model);
+                self.project.source = Some(path.display().to_string());
+                self.mark_saved();
             }
             Err(err) => {
                 log::error!("{err:#}");
@@ -171,6 +194,7 @@ impl InkApp {
                 );
                 self.status = format!("Environment: {}", path.display());
                 self.environment_name = env.name;
+                self.environment_path = Some(path.to_owned());
             }
             Err(err) => {
                 log::error!("{err:#}");
@@ -227,11 +251,18 @@ impl InkApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("Open model…").clicked()
-                    && let Some(path) = Self::pick_file("3D models", ink_io::SUPPORTED_EXTENSIONS)
+                self.project_menu(ui, rs);
+                ui.separator();
+                if ui
+                    .add_enabled(
+                        !self.model.texture_sets.is_empty(),
+                        egui::Button::new("Export textures…").shortcut_text("Ctrl+Shift+E"),
+                    )
+                    .clicked()
                 {
-                    self.load_model(rs, &path);
+                    self.open_export_window();
                 }
+                ui.separator();
                 if ui.button("Load environment…").clicked()
                     && let Some(path) =
                         Self::pick_file("HDR panoramas", ink_io::ENVIRONMENT_EXTENSIONS)
@@ -262,13 +293,34 @@ impl InkApp {
                 {
                     self.redo();
                 }
+                ui.separator();
+                if ui
+                    .add_enabled(
+                        !self.model.texture_sets.is_empty(),
+                        egui::Button::new("Project configuration…"),
+                    )
+                    .clicked()
+                {
+                    self.open_configuration();
+                }
             });
             ui.menu_button("Primitives", |ui| {
-                if ui.button("Sphere").clicked() {
-                    self.set_model(rs, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
-                }
-                if ui.button("Cube").clicked() {
-                    self.set_model(rs, Model::from_mesh(Mesh::cube(1.5)));
+                let primitive = if ui.button("Sphere").clicked() {
+                    Some(Mesh::uv_sphere(1.0, 64, 32))
+                } else if ui.button("Cube").clicked() {
+                    Some(Mesh::cube(1.5))
+                } else {
+                    None
+                };
+                if let Some(mesh) = primitive {
+                    let model = Box::new(Model::from_mesh(mesh));
+                    self.leave_project(
+                        rs,
+                        Leave::Replace {
+                            model,
+                            source: None,
+                        },
+                    );
                 }
             });
             ui.menu_button("View", |ui| {
@@ -632,17 +684,28 @@ impl eframe::App for InkApp {
                 .and_then(|e| e.to_str())
                 .map(str::to_ascii_lowercase)
                 .unwrap_or_default();
-            if ink_io::ENVIRONMENT_EXTENSIONS.contains(&ext.as_str()) {
+            if is_project(path) {
+                self.leave_project(&rs, Leave::Open(path.clone()));
+            } else if ink_io::ENVIRONMENT_EXTENSIONS.contains(&ext.as_str()) {
                 self.load_environment(&rs, path);
             } else if ink_io::ALPHA_EXTENSIONS.contains(&ext.as_str()) {
                 self.load_alpha(path);
             } else {
-                self.load_model(&rs, path);
+                // As in Painter: a dropped mesh starts a new project.
+                self.ask_new_project(Some(path));
             }
         }
 
-        self.shortcuts(ui);
-        self.paint_shortcuts(ui);
+        self.poll_project_jobs(ui, &rs);
+        self.handle_close_request(ui);
+        // Dialogs take the keyboard.
+        let dialog = self.project.dialog_open() || self.export.is_some();
+        if !dialog {
+            self.shortcuts(ui);
+            self.paint_shortcuts(ui);
+            self.project_shortcuts(ui, &rs);
+            self.export_shortcut(ui);
+        }
         self.reset_hover();
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &rs));
         // Everything that edits the layer stack runs between these two calls, so that its
@@ -650,7 +713,9 @@ impl eframe::App for InkApp {
         // below) record their own.
         self.validate_selection();
         let stack_before = self.begin_stack_edits(ui);
-        self.layer_shortcuts(ui, self.layers_hovered);
+        if !dialog {
+            self.layer_shortcuts(ui, self.layers_hovered);
+        }
         egui::Panel::top("tool bar").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -688,11 +753,22 @@ impl eframe::App for InkApp {
         self.sync_system_clipboard(ui);
         self.validate_selection();
         egui::CentralPanel::no_frame().show(ui, |ui| self.views(ui, &rs));
+        self.project_dialogs(ui, &rs);
+        self.export_window(ui, &rs);
+        self.update_title(ui);
+        if std::mem::take(&mut self.quit_requested) {
+            ui.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         // Full composites run a few chunks per frame.
         if self.renderer.is_compositing() {
             ui.ctx().request_repaint();
         }
     }
+}
+
+fn is_project(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(ink_io::project::PROJECT_EXTENSION))
 }
 
 /// Visibility toggle in the texture set list.
