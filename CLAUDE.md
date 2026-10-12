@@ -145,8 +145,9 @@ Things that are easy to get wrong:
   channel textures: linear colors, the normal with the height's detail (OpenGL), and each
   texel's distance to the nearest UV island for the padding. `MapImage::pack` turns those
   texels into an output map's pixels (packing, sRGB for colors in 8 and 16 bits, padding,
-  normal format); `TEMPLATES` are the output templates. The app packs and writes on a
-  thread per texture set while the GPU composites the next.
+  normal format); `TEMPLATES` are the output templates. The export window composites a
+  few blocks per frame (so the window stays responsive) and hands them to a thread per
+  texture set that packs them and writes the files once all arrived.
 - **Buffers reused across draws** (stroke params, dabs, apply params) are written with
   `queue.write_buffer` and submitted per draw: writes land before the next `submit`, so
   several draws in one encoder would all see the last write.
