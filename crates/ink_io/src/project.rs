@@ -33,8 +33,10 @@ const DABS_BIN: &str = "dabs.bin";
 /// f32 values per dab in `dabs.bin`.
 const DAB_FLOATS: usize = 14;
 
-/// Largest texture set resolution and image side a project may hold.
-const MAX_SIZE: u32 = 16384;
+/// Largest texture set resolution a project may hold.
+const MAX_RESOLUTION: u32 = 8192;
+/// Highest id a project may hold: new ids continue after it.
+const MAX_ID: u64 = u64::MAX / 2;
 
 /// A model with everything around it that a project file keeps.
 #[derive(Clone, Debug)]
@@ -182,16 +184,28 @@ pub fn read<R: Read + Seek>(reader: R) -> Result<(Project, ImageCache)> {
         .context("The mesh is too large")?;
     let mesh_data = read_entry(&mut zip, MESH_BIN, mesh_len as u64)?;
     let mesh = read_mesh(&mesh_data, vertices, indices)?;
-    let dabs = read_entry(&mut zip, DABS_BIN, 1 << 40)?;
+    // The strokes' dabs lie one after the other: their count says how big dabs.bin is.
+    let dab_bytes = file
+        .texture_sets
+        .iter()
+        .try_fold(0u64, |total, s| total.checked_add(dab_count(&s.layers)?))
+        .and_then(|n| n.checked_mul(DAB_FLOATS as u64 * 4))
+        .context("The project's strokes are damaged")?;
+    let dabs = read_entry(&mut zip, DABS_BIN, dab_bytes)?;
     ensure!(
-        dabs.len().is_multiple_of(DAB_FLOATS * 4),
-        "The strokes are damaged"
+        dabs.len() as u64 == dab_bytes,
+        "The project's strokes are damaged"
     );
 
     let mut cache = ImageCache::default();
     let mut textures = Vec::with_capacity(file.images.len());
     for entry in &file.images {
-        let bytes = read_entry(&mut zip, &entry.file, 1 << 32)?;
+        check_size(entry.width, entry.height, crate::MAX_TEXTURE_SIZE)?;
+        let bytes = read_entry(
+            &mut zip,
+            &entry.file,
+            encoded_limit(entry.width, entry.height),
+        )?;
         let image = decode_texture(entry, &bytes)
             .with_context(|| format!("Failed to read the image {}", entry.file))?;
         cache.textures.insert(
@@ -204,7 +218,12 @@ pub fn read<R: Read + Seek>(reader: R) -> Result<(Project, ImageCache)> {
     }
     let mut alphas = Vec::with_capacity(file.alphas.len());
     for entry in &file.alphas {
-        let bytes = read_entry(&mut zip, &entry.file, 1 << 28)?;
+        check_size(entry.width, entry.height, crate::MAX_ALPHA_SIZE)?;
+        let bytes = read_entry(
+            &mut zip,
+            &entry.file,
+            encoded_limit(entry.width, entry.height),
+        )?;
         let alpha = decode_alpha(entry, &bytes)
             .with_context(|| format!("Failed to read the brush alpha {}", entry.file))?;
         cache.alphas.insert(
@@ -223,8 +242,10 @@ pub fn read<R: Read + Seek>(reader: R) -> Result<(Project, ImageCache)> {
         .max()
         .unwrap_or(0)
         .max(file.last_id);
+    ensure!(highest < MAX_ID, "The project's ids are damaged");
     let loader = Loader {
         dabs: &dabs,
+        next_dab: 0,
         textures: &textures,
         alphas: &alphas,
         ids: HashSet::new(),
@@ -663,7 +684,7 @@ impl Saver {
                 .collect(),
             images,
             alphas,
-            view: project.view.clone(),
+            view: project.view.as_ref().map(finite_view),
             export: project.export.as_ref().map(|e| FileExport {
                 directory: e.directory.clone(),
                 template: e.template.key.to_owned(),
@@ -684,7 +705,7 @@ impl Saver {
                     c.key().to_owned(),
                     FileBlend {
                         mode: blend.mode.key().to_owned(),
-                        opacity: blend.opacity,
+                        opacity: finite(blend.opacity),
                     },
                 )
             })
@@ -714,7 +735,7 @@ impl Saver {
             content,
             mask: layer.mask.as_ref().map(|mask| FileMask {
                 enabled: mask.enabled,
-                background: mask.background,
+                background: finite(mask.background),
                 paint: self.paint(&mask.paint),
                 effects: mask
                     .effects
@@ -723,18 +744,18 @@ impl Saver {
                         id: effect.id,
                         visible: effect.visible,
                         blend: effect.blend.key().to_owned(),
-                        opacity: effect.opacity,
+                        opacity: finite(effect.opacity),
                         kind: match &effect.kind {
                             EffectKind::Paint(paint) => FileEffectKind::Paint(self.paint(paint)),
                             EffectKind::Fill(gray) => FileEffectKind::Fill(FileGrayFill {
-                                value: gray.value,
+                                value: finite(gray.value),
                                 image: gray.image.as_ref().map(|i| self.texture(i)),
                                 projection: projection(&gray.projection),
                             }),
                             EffectKind::Levels(levels) => FileEffectKind::Levels(FileLevels {
-                                input: levels.input,
-                                gamma: levels.gamma,
-                                output: levels.output,
+                                input: finite_n(levels.input),
+                                gamma: finite(levels.gamma),
+                                output: finite_n(levels.output),
                             }),
                         },
                     })
@@ -777,21 +798,21 @@ impl Saver {
                 Alpha::Square => FileAlphaShape::Square,
                 Alpha::Image(image) => FileAlphaShape::Image(self.alpha(image)),
             },
-            hardness: stroke.hardness,
-            opacity: stroke.opacity,
-            backface_cos: stroke.backface_cos,
+            hardness: finite(stroke.hardness),
+            opacity: finite(stroke.opacity),
+            backface_cos: finite(stroke.backface_cos),
             material: FileBrushMaterial {
                 channels: channel_keys(stroke.material.channels),
                 values: values(&stroke.material.values),
-                grayscale: stroke.material.grayscale,
+                grayscale: finite(stroke.material.grayscale),
             },
             camera: stroke.camera.map(|c| FileCamera {
-                view_proj: c.view_proj.to_cols_array(),
-                eye: c.eye.to_array(),
-                forward: c.forward.to_array(),
-                aspect: c.aspect,
+                view_proj: finite_n(c.view_proj.to_cols_array()),
+                eye: finite_n(c.eye.to_array()),
+                forward: finite_n(c.forward.to_array()),
+                aspect: finite(c.aspect),
                 orthographic: c.orthographic,
-                height: c.height,
+                height: finite(c.height),
             }),
             hidden_objects: stroke.hidden_objects.clone(),
             hidden_sets: stroke.hidden_sets.clone(),
@@ -819,15 +840,46 @@ fn channel_keys(set: ChannelSet) -> Vec<String> {
     set.iter().map(|c| c.key().to_owned()).collect()
 }
 
+/// JSON has no NaN or infinity: serde_json writes them as null, which no reader accepts.
+/// Such values are saved as 0 and the largest finite values.
+fn finite(v: f32) -> f32 {
+    if v.is_nan() {
+        0.0
+    } else {
+        v.clamp(f32::MIN, f32::MAX)
+    }
+}
+
+fn finite_n<const N: usize>(v: [f32; N]) -> [f32; N] {
+    v.map(finite)
+}
+
 fn values(v: &ChannelValues) -> FileValues {
     FileValues {
-        base_color: v.base_color,
-        height: v.height,
-        roughness: v.roughness,
-        metallic: v.metallic,
-        normal: v.normal,
-        emissive: v.emissive,
-        opacity: v.opacity,
+        base_color: finite_n(v.base_color),
+        height: finite(v.height),
+        roughness: finite(v.roughness),
+        metallic: finite(v.metallic),
+        normal: finite_n(v.normal),
+        emissive: finite_n(v.emissive),
+        opacity: finite(v.opacity),
+    }
+}
+
+fn finite_view(v: &ViewState) -> ViewState {
+    ViewState {
+        camera_target: finite_n(v.camera_target),
+        camera_yaw: finite(v.camera_yaw),
+        camera_pitch: finite(v.camera_pitch),
+        camera_distance: finite(v.camera_distance),
+        camera_fov_y: finite(v.camera_fov_y),
+        environment_rotation: finite(v.environment_rotation),
+        exposure: finite(v.exposure),
+        background_opacity: finite(v.background_opacity),
+        background_blur: finite(v.background_blur),
+        outline_color: finite_n(v.outline_color),
+        outline_width: finite(v.outline_width),
+        ..v.clone()
     }
 }
 
@@ -837,10 +889,10 @@ fn projection(p: &Projection) -> FileProjection {
             ProjectionMode::Uv => FileProjectionMode::Uv,
             ProjectionMode::TriPlanar => FileProjectionMode::TriPlanar,
         },
-        scale: p.scale,
-        rotation: p.rotation,
-        offset: p.offset,
-        hardness: p.hardness,
+        scale: finite_n(p.scale),
+        rotation: finite(p.rotation),
+        offset: finite_n(p.offset),
+        hardness: finite(p.hardness),
     }
 }
 
@@ -981,21 +1033,28 @@ fn read_mesh(data: &[u8], vertices: usize, indices: usize) -> Result<Mesh> {
     })
 }
 
-fn check_size(width: u32, height: u32) -> Result<()> {
+fn check_size(width: u32, height: u32, max: u32) -> Result<()> {
     ensure!(
-        width > 0 && height > 0 && width <= MAX_SIZE && height <= MAX_SIZE,
+        width > 0 && height > 0 && width <= max && height <= max,
         "Unsupported image size {width} × {height}"
     );
     Ok(())
 }
 
+/// Decodes an image whose size is already checked, without the image crate's default
+/// memory limit, which large HDR fills exceed.
+fn decode(bytes: &[u8], format: image::ImageFormat) -> Result<image::DynamicImage> {
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    reader.no_limits();
+    Ok(reader.decode()?)
+}
+
 fn decode_texture(entry: &FileImage, bytes: &[u8]) -> Result<TextureImage> {
-    check_size(entry.width, entry.height)?;
     let format = match extension_of(&entry.file) {
         "exr" => image::ImageFormat::OpenExr,
         _ => image::ImageFormat::Png,
     };
-    let image = image::load_from_memory_with_format(bytes, format)?;
+    let image = decode(bytes, format)?;
     ensure!(
         image.width() == entry.width && image.height() == entry.height,
         "The image has the wrong size"
@@ -1014,8 +1073,7 @@ fn decode_texture(entry: &FileImage, bytes: &[u8]) -> Result<TextureImage> {
 }
 
 fn decode_alpha(entry: &FileAlpha, bytes: &[u8]) -> Result<AlphaImage> {
-    check_size(entry.width, entry.height)?;
-    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?;
+    let image = decode(bytes, image::ImageFormat::Png)?;
     ensure!(
         image.width() == entry.width && image.height() == entry.height,
         "The image has the wrong size"
@@ -1026,6 +1084,37 @@ fn decode_alpha(entry: &FileAlpha, bytes: &[u8]) -> Result<AlphaImage> {
         entry.height,
         image.into_luma8().into_raw(),
     ))
+}
+
+/// The number of dabs of all strokes in the layers; None if it overflows.
+fn dab_count(layers: &[FileLayer]) -> Option<u64> {
+    let paint = |p: &FilePaint| {
+        p.strokes
+            .iter()
+            .try_fold(0u64, |n, s| n.checked_add(s.dab_count))
+    };
+    layers.iter().try_fold(0u64, |mut n, layer| {
+        match &layer.content {
+            FileContent::Paint(p) => n = n.checked_add(paint(p)?)?,
+            FileContent::Fill(_) => {}
+            FileContent::Folder(f) => n = n.checked_add(dab_count(&f.layers)?)?,
+        }
+        if let Some(mask) = &layer.mask {
+            n = n.checked_add(paint(&mask.paint)?)?;
+            for effect in &mask.effects {
+                if let FileEffectKind::Paint(p) = &effect.kind {
+                    n = n.checked_add(paint(p)?)?;
+                }
+            }
+        }
+        Some(n)
+    })
+}
+
+/// The most an image file of this size can take: its texels uncompressed at 16 bytes,
+/// and room for headers.
+fn encoded_limit(width: u32, height: u32) -> u64 {
+    width as u64 * height as u64 * 16 + (1 << 20)
 }
 
 /// The highest id of layers, paint layers, effects and strokes.
@@ -1057,6 +1146,8 @@ fn highest_id(layers: &[FileLayer]) -> u64 {
 
 struct Loader<'a> {
     dabs: &'a [u8],
+    /// Where the next stroke's dabs start: strokes lie one after the other.
+    next_dab: u64,
     textures: &'a [Arc<TextureImage>],
     alphas: &'a [Arc<AlphaImage>],
     /// Ids of layers, paint layers and effects seen so far.
@@ -1078,7 +1169,7 @@ impl Loader<'_> {
         let mut texture_sets = Vec::with_capacity(file.texture_sets.len());
         for set in file.texture_sets {
             ensure!(
-                set.resolution.is_power_of_two() && (16..=MAX_SIZE).contains(&set.resolution),
+                set.resolution.is_power_of_two() && (16..=MAX_RESOLUTION).contains(&set.resolution),
                 "Unsupported texture set size {}",
                 set.resolution
             );
@@ -1101,6 +1192,8 @@ impl Loader<'_> {
         let mut end = 0u32;
         let mut last_set = 0;
         for part in file.parts {
+            let end_index = part.first_index.checked_add(part.index_count);
+            ensure!(end_index.is_some(), "The mesh parts are damaged");
             ensure!(
                 part.object < objects.len()
                     && part.texture_set < texture_sets.len()
@@ -1278,6 +1371,11 @@ impl Loader<'_> {
     }
 
     fn stroke(&mut self, stroke: FileStroke) -> Result<Stroke> {
+        ensure!(
+            stroke.first_dab == self.next_dab,
+            "The project's strokes are damaged"
+        );
+        self.next_dab = self.next_dab.saturating_add(stroke.dab_count);
         let dab_bytes = DAB_FLOATS as u64 * 4;
         let start = stroke.first_dab.checked_mul(dab_bytes);
         let end = stroke
@@ -1695,6 +1793,20 @@ mod tests {
     }
 
     #[test]
+    fn non_finite_values_still_open() {
+        let mut project = project();
+        let layer = &mut project.model.texture_sets[0].stack.layers[0];
+        layer.blending.get_mut(Channel::Roughness).opacity = f32::NAN;
+        if let Some(view) = &mut project.view {
+            view.exposure = f32::INFINITY;
+        }
+        let (loaded, _) = read(Cursor::new(to_bytes(&project))).unwrap();
+        let layer = &loaded.model.texture_sets[0].stack.layers[0];
+        assert_eq!(layer.blending.get(Channel::Roughness).opacity, 0.0);
+        assert_eq!(loaded.view.unwrap().exposure, f32::MAX);
+    }
+
+    #[test]
     fn duplicate_ids_get_new_ones() {
         let mut project = project();
         let mut copy = project.model.texture_sets[0].stack.layers[0].clone();
@@ -1752,6 +1864,13 @@ mod tests {
         assert!(rewrite(&|j| j["texture_sets"][0]["resolution"] = 1000.into()).is_err());
         let stroke = "/texture_sets/0/layers/0/content/paint/strokes/0/dab_count";
         assert!(rewrite(&|j| *j.pointer_mut(stroke).unwrap() = 1_000_000.into()).is_err());
+        // Strokes may not share dabs.
+        let second = "/texture_sets/0/layers/0/content/paint/strokes/1/first_dab";
+        assert!(rewrite(&|j| *j.pointer_mut(second).unwrap() = 0.into()).is_err());
+        assert!(rewrite(&|j| j["parts"][1]["index_count"] = u32::MAX.into()).is_err());
+        assert!(rewrite(&|j| j["last_id"] = u64::MAX.into()).is_err());
+        assert!(rewrite(&|j| j["texture_sets"][0]["resolution"] = 16384.into()).is_err());
+        assert!(rewrite(&|j| j["images"][0]["width"] = 100_000.into()).is_err());
         // Settings that are not understood are dropped, the project still opens.
         assert!(rewrite(&|j| j["view"] = "nonsense".into()).is_ok());
         assert!(read(Cursor::new(b"not a zip".to_vec())).is_err());
