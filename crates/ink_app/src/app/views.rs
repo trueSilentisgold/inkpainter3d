@@ -2,6 +2,7 @@
 
 use super::InkApp;
 use super::painting::View;
+use crate::theme;
 use eframe::egui::{self, Color32, PointerButton, Sense};
 use eframe::egui_wgpu::RenderState;
 use glam::Vec2;
@@ -275,13 +276,25 @@ impl InkApp {
 
         display_combo(ui, rect, "uv display mode", &mut self.uv_display);
         if let Some(set) = self.model.texture_sets.get(self.selected_set) {
-            ui.painter().text(
-                rect.right_top() + egui::vec2(-10.0, 12.0),
-                egui::Align2::RIGHT_TOP,
-                format!("2D  ·  {}", set.name),
-                egui::FontId::proportional(13.0),
-                Color32::from_gray(170),
-            );
+            let label = format!("2D  ·  {}", set.name);
+            let painter = ui.painter_at(rect);
+            let width = painter
+                .layout_no_wrap(
+                    label.clone(),
+                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                    theme::TEXT,
+                )
+                .size()
+                .x;
+            // Left out where it would run into the display mode combo (160 px wide at 10 px).
+            if rect.width() > 10.0 + 160.0 + 8.0 + width + 2.0 * 6.0 + 16.0 {
+                theme::overlay_text(
+                    &painter,
+                    rect.right_top() + egui::vec2(-16.0, 13.0),
+                    egui::Align2::RIGHT_TOP,
+                    &label,
+                );
+            }
         }
         self.draw_brush_cursor(ui, rect, View::Uv);
         hint(
@@ -354,12 +367,31 @@ fn display_combo(ui: &mut egui::Ui, rect: egui::Rect, id: &str, display: &mut Di
     });
 }
 
+/// The key hints at the bottom of a view, on a plate so that they read over any HDRI.
+/// Hints that don't fit the view's width are left out, last ones first.
 fn hint(ui: &egui::Ui, rect: egui::Rect, text: &str) {
-    ui.painter_at(rect).text(
-        rect.left_bottom() + egui::vec2(10.0, -10.0),
+    let painter = ui.painter_at(rect);
+    let font = egui::FontId::new(12.0, egui::FontFamily::Proportional);
+    // The plate and its padding (see `theme::overlay_text`) sit inside the 10 px margin.
+    let room = rect.width() - 2.0 * (10.0 + 6.0);
+    let fits = |text: &str| {
+        painter
+            .layout_no_wrap(text.to_owned(), font.clone(), theme::TEXT)
+            .size()
+            .x
+            <= room
+    };
+    let mut shown = text;
+    while !fits(shown) {
+        match shown.rfind("   ") {
+            Some(end) => shown = &shown[..end],
+            None => break,
+        }
+    }
+    theme::overlay_text(
+        &painter,
+        rect.left_bottom() + egui::vec2(16.0, -13.0),
         egui::Align2::LEFT_BOTTOM,
-        text,
-        egui::FontId::proportional(12.0),
-        Color32::from_gray(140),
+        shown,
     );
 }
