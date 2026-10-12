@@ -135,7 +135,16 @@ impl ProjectState {
 
     /// Whether a dialog of this module is open.
     pub fn dialog_open(&self) -> bool {
-        self.leave.is_some() || self.new_dialog.is_some() || self.configuration.is_some()
+        self.leave.is_some()
+            || self.new_dialog.is_some()
+            || self.configuration.is_some()
+            || self.waiting()
+    }
+
+    /// Whether the project is about to be replaced: an open runs, or a save that something
+    /// follows. The UI waits for it, so nothing is edited that would be lost.
+    fn waiting(&self) -> bool {
+        self.opening.is_some() || self.saving.as_ref().is_some_and(|s| s.then.is_some())
     }
 
     fn add_recent(&mut self, path: &Path) {
@@ -160,13 +169,15 @@ impl InkApp {
     }
 
     /// Identifies what a save writes: the history's state and a hash of the settings that
-    /// are no undo steps (texture set settings, visibility, the normal map format).
+    /// are no undo steps (texture set settings, visibility, the normal map format, the
+    /// export settings).
     fn project_state(&self) -> (u64, u64) {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         let model = &self.model;
         model.normal_format.hash(&mut hasher);
-        for set in &model.texture_sets {
-            (&set.name, set.visible, set.resolution, set.alpha_mode as u8).hash(&mut hasher);
+        for (i, set) in model.texture_sets.iter().enumerate() {
+            let visible = self.saved_visibility(i);
+            (&set.name, visible, set.resolution, set.alpha_mode as u8).hash(&mut hasher);
         }
         for object in &model.objects {
             object.visible.hash(&mut hasher);
@@ -184,8 +195,27 @@ impl InkApp {
         (self.history.state(), hasher.finish())
     }
 
+    /// A texture set's visibility as saved: focus mode (Alt+Q) hides sets only for a while.
+    fn saved_visibility(&self, set: usize) -> bool {
+        match &self.focus {
+            Some(before) => before.get(set).copied().unwrap_or(true),
+            None => self.model.texture_sets[set].visible,
+        }
+    }
+
+    /// Changes a save would keep: compared with the last save, or with the save running.
+    /// A stroke in progress counts.
     pub(super) fn has_unsaved_changes(&self) -> bool {
-        self.project_state() != self.project.saved
+        if self.paint.is_painting() {
+            return true;
+        }
+        let state = self.project_state();
+        state != self.project.saved
+            && !self
+                .project
+                .saving
+                .as_ref()
+                .is_some_and(|s| s.kind == SaveKind::Save && s.state == state)
     }
 
     pub(super) fn mark_saved(&mut self) {
@@ -197,6 +227,8 @@ impl InkApp {
 
     /// Replaces or ends the project, asking first if it has unsaved changes.
     pub(super) fn leave_project(&mut self, rs: &RenderState, leave: Leave) {
+        // A value still being typed counts.
+        self.commit_stack_edit();
         if self.has_unsaved_changes() {
             self.project.leave = Some(leave);
         } else {
@@ -205,6 +237,11 @@ impl InkApp {
     }
 
     fn do_leave(&mut self, rs: &RenderState, leave: Leave) {
+        // A save still running belongs to the project that is left: it finishes first, so
+        // it can't mark the next one as saved.
+        if !matches!(leave, Leave::Open(_)) {
+            self.wait_for_save();
+        }
         match leave {
             Leave::Replace { model, source } => {
                 self.set_model(rs, *model);
@@ -287,6 +324,8 @@ impl InkApp {
         path: PathBuf,
         result: anyhow::Result<(Project, ImageCache)>,
     ) {
+        // The project that is replaced finishes its save first.
+        self.wait_for_save();
         match result {
             Ok((project, images)) => {
                 let Project {
@@ -325,6 +364,8 @@ impl InkApp {
 
     /// Ctrl+S: saves in place, or asks where if the project was never saved.
     pub(super) fn save_project(&mut self, then: Option<Leave>) {
+        // A value still being typed is saved as an undo step of its own.
+        self.commit_stack_edit();
         match self.project.path.clone() {
             Some(path) => self.start_save(path, SaveKind::Save, then),
             None => self.save_project_as(then),
@@ -378,8 +419,12 @@ impl InkApp {
     fn start_save(&mut self, path: PathBuf, kind: SaveKind, then: Option<Leave>) {
         // One save at a time: the images go with it.
         self.wait_for_save();
+        let mut model = self.model.clone();
+        for (i, set) in model.texture_sets.iter_mut().enumerate() {
+            set.visible = self.saved_visibility(i);
+        }
         let project = Project {
-            model: self.model.clone(),
+            model,
             source: self.project.source.clone(),
             view: Some(self.view_state()),
             export: Some(self.project.export.clone()),
@@ -444,7 +489,7 @@ impl InkApp {
                 SaveKind::Copy => self.status = format!("Saved a copy as {}", path.display()),
                 SaveKind::Autosave => {
                     self.project.autosaved = state;
-                    prune_backups(&path);
+                    prune_backups(&path, self.project.path.as_deref());
                     log::info!("Autosaved {}", path.display());
                 }
             },
@@ -454,6 +499,15 @@ impl InkApp {
             }
         }
         None
+    }
+
+    /// Continues what followed a save, unless something changed since: then it asks again.
+    fn leave_saved(&mut self, rs: &RenderState, then: Leave) {
+        if self.has_unsaved_changes() {
+            self.project.leave = Some(then);
+        } else {
+            self.do_leave(rs, then);
+        }
     }
 
     /// Picks up finished saves and opened projects, and backs the project up when it is
@@ -467,10 +521,10 @@ impl InkApp {
             && let Some(saving) = self.project.saving.take()
             && let Some(then) = self.save_finished(saving)
         {
-            self.do_leave(rs, then);
+            self.leave_saved(rs, then);
         }
         if let Some(then) = self.project.after_save.take() {
-            self.do_leave(rs, then);
+            self.leave_saved(rs, then);
         }
         if self
             .project
@@ -488,6 +542,12 @@ impl InkApp {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
         self.autosave();
+        // An idle window paints no frames: wake it when the next backup is due.
+        if self.project_state() != self.project.autosaved {
+            let due = AUTOSAVE_INTERVAL.saturating_sub(self.project.last_backup.elapsed());
+            ui.ctx()
+                .request_repaint_after(due.max(Duration::from_secs(1)));
+        }
     }
 
     /// Backs the project up every few minutes while it has unsaved changes, as Painter's
@@ -506,7 +566,16 @@ impl InkApp {
         if state == self.project.saved || state == self.project.autosaved {
             return;
         }
-        let name = self.project_name();
+        // A project opened from a backup gets backups named like the original.
+        let name = match &self.project.path {
+            Some(_) => self.project_name(),
+            None => format!("Untitled {}", self.model.name),
+        };
+        let name = name
+            .split(BACKUP_MARK)
+            .next()
+            .unwrap_or_default()
+            .to_owned();
         let dir = match &self.project.path {
             Some(path) => path.parent().map(Path::to_owned),
             None => data_dir().map(|d| d.join("autosave")),
@@ -653,7 +722,8 @@ impl InkApp {
 
     /// Ctrl+N, Ctrl+O, Ctrl+S and Ctrl+F4, as in Painter.
     pub(super) fn project_shortcuts(&mut self, ui: &egui::Ui, rs: &RenderState) {
-        if self.project.dialog_open() || ui.ctx().text_edit_focused() {
+        // They work while a value is typed, too: Ctrl never types.
+        if self.project.dialog_open() {
             return;
         }
         let command = ui.input(|i| i.modifiers.command && !i.modifiers.shift && !i.modifiers.alt);
@@ -683,6 +753,8 @@ impl InkApp {
         if !ui.input(|i| i.viewport().close_requested()) {
             return;
         }
+        // A value still being typed counts.
+        self.commit_stack_edit();
         if !self.project.quit && self.has_unsaved_changes() {
             ui.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if self.project.leave.is_none() {
@@ -704,11 +776,24 @@ impl InkApp {
         }
     }
 
-    /// The dialogs: New Project, Project configuration and "save the changes?".
+    /// The dialogs: New Project, Project configuration and "save the changes?", and a note
+    /// while the project is about to be replaced.
     pub(super) fn project_dialogs(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
         self.new_project_dialog(ui, rs);
         self.configuration_dialog(ui);
         self.unsaved_changes_dialog(ui, rs);
+        if self.project.waiting() {
+            let text = match &self.project.opening {
+                Some((path, _)) => format!("Opening {}…", path.display()),
+                None => format!("Saving {}…", self.project_name()),
+            };
+            egui::Modal::new(egui::Id::new("project waiting")).show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(text);
+                });
+            });
+        }
     }
 
     fn new_project_dialog(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
@@ -877,7 +962,7 @@ fn normal_format_combo(ui: &mut egui::Ui, id: &str, format: &mut NormalFormat) {
 const BACKUP_MARK: &str = "_autosave_";
 
 /// Deletes all but the newest backups of the project the backup belongs to.
-fn prune_backups(backup: &Path) {
+fn prune_backups(backup: &Path, project: Option<&Path>) {
     let (Some(dir), Some(name)) = (backup.parent(), backup.file_name()) else {
         return;
     };
@@ -900,6 +985,8 @@ fn prune_backups(backup: &Path) {
                 .is_some_and(|n| n.starts_with(prefix) && n.ends_with(&suffix))
         })
         .collect();
+    // The project opened from a backup is no backup.
+    backups.retain(|b| Some(b.as_path()) != project);
     // The timestamps sort by name.
     backups.sort();
     let excess = backups.len().saturating_sub(AUTOSAVES_KEPT);
@@ -1017,14 +1104,20 @@ mod tests {
             b"",
         )
         .unwrap();
-        prune_backups(&dir.join(format!("Cat{BACKUP_MARK}2026-10-14_00-00-00.ink3d")));
+        // The project itself may be an opened backup: it stays.
+        let opened = dir.join(format!("Cat{BACKUP_MARK}2026-10-10_00-00-00.ink3d"));
+        prune_backups(
+            &dir.join(format!("Cat{BACKUP_MARK}2026-10-14_00-00-00.ink3d")),
+            Some(&opened),
+        );
+        assert!(opened.exists());
         let mut left: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         left.sort();
-        assert_eq!(left.len(), AUTOSAVES_KEPT + 1, "{left:?}");
-        assert!(left[0].starts_with("Cat") && left[0].contains("10-12"));
+        assert_eq!(left.len(), AUTOSAVES_KEPT + 2, "{left:?}");
+        assert!(left[1].starts_with("Cat") && left[1].contains("10-12"));
         assert!(left.iter().any(|n| n.starts_with("Dog")));
         let _ = std::fs::remove_dir_all(&dir);
     }

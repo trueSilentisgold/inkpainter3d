@@ -134,7 +134,8 @@ impl InkApp {
 
         // `inkpainter3d project.ink3d` opens a project, `inkpainter3d model.glb` starts one.
         if let Some(path) = std::env::args_os().nth(1) {
-            let path = PathBuf::from(path);
+            // Absolute, for Recent files and the project's mesh path.
+            let path = std::path::absolute(&path).unwrap_or_else(|_| PathBuf::from(path));
             if is_project(&path) {
                 app.start_open(path);
             } else {
