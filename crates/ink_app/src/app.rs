@@ -74,6 +74,7 @@ pub struct InkApp {
 
 impl InkApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> anyhow::Result<Self> {
+        crate::theme::install(&cc.egui_ctx);
         let render_state = cc
             .wgpu_render_state
             .as_ref()
