@@ -701,6 +701,34 @@ impl ViewportRenderer {
         }
     }
 
+    /// Composites a texture set at its resolution for the export and hands over its texels,
+    /// a block at a time. Brings the GPU state in line with the model first; the viewport's
+    /// textures stay as they are. Fails if the GPU could not hand the texels back.
+    pub fn export_texture_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        set: usize,
+        sink: &mut dyn FnMut(ink_core::export::ExportBlock),
+    ) -> Result<(), String> {
+        self.sync_texture_sets(device, queue, model, false);
+        let (Some(mesh), Some(gpu)) = (&self.mesh, self.sets.get_mut(set)) else {
+            return Err("The texture set has no GPU state".into());
+        };
+        self.compositor.export(
+            device,
+            queue,
+            model,
+            mesh,
+            (&mesh.vertices, &mesh.indices),
+            &self.paint,
+            set,
+            &mut gpu.composite,
+            sink,
+        )
+    }
+
     /// Whether a texture set's layer stack is still being composited; the views should be
     /// redrawn until it is done.
     pub fn is_compositing(&self) -> bool {

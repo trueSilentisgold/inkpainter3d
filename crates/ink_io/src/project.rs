@@ -184,7 +184,7 @@ pub fn read<R: Read + Seek>(reader: R) -> Result<(Project, ImageCache)> {
     let mesh = read_mesh(&mesh_data, vertices, indices)?;
     let dabs = read_entry(&mut zip, DABS_BIN, 1 << 40)?;
     ensure!(
-        dabs.len() % (DAB_FLOATS * 4) == 0,
+        dabs.len().is_multiple_of(DAB_FLOATS * 4),
         "The strokes are damaged"
     );
 
@@ -929,7 +929,7 @@ fn read_mesh(data: &[u8], vertices: usize, indices: usize) -> Result<Mesh> {
         data.len() == vertices * VERTEX_BYTES + indices * 4,
         "The mesh is damaged"
     );
-    ensure!(indices % 3 == 0, "The mesh is damaged");
+    ensure!(indices.is_multiple_of(3), "The mesh is damaged");
     let mut floats = data
         .as_chunks::<4>()
         .0
@@ -1105,7 +1105,7 @@ impl Loader<'_> {
                 part.object < objects.len()
                     && part.texture_set < texture_sets.len()
                     && part.first_index == end
-                    && part.index_count % 3 == 0
+                    && part.index_count.is_multiple_of(3)
                     && part.texture_set >= last_set,
                 "The mesh parts are damaged"
             );

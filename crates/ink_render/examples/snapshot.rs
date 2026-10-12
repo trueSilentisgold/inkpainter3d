@@ -31,9 +31,18 @@
 //!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
+//!
+//! Projects: the model may be a project file (`.ink3d`); `save=file.ink3d` saves the model
+//! with its strokes as one. Export: `export=pbr_metallic_roughness` (a template key from
+//! `ink_core::export::TEMPLATES`) writes the painted texture set's maps into the directory
+//! `<out>.export/`, with `format=png|targa|jpeg|tiff|exr`, `depth=8|8_dithered|16|16f|32f`,
+//! `padding=passthrough|infinite|transparent|color` and `dilation=16`; `xprobe=Name,x,y`
+//! prints the texel of the exported map whose name ends with `Name` as
+//! `probe x y r g b a` (8 bits; after the `probe=` lines).
 
 use anyhow::{Context, Result};
 use glam::Vec2;
+use ink_core::export::{BitDepth, ExportSettings, FileFormat, MapImage, Padding, Template};
 use ink_core::{
     Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect, EffectKind,
     Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath, StrokeSpace,
@@ -86,6 +95,7 @@ fn main() -> Result<()> {
     let mut model = match model_path.as_str() {
         "sphere" => Model::from_mesh(Mesh::uv_sphere(1.0, 96, 48)),
         "cube" => Model::from_mesh(Mesh::cube(1.5)),
+        path if path.ends_with(".ink3d") => ink_io::project::load(Path::new(path))?.0.model,
         path => ink_io::load_model(Path::new(path))?,
     };
     if let Some(res) = option("res") {
@@ -236,6 +246,16 @@ fn main() -> Result<()> {
             renderer.sync_texture_sets(&device, &queue, &model, true);
         }
     }
+    if let Some(path) = option("save") {
+        let project = ink_io::project::Project {
+            model: model.clone(),
+            source: None,
+            view: None,
+            export: None,
+        };
+        ink_io::project::save(Path::new(path), &project, &mut Default::default())?;
+        eprintln!("Saved {path}");
+    }
     if let Some(name) = option("only") {
         for set in &mut model.texture_sets {
             set.visible = set.name.starts_with(name);
@@ -346,6 +366,74 @@ fn main() -> Result<()> {
         let [r, g, b, _] = image.get_pixel(x, y).0;
         println!("probe {x} {y} {r} {g} {b}");
     }
+
+    if let Some(key) = option("export") {
+        let template =
+            Template::from_key(key).with_context(|| format!("unknown template {key}"))?;
+        let format = match option("format") {
+            Some(f) => FileFormat::from_key(f).with_context(|| format!("unknown format {f}"))?,
+            None => FileFormat::Png,
+        };
+        let settings = ExportSettings {
+            directory: String::new(),
+            template,
+            format,
+            bit_depth: match option("depth") {
+                Some(d) => BitDepth::from_key(d).with_context(|| format!("unknown depth {d}"))?,
+                None => format.bit_depths()[0],
+            },
+            padding: match option("padding") {
+                Some(p) => Padding::from_key(p).with_context(|| format!("unknown padding {p}"))?,
+                None => Padding::Infinite,
+            },
+            dilation: option("dilation").map_or(Ok(16), str::parse)?,
+        };
+        let dir = Path::new(out_path).with_extension("export");
+        std::fs::create_dir_all(&dir)?;
+        let texture_set = &model.texture_sets[set];
+        let mut maps: Vec<MapImage> = template
+            .maps
+            .iter()
+            .map(|m| {
+                MapImage::new(
+                    texture_set.resolution,
+                    settings.components(m),
+                    settings.bit_depth,
+                )
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        renderer
+            .export_texture_set(&device, &queue, &model, set, &mut |block| {
+                for (image, map) in maps.iter_mut().zip(template.maps) {
+                    image.pack(&block, map, &settings, model.normal_format);
+                }
+            })
+            .map_err(anyhow::Error::msg)?;
+        eprintln!("Export took {:?}", started.elapsed());
+        let mut written = Vec::new();
+        for (image, map) in maps.into_iter().zip(template.maps) {
+            let name = ink_core::export::file_name(map.name, &model.name, &texture_set.name, "");
+            let path = dir.join(format!("{name}.{}", format.extension()));
+            ink_io::export::write_map(&path, &image, format, settings.bit_depth)?;
+            eprintln!("Exported {}", path.display());
+            written.push((map.name, path));
+        }
+        for probe in args[3..].iter().filter_map(|a| a.strip_prefix("xprobe=")) {
+            let mut parts = probe.split(',');
+            let (Some(name), Some(x), Some(y)) = (parts.next(), parts.next(), parts.next()) else {
+                anyhow::bail!("xprobe={probe} is not Name,x,y");
+            };
+            let (x, y): (u32, u32) = (x.parse()?, y.parse()?);
+            let (_, path) = written
+                .iter()
+                .find(|(map, _)| map.ends_with(name))
+                .with_context(|| format!("no exported map {name}"))?;
+            let image = image::open(path)?.into_rgba8();
+            let [r, g, b, a] = image.get_pixel(x, y).0;
+            println!("probe {x} {y} {r} {g} {b} {a}");
+        }
+    }
     Ok(())
 }
 
@@ -371,10 +459,14 @@ fn build_stack<'a>(
         ids, texture_sets, ..
     } = model;
     let stack = &mut texture_sets[set].stack;
-    let mut target = match &stack.layers[0].content {
-        Content::Paint(p) => p.id,
-        _ => unreachable!("new stacks hold a paint layer"),
-    };
+    // New stacks hold a paint layer; projects may not.
+    let mut target = stack
+        .iter()
+        .find_map(|l| match &l.content {
+            Content::Paint(p) => Some(p.id),
+            _ => None,
+        })
+        .unwrap_or(0);
 
     let (color, rough, metal) = (floats("color")?, floats("rough")?, floats("metal")?);
     if color.is_some() || rough.is_some() || metal.is_some() {
