@@ -608,9 +608,18 @@ impl ViewportRenderer {
         );
     }
 
-    /// Uploads the geometry and creates the channel textures of every texture set.
+    /// Uploads the geometry and creates the channel textures of every texture set. A model
+    /// without triangles (no project open) draws nothing.
     pub fn set_model(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, model: &Model) {
         let mesh = &model.mesh;
+        self.sets.clear();
+        self.paint.reset();
+        self.compositor.forget_images();
+        if mesh.indices.is_empty() {
+            // wgpu can't bind empty buffers.
+            self.mesh = None;
+            return;
+        }
         let vertices: Vec<Vertex> = (0..mesh.vertex_count())
             .map(|i| Vertex {
                 position: mesh.positions[i].into(),
@@ -632,8 +641,6 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
             }),
         });
-        self.sets.clear();
-        self.paint.reset();
         self.sync_texture_sets(device, queue, model, false);
     }
 
@@ -699,6 +706,45 @@ impl ViewportRenderer {
                 stroke_in_progress,
             );
         }
+    }
+
+    /// The number of blocks [`Self::export_texture_set`] hands over for a texture set, once
+    /// its GPU state is in line with the model.
+    pub fn export_blocks(&self, set: usize) -> usize {
+        self.sets
+            .get(set)
+            .map_or(0, |s| Compositor::export_chunks(&s.composite))
+    }
+
+    /// Composites blocks of a texture set at its resolution for the export (`blocks` out of
+    /// [`Self::export_blocks`]) and hands over their texels; a few per frame keep the UI
+    /// responsive. Brings the GPU state in line with the model first; the viewport's
+    /// textures stay as they are. Fails if the GPU could not hand the texels back.
+    pub fn export_texture_set(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        set: usize,
+        blocks: std::ops::Range<usize>,
+        sink: &mut dyn FnMut(ink_core::export::ExportBlock),
+    ) -> Result<(), String> {
+        self.sync_texture_sets(device, queue, model, false);
+        let (Some(mesh), Some(gpu)) = (&self.mesh, self.sets.get_mut(set)) else {
+            return Err("The texture set has no GPU state".into());
+        };
+        self.compositor.export(
+            device,
+            queue,
+            model,
+            mesh,
+            (&mesh.vertices, &mesh.indices),
+            &self.paint,
+            set,
+            &mut gpu.composite,
+            blocks,
+            sink,
+        )
     }
 
     /// Whether a texture set's layer stack is still being composited; the views should be

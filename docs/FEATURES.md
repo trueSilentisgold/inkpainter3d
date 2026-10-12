@@ -46,13 +46,18 @@ sich in inkpainter3d genauso bauen lassen.** Es enthält:
 
 ## 1. Projekt und Dateien
 
-- [ ] `P0` **Neues Projekt** (Strg+N): Dialog mit Mesh-Datei, Dokument-Auflösung,
-      Normal-Map-Format (OpenGL / DirectX) und Template.
-- [ ] `P0` **Projekt speichern und öffnen** (Strg+S, Strg+O) in einem eigenen Format: eine
-      Datei, die Mesh, Layer, Strokes, Texturen und benutzte Ressourcen enthält.
-      Projekte sollen sich auch ohne die Originaldateien öffnen lassen.
-- [ ] `P0` Zuletzt geöffnete Projekte, Projekt schließen (Strg+F4).
-- [ ] `P1` **Autosave** und Wiederherstellung nach einem Absturz.
+- [x] `P0` **Neues Projekt** (Strg+N): Dialog mit Mesh-Datei, Dokument-Auflösung und
+      Normal-Map-Format (OpenGL / DirectX). Das Feld *Template* kommt mit den
+      Projekt-Templates. Ein Mesh auf das Fenster ziehen öffnet den Dialog auch.
+- [x] `P0` **Projekt speichern und öffnen** (Strg+S, Strg+O, *Save as*, *Save as copy*) in
+      einem eigenen Format (`.ink3d`): eine Datei mit Mesh, Layern, Strokes, Bildern und
+      Pinsel-Alphas, die sich ohne die Originaldateien öffnen lässt. Bevor ungespeicherte
+      Änderungen verloren gehen, wird gefragt; der Fenstertitel zeigt sie mit einem Stern.
+- [x] `P0` Zuletzt geöffnete Projekte (*Recent files*), Projekt schließen (Strg+F4).
+- [x] `P1` **Autosave:** alle 10 Minuten eine Sicherung, solange es ungespeicherte
+      Änderungen gibt, neben dem Projekt (die letzten 3; vor dem ersten Speichern im
+      Datenordner). Nach einem Absturz öffnet man die Sicherung, wie in Painter.
+- [ ] `P1` Autosave-Intervall und Anzahl der Sicherungen einstellen.
 - [ ] `P1` **Projekt-Templates:** Shader, Kanäle und Auflösung als Vorlage speichern.
 - [ ] `P1` **Mesh neu importieren** (Project configuration) mit Erhalt der Bemalung, wahlweise
       über UVs oder räumlich neu projiziert. Texture Sets werden über ihren Namen neu
@@ -556,20 +561,32 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 ## 13. Export
 
-- [ ] `P0` **Export-Dialog** (Strg+Shift+E) mit Zielordner, Auswahl der Texture Sets und
-      Vorschau der erzeugten Dateien
-- [ ] `P0` **Mitgelieferte Vorlagen für Blender, Unity und Godot**, dazu glTF PBR Metal
-      Roughness und Document Channels. Alle drei Engines erwarten Normal Maps im
-      OpenGL-Format.
-  - Blender: Principled BSDF (Base Color mit Alpha, Roughness, Metallic, Normal, Emission)
-  - Unity: Albedo mit Alpha, Metallic mit Smoothness im Alpha-Kanal, Normal, Occlusion,
-    Emission; für HDRP zusätzlich die Mask Map
-  - Godot: StandardMaterial3D mit ORM-Textur (Occlusion, Roughness, Metallic)
-- [ ] `P1` Vorlagen für Unreal Engine (Packed), Arnold, USD
-- [ ] `P0` **Dateiformate** PNG, TGA, JPEG mit 8 Bit; `P1` PNG mit 16 Bit, TIFF, EXR (16 / 32
-      Bit Float); `P2` PSD mit Layern, DDS
-- [ ] `P0` **Padding:** Dilation unendlich oder N Pixel, Dilation mit transparentem oder
-      Standard-Hintergrund, kein Padding
+- [x] `P0` **Export-Dialog** (Strg+Shift+E) wie Painters: Zielordner, Vorlage, Dateityp,
+      Padding, Auswahl der Texture Sets (*Check all*, *Uncheck all*, *Invert all*), Vorschau
+      der Dateien pro Texture Set und die *List of exports*. *Save settings* speichert die
+      Einstellungen im Projekt.
+- [x] `P0` **Mitgelieferte Vorlagen für Blender, Unity und Godot**, dazu glTF PBR Metal
+      Roughness, PBR Metallic Roughness und Document Channels (mit und ohne Alpha). Alle
+      drei Engines erwarten Normal Maps im OpenGL-Format; die Normal Map enthält die
+      Details aus Height, wie in Painter.
+  - Blender (Principled BSDF): Base Color, Metallic, Roughness, Normal, Emission, Alpha und
+    Displacement als einzelne Dateien, so benannt, dass Node Wrangler sie verbindet
+  - Unity HDRP: Base Map mit Opacity im Alpha, Mask Map (Metallic, AO, Detail Mask,
+    Smoothness), Normal, Emissive
+  - Unity URP und Built-in: Base Map / Albedo mit Opacity im Alpha, Metallic mit Smoothness
+    im Alpha-Kanal, Normal, Occlusion, Emission
+  - Godot (ORMMaterial3D): Albedo mit Alpha, ORM-Textur (Occlusion, Roughness, Metallic),
+    Normal, Emission, Height
+  - ＋ Wo kein Layer etwas hinterlässt, steht im Export, was der Viewport zeigt (die
+    Standardwerte des Shaders), nicht Schwarz wie in Painter.
+- [x] `P1` Vorlage für Unreal Engine (Packed), Normal Map im DirectX-Format
+- [ ] `P1` Vorlagen für Arnold, USD
+- [x] `P0` **Dateiformate** PNG, TGA, JPEG mit 8 Bit, auch mit Dithering gegen Banding
+- [x] `P1` PNG und TIFF mit 16 Bit, OpenEXR mit 16 / 32 Bit Float (Farben linear)
+- [ ] `P2` PSD mit Layern, DDS
+- [x] `P0` **Padding:** *Dilation infinite*, *Dilation + transparent* und *Dilation + default
+      background color* mit Abstand in Pixeln, *No padding (passthrough)*
+- [ ] `P1` *Dilation + diffusion*: jenseits des Abstands eine unscharfe Fortsetzung
 - [ ] `P1` **Vorlagen-Editor:**
   - Kanäle frei auf R / G / B / A packen
   - Umgerechnete Maps: Normal OpenGL ↔ DirectX, Glossiness aus Roughness, Mixed AO,
@@ -712,12 +729,19 @@ Diese Punkte müssen **vor** der Brush-Engine feststehen, weil später alles dar
    Blöcken von 512 × 512 Texeln zusammengerechnet; beim Malen nur der bemalte Bereich, nach
    anderen Änderungen die ganze Textur über mehrere Frames verteilt.
 4. **Tangent Space nach MikkTSpace**, Normal-Map-Format (OpenGL / DirectX) pro Projekt;
-   umgerechnet wird beim Export.
+   umgerechnet wird beim Export. *Seit Phase 5:* Intern ist alles OpenGL. Das Format des
+   Projekts gilt, wie in Painter, für die Normal Map der Document Channels (später auch
+   fürs Baking); die Vorlagen der Engines legen ihr Format selbst fest, und Normal Maps in
+   Fill Layern sagen ihres selbst.
 5. **Generatoren und Filter als Shader-Dateien:** WGSL-Code plus eine Beschreibung der Parameter
    (Name, Typ, Bereich, Standardwert). Daraus entsteht automatisch die Oberfläche. Das ist
    unser Ersatz für `.sbsar` und gleichzeitig die Plugin-Schnittstelle.
 6. **Projektdatei** als ZIP-Container mit JSON (Struktur, Strokes, Einstellungen) und
-   Binärdaten (Mesh, gerasterte Caches als EXR). Das Format wird dokumentiert.
+   Binärdaten (Mesh, gerasterte Caches als EXR). Das Format wird dokumentiert. *Seit
+   Phase 5:* `project.json`, `mesh.bin` (das verarbeitete Mesh, wie Painter), `dabs.bin`
+   (die Tupfer aller Striche) und die Bilder verlustfrei als PNG bzw. EXR; beschrieben in
+   [project-format.md](project-format.md). Striche bleiben Daten und werden beim Öffnen
+   neu gemalt; gerasterte Caches kommen erst, wenn das zu lange dauert.
 7. **Undo** über Befehle (Command Pattern), die auf den Stroke-Daten arbeiten. Undo braucht so
    nur wenig Speicher. *Seit Phase 3* für Striche umgesetzt, *seit Phase 4* für den Layer
    Stack: Ein Schritt merkt sich den Stack davor; die Striche darin teilen sich beide Stände.
@@ -735,8 +759,8 @@ texturieren und exportieren.**
 | 2 | **Fundament:** Texture Sets und Meshes beim Import, Texture-Set-Liste mit Sichtbarkeit pro Set und pro Mesh, Material-ID-Ansicht, Tangenten, Kanal-Texturen im Shader (inkl. Emissive und Opacity), HDRI-Beleuchtung, Painter-Navigation | ✅ fertig |
 | 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ✅ fertig |
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
-| 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ⏳ als Nächstes |
-| 6 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
+| 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
+| 6 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ⏳ als Nächstes |
 | 7 | **Generatoren und Bibliothek:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Shelf, Starter-Inhalte | |
 | 8 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
 | 9 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |

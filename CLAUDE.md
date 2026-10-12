@@ -15,7 +15,8 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
   experienceleague.adobe.com) and match it.
 - Never commit the owner's models, textures, screenshots or renders of their assets. Keep
   them in the session scratchpad.
-- Open question for the export phase: which Unity render pipeline (Built-in, URP, HDRP).
+- The export has templates for all three Unity render pipelines (Built-in, URP, HDRP), so
+  the owner's choice doesn't matter for now.
 
 ## Source of truth
 
@@ -44,8 +45,10 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
 Layering: `ink_core` is the data model (no GPU, no file I/O); `ink_io` does everything that
 reads or writes files; `ink_render` does everything wgpu and depends only on `ink_core`
 (`ink_io` is a dev-dependency for the snapshot example); `ink_app` is the eframe/egui UI
-(`app.rs` with `app/views.rs` for the 3D and 2D views, `app/painting.rs` for the brush and
-`app/layers.rs` for the layer stack panel and the properties of fills and effects)
+(`app.rs` with `app/views.rs` for the 3D and 2D views, `app/painting.rs` for the brush,
+`app/layers.rs` for the layer stack panel and the properties of fills and effects,
+`app/project.rs` for the File menu's project commands and `app/export.rs` for the export
+window)
 plus `pen.rs`, pen input on Linux: a Wayland tablet client and an XInput2 pressure reader
 (Linux-only dependencies).
 
@@ -66,9 +69,10 @@ Things that are easy to get wrong:
   indices do not match the source file.
 - **No stable IDs yet.** Sets, objects and parts are identified by `Vec` index (UI state
   `expanded`/`focus`, the layer selection per set, the renderer's GPU sets, material ID
-  colors, `Stroke::hidden_objects` / `hidden_sets`, the undo history). Reordering or
-  removing them must update all of these, and project files need real IDs first. Strokes,
-  layers, masks, effects and paint layers do have ids (`Model::next_id`, unique per model).
+  colors, `Stroke::hidden_objects` / `hidden_sets`, the undo history, project files).
+  Reordering or removing them must update all of these; a mesh re-import must remap them.
+  Strokes, layers, masks, effects and paint layers do have ids (`Model::next_id`, unique
+  per model).
 - **UV convention.** UVs are stored with the origin top-left (like glTF/wgpu); importers
   flip FBX and OBJ. Tangents are computed in the bottom-left convention so the bitangent
   points up in the image, as OpenGL-style normal maps (Blender, Unity, Godot) expect.
@@ -125,6 +129,25 @@ Things that are easy to get wrong:
   button is held and no text field is focused; strokes record their own `AddStroke`. Keep
   stack edits between those two calls, or commit the pending edit first
   (`commit_stack_edit`), as undo, redo and new strokes do.
+- **Project files** (`ink_io::project`, described in `docs/project-format.md`). The file
+  format is its own set of `File*` structs, mapped field by field to the model, with
+  stable string keys (`Channel::key`, `BlendMode::key`). A new field of the model that
+  shapes the pixels or is worth keeping must go into both directions of that mapping, the
+  round-trip test and the format description; raise `VERSION` only when older readers
+  could no longer read the files. Images are known by their ids; `ImageCache` keeps their
+  encodings between saves. The app saves and opens on a thread with a clone of the model.
+  Unsaved changes are `History::state` plus a hash of the settings that are no undo steps
+  (`project_state` in `app/project.rs`): a saved setting that is no undo step belongs in
+  that hash.
+- **Export** (`ink_core::export`, `ink_io::export`). `ViewportRenderer::export_texture_set`
+  composites a texture set chunk by chunk like the viewport and resolves it with
+  `fs_export` (composite_resolve.wgsl) into four 16-bit float targets instead of the
+  channel textures: linear colors, the normal with the height's detail (OpenGL), and each
+  texel's distance to the nearest UV island for the padding. `MapImage::pack` turns those
+  texels into an output map's pixels (packing, sRGB for colors in 8 and 16 bits, padding,
+  normal format); `TEMPLATES` are the output templates. The export window composites a
+  few blocks per frame (so the window stays responsive) and hands them to a thread per
+  texture set that packs them and writes the files once all arrived.
 - **Buffers reused across draws** (stroke params, dabs, apply params) are written with
   `queue.write_buffer` and submitted per draw: writes land before the next `submit`, so
   several draws in one encoder would all see the last write.
@@ -138,7 +161,8 @@ Things that are easy to get wrong:
   `Uniforms`/`TextureSetUniforms` (viewport), `GpuDab`/`StrokeParams`/`DepthCamera`/
   `ApplyParams`/`TileDraw` (paint), `PassUniforms`/`ResolveUniforms`/`GeometryUniforms`
   (compositor) and `UvUniforms` (2D view) mirror the WGSL structs field for field (vec4/mat4
-  only; update the size tests); `BlendMode::code` is the `BLEND_*` constants in
+  only; update the size tests); `export_texel` in compositor.rs reads `ExportOutputs` of
+  composite_resolve.wgsl, whose `APRON` is the compositor's; `BlendMode::code` is the `BLEND_*` constants in
   composite.wgsl (checked by `blend_codes_match_the_shader`); the order of
   `DisplayMode::ALL` is the `DISPLAY_*` code in viewport.wgsl and uv_view.wgsl;
   `UvCamera::to_pixel` and `to_clip` in uv_view.wgsl must agree;
@@ -197,8 +221,9 @@ Rust, whose Clippy may know lints your toolchain doesn't; `rustup toolchain inst
 CI fails on one.
 
 CI also runs `scripts/gpu-smoke.sh` on software Vulkan: it renders the snapshot example's
-standard cases (painting, undo, occlusion, masks, blending, normal maps, projections) and
-checks a few pixels of each. Add a case when you add something the renderer must keep
+standard cases (painting, undo, occlusion, masks, blending, normal maps, projections,
+project round trips, export padding, normal formats and packing) and checks a few pixels
+of each. Add a case when you add something the renderer must keep
 doing; its test images live in `crates/ink_render/examples/testdata/`.
 
 ## Seeing the app without a display
@@ -218,8 +243,11 @@ case-insensitive (`basecolor`, `ambientocclusion`, …). It also paints test str
 the real paint pipeline (`paint`, `erase`, `uv`, `live=`, `undo`, `nocull`, `nodepth`,
 `set=`, `only=`), builds layer stacks to check the compositor (`fill=`, `image=`,
 `normalmap=`, `heightmap=`, `triplanar`, `mask`, `levels`, `blend=`, `opacity=`, `folder`,
-`passthrough`, `height`, `rotate=`, `nblend=`, `nopacity=`), renders the 2D view (`2d`) and
-prints pixels for scripted checks (`probe=x,y`). A small OBJ with two parallel quads in
+`passthrough`, `height`, `rotate=`, `nblend=`, `nopacity=`), renders the 2D view (`2d`),
+saves and opens projects (`save=file.ink3d`; the model may be a `.ink3d`), exports a
+template (`export=unity_hdrp_metallic`, `format=`, `depth=`, `padding=`, `dilation=`) and
+prints pixels for scripted checks (`probe=x,y` of the render, `xprobe=Map,x,y` of an
+exported map). A small OBJ with two parallel quads in
 different materials is the quickest occlusion test.
 
 To check that the app starts on Wayland, install `weston`, run

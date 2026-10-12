@@ -168,6 +168,48 @@ impl BlendMode {
         }
     }
 
+    /// A stable name for project files; never changes.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Passthrough => "passthrough",
+            Self::Disable => "disable",
+            Self::Replace => "replace",
+            Self::Multiply => "multiply",
+            Self::Divide => "divide",
+            Self::InverseDivide => "inverse_divide",
+            Self::Darken => "darken",
+            Self::Lighten => "lighten",
+            Self::LinearDodge => "linear_dodge",
+            Self::Subtract => "subtract",
+            Self::InverseSubtract => "inverse_subtract",
+            Self::Difference => "difference",
+            Self::Exclusion => "exclusion",
+            Self::SignedAddition => "signed_addition",
+            Self::Overlay => "overlay",
+            Self::Screen => "screen",
+            Self::LinearBurn => "linear_burn",
+            Self::ColorBurn => "color_burn",
+            Self::ColorDodge => "color_dodge",
+            Self::SoftLight => "soft_light",
+            Self::HardLight => "hard_light",
+            Self::VividLight => "vivid_light",
+            Self::LinearLight => "linear_light",
+            Self::PinLight => "pin_light",
+            Self::Tint => "tint",
+            Self::Saturation => "saturation",
+            Self::Color => "color",
+            Self::Value => "value",
+            Self::NormalMapCombine => "normal_map_combine",
+            Self::NormalMapDetail => "normal_map_detail",
+            Self::NormalMapInverseDetail => "normal_map_inverse_detail",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.key() == key)
+    }
+
     /// Must match the `BLEND_*` constants in the compositor's shader.
     pub fn code(self) -> u32 {
         Self::ALL.iter().position(|&m| m == self).unwrap_or(0) as u32
@@ -1067,5 +1109,19 @@ mod tests {
         }
         assert!(!BlendMode::Passthrough.for_layers());
         assert!(BlendMode::Multiply.for_masks());
+    }
+
+    #[test]
+    fn file_keys_are_unique() {
+        let mut keys: Vec<&str> = BlendMode::ALL.iter().map(|m| m.key()).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), BlendMode::ALL.len());
+        for mode in BlendMode::ALL {
+            assert_eq!(BlendMode::from_key(mode.key()), Some(mode));
+        }
+        for channel in Channel::ALL {
+            assert_eq!(Channel::from_key(channel.key()), Some(channel));
+        }
     }
 }

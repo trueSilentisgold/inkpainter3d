@@ -15,16 +15,24 @@ out=target/gpu-smoke
 mkdir -p "$out"
 failures=0
 
-# check NAME MODEL "OPTIONS" "X,Y:CONDITION"...
-# Each CONDITION is an awk expression over r, g and b, the pixel's 8-bit sRGB values.
+# check NAME MODEL "OPTIONS" "X,Y:CONDITION"... "Map,X,Y:CONDITION"...
+# Each CONDITION is an awk expression over r, g, b and a, the 8-bit values of a pixel of the
+# render (X,Y) or of the exported map whose name ends with Map (Map,X,Y; after the others).
 check() {
     local name=$1 model=$2 options=$3
     shift 3
-    local probes=() conditions=() spec
+    local probes=() conditions=() exported=() exported_conditions=() spec
     for spec in "$@"; do
-        probes+=("probe=${spec%%:*}")
-        conditions+=("${spec#*:}")
+        if [[ $spec =~ ^[A-Za-z] ]]; then
+            exported+=("xprobe=${spec%%:*}")
+            exported_conditions+=("${spec#*:}")
+        else
+            probes+=("probe=${spec%%:*}")
+            conditions+=("${spec#*:}")
+        fi
     done
+    probes+=("${exported[@]}")
+    conditions+=("${exported_conditions[@]}")
     local output
     # shellcheck disable=SC2086 # options are several words
     if ! output=$("$snapshot" "$model" "$out/$name.png" $options "${probes[@]}" 2>&1); then
@@ -33,7 +41,7 @@ check() {
         failures=$((failures + 1))
         return
     fi
-    local lines failed=0 i=0 x y r g b
+    local lines failed=0 i=0 x y r g b a
     mapfile -t lines < <(grep '^probe ' <<<"$output")
     if [ "${#lines[@]}" -ne "${#conditions[@]}" ]; then
         echo "FAIL $name: expected ${#conditions[@]} probes, got ${#lines[@]}"
@@ -41,9 +49,10 @@ check() {
         return
     fi
     for i in "${!lines[@]}"; do
-        read -r _ x y r g b <<<"${lines[$i]}"
-        if ! awk -v r="$r" -v g="$g" -v b="$b" "BEGIN { exit !(${conditions[$i]}) }"; then
-            echo "FAIL $name: pixel $x,$y is $r $g $b, expected ${conditions[$i]}"
+        read -r _ x y r g b a <<<"${lines[$i]}"
+        a=${a:-255}
+        if ! awk -v r="$r" -v g="$g" -v b="$b" -v a="$a" "BEGIN { exit !(${conditions[$i]}) }"; then
+            echo "FAIL $name: pixel $x,$y is $r $g $b $a, expected ${conditions[$i]}"
             failed=1
         fi
     done
@@ -114,6 +123,39 @@ check uv-rotation cube "fill=1,1,1 image=$data/letter_f.png rotate=30 2d" \
 check triplanar-rotation cube \
     "fill=1,1,1 image=$data/letter_f.png triplanar rotate=30 yaw=0 display=basecolor" \
     "600,280:$f_red" "520,320:$f_red"
+
+# Projects: a painted model comes back from its project file.
+check project-save sphere "paint save=$out/painted.ink3d display=basecolor" "640,400:$red"
+check project-open "$out/painted.ink3d" "display=basecolor" "640,400:$red" "640,250:$grey"
+
+# Export of a quad whose UV island covers the middle of the texture (128 to 384 of 512).
+island="res=512 yaw=0 fill=0.2,0.5,0.9"
+fill_blue='r == 51 && g == 127 && b == 229 && a == 255'
+check export-infinite "$data/uv_island.obj" "$island export=document_channels_with_alpha" \
+    "BaseColor,256,256:$fill_blue" "BaseColor,10,10:$fill_blue"
+check export-background "$data/uv_island.obj" \
+    "$island export=document_channels_with_alpha padding=color dilation=16" \
+    "BaseColor,120,256:$fill_blue" "BaseColor,10,10:r == 188 && g == 188 && a == 255" \
+    "Roughness,10,10:r == 77"
+check export-transparent "$data/uv_island.obj" \
+    "$island export=document_channels_with_alpha padding=transparent dilation=16" \
+    "BaseColor,120,256:$fill_blue" "BaseColor,10,10:a == 0" "Roughness,10,10:a == 0" \
+    "Roughness,256,256:r == 76 && a == 255"
+# Normal maps: OpenGL for Blender, Unity, Godot and glTF, DirectX for Unreal.
+ridge="res=512 yaw=0 fill=1,1,1 normalmap=$data/ridge_normal_opengl.png opengl"
+check export-opengl "$data/uv_island.obj" "$ridge export=pbr_metallic_roughness" \
+    "Normal,256,200:g > 75 && g < 95 && b > 240"
+check export-directx "$data/uv_island.obj" "$ridge export=unreal_engine_packed" \
+    "Normal,256,200:g > 160 && g < 180 && b > 240"
+# Packing: Unity's mask map holds metallic, AO, detail mask and smoothness.
+check export-unity-hdrp "$data/uv_island.obj" \
+    "$island rough=0.2 metal=1 export=unity_hdrp_metallic" \
+    "MaskMap,256,256:r == 255 && g == 255 && b == 255 && a == 204"
+# Float files hold linear colors; 16-bit files are written too.
+check export-exr "$data/uv_island.obj" "$island export=pbr_metallic_roughness format=exr depth=16f" \
+    "BaseColor,256,256:r < 15 && b > 190"
+check export-png16 "$data/uv_island.obj" "$island export=pbr_metallic_roughness depth=16" \
+    "BaseColor,256,256:r == 51 && b == 229"
 
 if [ "$failures" -gt 0 ]; then
     echo "$failures check(s) failed; the renders are in $out"

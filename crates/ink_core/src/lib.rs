@@ -3,6 +3,7 @@
 
 pub mod brush;
 pub mod bvh;
+pub mod export;
 pub mod history;
 pub mod layer;
 pub mod mesh;
@@ -23,7 +24,7 @@ pub use layer::{
 pub use mesh::{Aabb, Mesh};
 pub use model::{
     AlphaMode, ChannelValues, DEFAULT_MATERIAL, FLAT_NORMAL, Hit, Ids, MeshObject, Model,
-    ModelBuilder, Part, TextureSet,
+    ModelBuilder, NormalFormat, Part, TextureSet,
 };
 pub use stroke::{
     Dab, DabSpacer, LazyMouse, PaintLayer, Stroke, StrokeCamera, StrokePath, StrokeSpace,

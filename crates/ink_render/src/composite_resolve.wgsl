@@ -13,6 +13,8 @@ struct Resolve {
 @group(0) @binding(0) var<uniform> resolve: Resolve;
 // The finished channels in Channel::ALL order: premultiplied, normals straight.
 @group(0) @binding(1) var channels: texture_2d_array<f32>;
+// For every texel, the nearest texel inside a UV island (paint_seeds.wgsl).
+@group(0) @binding(2) var seeds: texture_2d<u32>;
 
 const BASE_COLOR: i32 = 0;
 const HEIGHT: i32 = 1;
@@ -64,24 +66,28 @@ fn reoriented(base: vec3<f32>, over: vec3<f32>) -> vec3<f32> {
     return normalize(b * dot(b, o) - o * b.z);
 }
 
-@fragment
-fn fs_resolve(@builtin(position) frag: vec4<f32>) -> Outputs {
-    let local = vec2<i32>(frag.xy) - resolve.area.xy;
-    var out: Outputs;
+// A texel's channels with the defaults filled in, as the viewport and the export see them.
+struct Texel {
+    base: vec4<f32>,     // linear base color and opacity
+    normal: vec3<f32>,   // unit tangent-space normal, OpenGL style, with the height's detail
+    height: f32,
+    surface: vec2<f32>,  // roughness, metallic
+    emissive: vec3<f32>, // linear
+}
 
+fn resolved(local: vec2<i32>) -> Texel {
+    var t: Texel;
     let base = channel(local, BASE_COLOR);
     let opacity = scalar(local, OPACITY, resolve.surface.z);
-    out.base = vec4<f32>(
+    t.base = vec4<f32>(
         clamp(base.rgb + resolve.base_color.rgb * (1.0 - base.w), vec3<f32>(0.0), vec3<f32>(1.0)),
         clamp(opacity, 0.0, 1.0),
     );
-    out.surface = vec4<f32>(
+    t.surface = vec2<f32>(
         clamp(scalar(local, ROUGHNESS, resolve.surface.x), 0.0, 1.0),
         clamp(scalar(local, METALLIC, resolve.surface.y), 0.0, 1.0),
-        1.0,
-        1.0,
     );
-    out.emissive = vec4<f32>(clamp(channel(local, EMISSIVE).rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    t.emissive = clamp(channel(local, EMISSIVE).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
 
     // Painter's normalFromHeight, Smooth (Sobel), one texel apart. Texel rows go down the
     // image while the tangent space's y goes up: "top" is the row above.
@@ -108,6 +114,52 @@ fn fs_resolve(@builtin(position) frag: vec4<f32>) -> Outputs {
         c.z = max(c.z, 1e-3);
         n = reoriented(from_height, fade_normal(normalize(c), painted.w));
     }
-    out.normal = vec4<f32>(n * 0.5 + 0.5, clamp(height(local) * 0.5 + 0.5, 0.0, 1.0));
+    t.normal = n;
+    t.height = height(local);
+    return t;
+}
+
+@fragment
+fn fs_resolve(@builtin(position) frag: vec4<f32>) -> Outputs {
+    let t = resolved(vec2<i32>(frag.xy) - resolve.area.xy);
+    var out: Outputs;
+    out.base = t.base;
+    out.surface = vec4<f32>(t.surface, 1.0, 1.0);
+    out.emissive = vec4<f32>(t.emissive, 1.0);
+    out.normal = vec4<f32>(t.normal * 0.5 + 0.5, clamp(t.height * 0.5 + 0.5, 0.0, 1.0));
+    return out;
+}
+
+// The export reads these back; must match `export_texel` in compositor.rs.
+struct ExportOutputs {
+    @location(0) base: vec4<f32>,     // linear base color, opacity
+    @location(1) normal: vec4<f32>,   // unit normal, height
+    @location(2) surface: vec4<f32>,  // roughness, metallic, distance to the nearest island texel
+    @location(3) emissive: vec4<f32>,
+}
+
+// The compositor's APRON: the chunk's texel (0, 0) in the channels.
+const APRON: i32 = 1;
+const NO_SEED: u32 = 0xffffffffu;
+// Largest 16-bit float.
+const FAR: f32 = 65504.0;
+
+// Renders a chunk at the export targets' origin.
+@fragment
+fn fs_export(@builtin(position) frag: vec4<f32>) -> ExportOutputs {
+    let local = vec2<i32>(frag.xy) + vec2<i32>(APRON);
+    let t = resolved(local);
+    let texel = local + resolve.area.xy;
+    let seed = textureLoad(seeds, texel, 0).r;
+    var distance = FAR;
+    if seed != NO_SEED {
+        let nearest = vec2<i32>(i32(seed & 0xffffu), i32(seed >> 16u));
+        distance = min(length(vec2<f32>(nearest - texel)), FAR);
+    }
+    var out: ExportOutputs;
+    out.base = t.base;
+    out.normal = vec4<f32>(t.normal, t.height);
+    out.surface = vec4<f32>(t.surface, distance, 0.0);
+    out.emissive = vec4<f32>(t.emissive, 0.0);
     return out;
 }

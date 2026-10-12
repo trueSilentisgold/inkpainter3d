@@ -28,6 +28,28 @@ pub enum AlphaMode {
     Blend,
 }
 
+/// How normal maps encode the tangent space's y axis: OpenGL (y up, as Blender, Unity and
+/// Godot expect) or DirectX (y down). The project's setting, as in Painter: it decides the
+/// normal map of the document channels export (and later of baked normal maps). The layer
+/// stack is independent of it: normal maps in fills say their own format, and inside the
+/// program normals are always OpenGL-style.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum NormalFormat {
+    OpenGl,
+    /// Painter's default for new projects.
+    #[default]
+    DirectX,
+}
+
+impl NormalFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenGl => "OpenGL",
+            Self::DirectX => "DirectX",
+        }
+    }
+}
+
 /// Uniform channel values. Colors are sRGB; the normal is encoded like a normal map texel.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChannelValues {
@@ -134,9 +156,19 @@ pub struct Ids {
 }
 
 impl Ids {
+    /// Continues after `last`, e.g. for a model loaded from a project file.
+    pub fn after(last: u64) -> Self {
+        Self { last }
+    }
+
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> u64 {
         self.last += 1;
+        self.last
+    }
+
+    /// The id handed out last; 0 if none.
+    pub fn last(&self) -> u64 {
         self.last
     }
 }
@@ -169,6 +201,7 @@ pub struct Model {
     /// Built from `mesh`; rebuild it with [`Self::rebuild_bvh`] after changing the geometry.
     bvh: Bvh,
     pub ids: Ids,
+    pub normal_format: NormalFormat,
 }
 
 /// Result of [`Model::pick`].
@@ -200,6 +233,29 @@ impl Model {
             builder.triangle(object, set, tri.map(|i| i + base));
         }
         builder.build(name)
+    }
+
+    /// A model from parts that already fit together, e.g. read from a project file: `parts`
+    /// must be contiguous index ranges in order, grouped by texture set, and refer to
+    /// existing objects and texture sets.
+    pub fn from_parts(
+        name: String,
+        mesh: Mesh,
+        objects: Vec<MeshObject>,
+        texture_sets: Vec<TextureSet>,
+        parts: Vec<Part>,
+        ids: Ids,
+    ) -> Self {
+        Self {
+            name,
+            bvh: Bvh::new(&mesh),
+            mesh,
+            objects,
+            texture_sets,
+            parts,
+            ids,
+            normal_format: NormalFormat::default(),
+        }
     }
 
     pub fn bounds(&self) -> Aabb {
@@ -463,6 +519,7 @@ impl ModelBuilder {
                 .collect(),
             texture_sets,
             parts,
+            normal_format: NormalFormat::default(),
         }
     }
 }

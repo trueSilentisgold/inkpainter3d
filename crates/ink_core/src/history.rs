@@ -121,20 +121,36 @@ impl Command {
 
 #[derive(Clone, Debug, Default)]
 pub struct History {
-    done: Vec<Command>,
-    undone: Vec<Command>,
+    /// With the serial number each command got when it was recorded.
+    done: Vec<(u64, Command)>,
+    undone: Vec<(u64, Command)>,
+    /// The last serial number handed out.
+    serial: u64,
+    /// The state before the oldest command still done.
+    base: u64,
 }
 
 impl History {
     /// Records a change that was just made to the model. Clears the redo list.
     pub fn record(&mut self, command: Command) {
-        self.done.push(command);
+        self.serial += 1;
+        self.done.push((self.serial, command));
         self.undone.clear();
     }
 
     pub fn clear(&mut self) {
         self.done.clear();
         self.undone.clear();
+        self.serial += 1;
+        self.base = self.serial;
+    }
+
+    /// Identifies the model's state as far as the history knows it: changes when a command
+    /// is recorded and when one is undone or redone, and comes back when undo or redo
+    /// return to an earlier state. Compare it with the state at saving to tell unsaved
+    /// changes.
+    pub fn state(&self) -> u64 {
+        self.done.last().map_or(self.base, |(serial, _)| *serial)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -147,26 +163,26 @@ impl History {
 
     /// Undoes the last change. Returns its label, or None if there was nothing to undo.
     pub fn undo(&mut self, model: &mut Model) -> Option<String> {
-        let mut command = self.done.pop()?;
+        let (serial, mut command) = self.done.pop()?;
         if !command.undo(model) {
             // The model changed behind the history's back; drop what can't be undone.
             self.clear();
             return None;
         }
         let label = command.label().to_owned();
-        self.undone.push(command);
+        self.undone.push((serial, command));
         Some(label)
     }
 
     /// Redoes the last undone change.
     pub fn redo(&mut self, model: &mut Model) -> Option<String> {
-        let mut command = self.undone.pop()?;
+        let (serial, mut command) = self.undone.pop()?;
         if !command.redo(model) {
             self.clear();
             return None;
         }
         let label = command.label().to_owned();
-        self.done.push(command);
+        self.done.push((serial, command));
         Some(label)
     }
 }
@@ -250,6 +266,32 @@ mod tests {
         while history.undo(&mut model).is_some() {}
         assert!(ids(&model).is_empty());
         assert!(history.can_redo() && !history.can_undo());
+    }
+
+    #[test]
+    fn states_tell_unsaved_changes() {
+        let mut model = Model::from_mesh(Mesh::cube(1.0));
+        let mut history = History::default();
+        let empty = history.state();
+        add(&mut model, &mut history);
+        let saved = history.state();
+        assert_ne!(saved, empty);
+        add(&mut model, &mut history);
+        assert_ne!(history.state(), saved);
+        history.undo(&mut model);
+        assert_eq!(history.state(), saved, "undo returns to the saved state");
+        history.undo(&mut model);
+        assert_eq!(history.state(), empty);
+        history.redo(&mut model);
+        assert_eq!(history.state(), saved);
+        // A different change after undo is a different state.
+        history.undo(&mut model);
+        add(&mut model, &mut history);
+        assert_ne!(history.state(), saved);
+        assert_ne!(history.state(), empty);
+        // So is clearing the history.
+        history.clear();
+        assert_ne!(history.state(), empty);
     }
 
     #[test]

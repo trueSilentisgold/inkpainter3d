@@ -10,6 +10,9 @@ use ink_core::{
 };
 use std::sync::Arc;
 
+/// Largest projection scale and offset: typed values like "inf" stay finite.
+const PROJECTION_RANGE: f32 = 1000.0;
+
 /// What in a layer is selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -1573,6 +1576,7 @@ fn projection_ui(ui: &mut egui::Ui, projection: &mut Projection) {
                     .add(
                         egui::DragValue::new(&mut projection.scale[0])
                             .speed(speed)
+                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
                             .max_decimals(3),
                     )
                     .changed();
@@ -1587,6 +1591,7 @@ fn projection_ui(ui: &mut egui::Ui, projection: &mut Projection) {
                     ui.add(
                         egui::DragValue::new(&mut projection.scale[1])
                             .speed(speed)
+                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
                             .max_decimals(3),
                     );
                 }
@@ -1611,11 +1616,13 @@ fn projection_ui(ui: &mut egui::Ui, projection: &mut Projection) {
                     ui.add(
                         egui::DragValue::new(&mut projection.offset[0])
                             .speed(0.005)
+                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
                             .max_decimals(3),
                     );
                     ui.add(
                         egui::DragValue::new(&mut projection.offset[1])
                             .speed(0.005)
+                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
                             .max_decimals(3),
                     );
                 });

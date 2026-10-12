@@ -17,6 +17,7 @@ use crate::region::{Region, TexelRect};
 use crate::viewport::{CHANNEL_FORMATS, GpuMesh, srgb_to_linear};
 use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
+use ink_core::export::{ExportBlock, ExportTexel};
 use ink_core::{
     BlendMode, Channel, ChannelKind, Content, EffectKind, Layer, LayerStack, Mask, Model,
     Projection, ProjectionMode, Texels, TextureImage,
@@ -33,6 +34,9 @@ const TEMP: u32 = CHUNK + 2 * APRON;
 const ACC_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+/// What the export reads back: four of these per texel (composite_resolve.wgsl, fs_export).
+const EXPORT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const EXPORT_TARGETS: usize = 4;
 const GEOMETRY_FORMATS: [wgpu::TextureFormat; 3] = [
     wgpu::TextureFormat::Rgba32Float,
     wgpu::TextureFormat::Rgba16Float,
@@ -558,6 +562,176 @@ struct Temps {
     geometry: [wgpu::Texture; 3],
 }
 
+/// Where [`Compositor::run`] puts the composited chunks.
+enum Target<'a> {
+    /// The texture set's channel textures.
+    Channels(&'a [wgpu::Texture]),
+    /// Read back for the export.
+    Export(&'a Readback, &'a mut dyn FnMut(ExportBlock)),
+}
+
+/// Targets a chunk is exported to and the buffer it is read back through.
+struct Readback {
+    targets: Vec<wgpu::Texture>,
+    views: Vec<wgpu::TextureView>,
+    buffer: wgpu::Buffer,
+    /// Why a chunk could not be read back.
+    error: std::cell::RefCell<Option<String>>,
+}
+
+impl Readback {
+    /// Bytes per row of a target in the buffer, aligned for the copy.
+    const ROW: u32 = (CHUNK * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    const PLANE: u64 = Self::ROW as u64 * CHUNK as u64;
+
+    fn new(device: &wgpu::Device) -> Self {
+        let targets: Vec<wgpu::Texture> = (0..EXPORT_TARGETS)
+            .map(|_| {
+                device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("export target"),
+                    size: wgpu::Extent3d {
+                        width: CHUNK,
+                        height: CHUNK,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: EXPORT_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                })
+            })
+            .collect();
+        Self {
+            views: targets
+                .iter()
+                .map(|t| t.create_view(&Default::default()))
+                .collect(),
+            targets,
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("export readback"),
+                size: Self::PLANE * EXPORT_TARGETS as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }),
+            error: Default::default(),
+        }
+    }
+
+    /// Resolves a `w` × `h` chunk into the targets and copies it to the buffer.
+    fn resolve(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::RenderPipeline,
+        group: &wgpu::BindGroup,
+        w: u32,
+        h: u32,
+    ) {
+        {
+            let attachments: Vec<_> = self
+                .views
+                .iter()
+                .map(|view| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                })
+                .collect();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("composite export"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_scissor_rect(0, 0, w, h);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        for (i, target) in self.targets.iter().enumerate() {
+            encoder.copy_texture_to_buffer(
+                target.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &self.buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: i as u64 * Self::PLANE,
+                        bytes_per_row: Some(Self::ROW),
+                        rows_per_image: Some(CHUNK),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
+    /// Waits for the copy and reads the texels of `rect`.
+    fn read(&self, device: &wgpu::Device, rect: TexelRect) -> Result<ExportBlock, String> {
+        let width = rect.max[0] - rect.min[0];
+        let height = rect.max[1] - rect.min[1];
+        let slice = self.buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| e.to_string())?;
+        let mut texels = Vec::with_capacity((width * height) as usize);
+        {
+            let data = slice.get_mapped_range().map_err(|e| e.to_string())?;
+            let value = |plane: usize, x: u32, y: u32| -> [f32; 4] {
+                let offset = plane * Self::PLANE as usize + (y * Self::ROW + x * 8) as usize;
+                std::array::from_fn(|c| {
+                    let bytes = [data[offset + 2 * c], data[offset + 2 * c + 1]];
+                    half::f16::from_le_bytes(bytes).to_f32()
+                })
+            };
+            for y in 0..height {
+                for x in 0..width {
+                    texels.push(export_texel([
+                        value(0, x, y),
+                        value(1, x, y),
+                        value(2, x, y),
+                        value(3, x, y),
+                    ]));
+                }
+            }
+        }
+        self.buffer.unmap();
+        Ok(ExportBlock {
+            x: rect.min[0],
+            y: rect.min[1],
+            width,
+            height,
+            texels,
+        })
+    }
+}
+
+/// A texel from the export targets; must match `ExportOutputs` in composite_resolve.wgsl.
+fn export_texel([base, normal, surface, emissive]: [[f32; 4]; EXPORT_TARGETS]) -> ExportTexel {
+    ExportTexel {
+        base_color: [base[0], base[1], base[2]],
+        opacity: base[3],
+        height: normal[3],
+        roughness: surface[0],
+        metallic: surface[1],
+        normal: [normal[0], normal[1], normal[2]],
+        emissive: [emissive[0], emissive[1], emissive[2]],
+        island_distance: surface[2],
+    }
+}
+
 pub(crate) struct Compositor {
     static_layout: wgpu::BindGroupLayout,
     pass_layout: wgpu::BindGroupLayout,
@@ -568,6 +742,7 @@ pub(crate) struct Compositor {
     mip_layout: wgpu::BindGroupLayout,
     pipes: HashMap<PipeKey, wgpu::RenderPipeline>,
     resolve: wgpu::RenderPipeline,
+    export: wgpu::RenderPipeline,
     geometry: wgpu::RenderPipeline,
     triangles: wgpu::RenderPipeline,
     seed_init: wgpu::RenderPipeline,
@@ -583,6 +758,8 @@ pub(crate) struct Compositor {
     images: HashMap<(u64, bool), wgpu::TextureView>,
     /// Per texture set, the images its last composite used.
     set_images: Vec<HashSet<(u64, bool)>>,
+    /// The export's targets, while an export runs.
+    readback: Option<Readback>,
     dummy_acc: wgpu::TextureView,
     dummy_mask: wgpu::TextureView,
     dummy_tiles: wgpu::TextureView,
@@ -710,6 +887,7 @@ impl Compositor {
             &[
                 buffer(0, uniform, false, fragment),
                 texture(1, float, wgpu::TextureViewDimension::D2Array, fragment),
+                texture(2, uint, d2, fragment),
             ],
         );
         let geometry_layout = layout(
@@ -825,6 +1003,15 @@ impl Compositor {
             &[],
             &CHANNEL_FORMATS,
         );
+        let export = pipeline(
+            "composite export",
+            &[&resolve_layout],
+            &resolve_shader,
+            "vs_fullscreen",
+            "fs_export",
+            &[],
+            &[EXPORT_FORMAT; EXPORT_TARGETS],
+        );
         let geometry = pipeline(
             "composite geometry",
             &[&geometry_layout],
@@ -925,6 +1112,7 @@ impl Compositor {
         Self {
             pipes,
             resolve,
+            export,
             geometry,
             triangles,
             seed_init,
@@ -950,6 +1138,7 @@ impl Compositor {
             temps: None,
             images: HashMap::new(),
             set_images: Vec::new(),
+            readback: None,
             dummy_acc: small("dummy", ACC_FORMAT, 1, d2),
             dummy_mask: small("dummy mask", MASK_FORMAT, 1, d2),
             dummy_tiles: small(
@@ -1083,7 +1272,7 @@ impl Compositor {
             mesh_buffers,
             paint,
             state,
-            outputs,
+            &mut Target::Channels(outputs),
             &program,
             &rects,
         );
@@ -1092,6 +1281,79 @@ impl Compositor {
             mips.add(*rect);
         }
         self.build_mips(device, queue, outputs, &mips, size);
+    }
+
+    /// The number of chunks [`Self::export`] hands over for a texture set.
+    pub fn export_chunks(state: &GpuComposite) -> usize {
+        state.pending.len()
+    }
+
+    /// Composites chunks of a texture set for the export (indices from 0 to
+    /// [`Self::export_chunks`], row by row) and hands over each chunk's texels. The channel
+    /// textures stay as they are. Fails if the GPU could not hand the texels back.
+    #[allow(clippy::too_many_arguments)]
+    pub fn export(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        mesh: &GpuMesh,
+        mesh_buffers: (&wgpu::Buffer, &wgpu::Buffer),
+        paint: &PaintCaches,
+        set: usize,
+        state: &mut GpuComposite,
+        chunks: std::ops::Range<usize>,
+        sink: &mut dyn FnMut(ExportBlock),
+    ) -> Result<(), String> {
+        let size = state.resolution;
+        let program = Builder {
+            paint,
+            resolution: size,
+            program: Program::default(),
+            current: Vec::new(),
+            mask_slots: HashMap::new(),
+            save_level: 0,
+        }
+        .build(&model.texture_sets[set].stack);
+        if program.triplanar && state.triangles.is_none() {
+            state.triangles =
+                Some(self.compute_triangles(device, queue, model, mesh, mesh_buffers, set, size));
+        }
+        self.ensure_temps(device, &program);
+        self.upload_images(device, queue, model.texture_sets.len(), set, &program);
+        let rects: Vec<TexelRect> = chunks
+            .filter(|&i| i < state.pending.len())
+            .map(|i| state.chunk_rect(i))
+            .collect();
+        // Kept for the next chunks.
+        let readback = self
+            .readback
+            .take()
+            .unwrap_or_else(|| Readback::new(device));
+        self.run(
+            device,
+            queue,
+            model,
+            mesh_buffers,
+            paint,
+            state,
+            &mut Target::Export(&readback, sink),
+            &program,
+            &rects,
+        );
+        let error = readback.error.take();
+        self.readback = Some(readback);
+        match error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
+    /// Forgets the uploaded fill images, e.g. when the model is replaced.
+    pub fn forget_images(&mut self) {
+        self.images.clear();
+        self.set_images.clear();
+        self.readback = None;
     }
 
     fn ensure_temps(&mut self, device: &wgpu::Device, program: &Program) {
@@ -1174,6 +1436,7 @@ impl Compositor {
 
     /// Composites the chunks.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
         device: &wgpu::Device,
@@ -1182,7 +1445,7 @@ impl Compositor {
         mesh_buffers: (&wgpu::Buffer, &wgpu::Buffer),
         paint: &PaintCaches,
         state: &GpuComposite,
-        outputs: &[wgpu::Texture],
+        target: &mut Target,
         program: &Program,
         rects: &[TexelRect],
     ) {
@@ -1336,6 +1599,10 @@ impl Compositor {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&temps.results_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&state.seeds),
+                },
             ],
         });
         let geometry_group = match (&state.triangles, program.triplanar) {
@@ -1367,16 +1634,19 @@ impl Compositor {
             })),
             _ => None,
         };
-        let output_views: Vec<wgpu::TextureView> = outputs
-            .iter()
-            .map(|t| {
-                t.create_view(&wgpu::TextureViewDescriptor {
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    ..Default::default()
+        let output_views: Vec<wgpu::TextureView> = match target {
+            Target::Channels(outputs) => outputs
+                .iter()
+                .map(|t| {
+                    t.create_view(&wgpu::TextureViewDescriptor {
+                        base_mip_level: 0,
+                        mip_level_count: Some(1),
+                        ..Default::default()
+                    })
                 })
-            })
-            .collect();
+                .collect(),
+            Target::Export(..) => Vec::new(),
+        };
         // Tri-planar projections work in the model's bounds, so a scale of 1 covers the
         // model once along its largest side, as in Painter.
         let bounds = model.bounds();
@@ -1503,31 +1773,49 @@ impl Compositor {
                     }
                 }
             }
-            {
-                let attachments = output_views.iter().map(|view| {
-                    Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })
-                });
-                let attachments: Vec<_> = attachments.collect();
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("composite resolve"),
-                    color_attachments: &attachments,
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                rect.scissor(&mut pass);
-                pass.set_pipeline(&self.resolve);
-                pass.set_bind_group(0, &resolve_group, &[]);
-                pass.draw(0..3, 0..1);
+            match target {
+                Target::Export(readback, sink) => {
+                    let w = rect.max[0] - rect.min[0];
+                    let h = rect.max[1] - rect.min[1];
+                    readback.resolve(&mut encoder, &self.export, &resolve_group, w, h);
+                    queue.submit([encoder.finish()]);
+                    match readback.read(device, *rect) {
+                        Ok(block) => sink(block),
+                        Err(err) => {
+                            *readback.error.borrow_mut() = Some(err);
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                Target::Channels(_) => {
+                    let attachments: Vec<_> = output_views
+                        .iter()
+                        .map(|view| {
+                            Some(wgpu::RenderPassColorAttachment {
+                                view,
+                                depth_slice: None,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })
+                        })
+                        .collect();
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("composite resolve"),
+                        color_attachments: &attachments,
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    rect.scissor(&mut pass);
+                    pass.set_pipeline(&self.resolve);
+                    pass.set_bind_group(0, &resolve_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
             }
             queue.submit([encoder.finish()]);
         }
