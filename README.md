@@ -6,7 +6,7 @@ inkpainter3d lets you paint directly onto 3D models with a layer-based, non-dest
 and export the result as texture maps for game engines and renderers. It runs natively on
 **Windows and Linux** and will always be **free**.
 
-> **Status:** early development. Phases 1 to 4 (viewport, texture sets, HDRI lighting, brush engine, layer stack) are done; project files and export are next.
+> **Status:** early development. Phases 1 to 5 (viewport, texture sets, HDRI lighting, brush engine, layer stack, project files and export) are done: a game asset can be textured and exported end to end. Baking is next.
 
 ---
 
@@ -80,6 +80,24 @@ inkpainter3d aims to be a capable alternative that:
     scale, rotation, offset and hardness; height becomes normal detail
   - add, delete, duplicate, group, copy, cut, paste and rename layers, reorder them by drag
     and drop, show and hide them; every edit can be undone
+- **Projects** (`.ink3d`) like Painter's: new project from a mesh with resolution and normal
+  map format, open, recent files, close, save, save as, save as copy
+  - one file with the mesh, layers, strokes, images and brush alphas; it opens without the
+    original files, and strokes stay editable data
+  - asks before unsaved changes are lost; the title shows a star for them
+  - autosave: a backup every 10 minutes while there are unsaved changes, next to the
+    project (the last 3 are kept)
+  - the format is open and documented: [docs/project-format.md](docs/project-format.md)
+- **Export textures** (Ctrl+Shift+E) like Painter's export window
+  - output templates for **Blender** (Principled BSDF), **Unity** (HDRP, URP and
+    Built-in), **Godot** (ORM), **glTF** PBR Metal Roughness, **Unreal Engine** (packed),
+    PBR Metallic Roughness and the document channels
+  - PNG (8 / 16 bit), TGA, JPEG, TIFF (8 / 16 bit), OpenEXR (16 / 32 bit float); 8 bit with
+    dithering against banding
+  - padding: infinite dilation, dilation by a distance with a transparent or the default
+    background, or none
+  - choose the texture sets, see every file before it is written, follow the export in the
+    list of exports
 
 ### Planned
 See the [roadmap](#roadmap).
@@ -96,8 +114,8 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 2 | **Foundation** — texture sets and meshes from import, texture set list with visibility per set and per mesh, material ID view, tangents, channel textures (incl. emissive and opacity), HDRI lighting, Painter-style navigation | ✅ done |
 | 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | ✅ done |
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
-| 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ⏳ next |
-| 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
+| 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
+| 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ⏳ next |
 | 7 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
 | 8 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
 | 9 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
@@ -110,7 +128,8 @@ Visual Studio C++ Build Tools.
 
 ```sh
 cargo run --release                     # opens with a default sphere
-cargo run --release -- model.fbx        # opens a model directly
+cargo run --release -- model.fbx        # starts a project from a model
+cargo run --release -- project.ink3d    # opens a project
 ```
 
 On Linux you need the usual windowing development packages, e.g. on Debian/Ubuntu:
@@ -119,14 +138,16 @@ On Linux you need the usual windowing development packages, e.g. on Debian/Ubunt
 sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev
 ```
 
-Models can also be opened via **File → Open model…** or dropped onto the window; HDR panoramas
-via **File → Load environment…** or the same way.
+Projects start from a model with **File → New…**, or by dropping the model onto the window;
+projects open via **File → Open…** or the same way. HDR panoramas load via
+**File → Load environment…** or by dropping them, too.
 
 To check rendering without a window, e.g. on a server, render a snapshot to PNG:
 
 ```sh
 cargo run --release -p ink_render --example snapshot -- model.fbx out.png display=materialid
 cargo run --release -p ink_render --example snapshot -- sphere out.png paint erase   # test strokes
+cargo run --release -p ink_render --example snapshot -- project.ink3d out.png export=unity_hdrp_metallic
 ```
 
 ## Controls
@@ -135,6 +156,8 @@ The same as in Substance 3D Painter.
 
 | Action | Input |
 |---|---|
+| New / open / save / close project | Ctrl + N / Ctrl + O / Ctrl + S / Ctrl + F4 |
+| Export textures | Ctrl + Shift + E |
 | Paint / Eraser | 1 / 2, then left mouse |
 | Straight line from the last stroke | Shift + click (Ctrl + Shift snaps to 15°) |
 | Brush size | [ and ], or Ctrl + right mouse drag sideways |
@@ -178,8 +201,8 @@ Written in Rust on top of [wgpu](https://wgpu.rs) (Vulkan / DirectX 12 / Metal) 
 
 | Crate | Purpose |
 |---|---|
-| `ink_core` | Data model: meshes, objects and texture sets, picking (BVH), brushes, strokes and undo; later the layer stack, masks and vector paths |
-| `ink_io` | Model import (ufbx, gltf, tobj), HDR environments, brush alphas; later texture export |
+| `ink_core` | Data model: meshes, objects and texture sets, picking (BVH), brushes, strokes, the layer stack with masks and effects, undo, export templates; later vector paths |
+| `ink_io` | Model import (ufbx, gltf, tobj), HDR environments, brush alphas and fill images, project files, texture export |
 | `ink_render` | wgpu renderer: 3D viewport with image based lighting, 2D view, stroke rasterization and compositing, WGSL shaders |
 | `ink_app` | Application window and UI (eframe / egui), pen tablet input |
 
