@@ -34,6 +34,8 @@ pub(super) struct ExportWindow {
     preview: usize,
     tab: Tab,
     job: Option<ExportJob>,
+    /// The folder of the last export.
+    directory: Option<PathBuf>,
     /// Files written, or why not.
     log: Vec<(String, Result<(), String>)>,
 }
@@ -68,6 +70,7 @@ impl InkApp {
             preview: self.selected_set.min(self.model.texture_sets.len() - 1),
             tab: Tab::Settings,
             job: None,
+            directory: None,
             log: Vec::new(),
         });
     }
@@ -336,6 +339,7 @@ impl InkApp {
         let directory = PathBuf::from(window.settings.directory.trim());
         window.log.clear();
         window.tab = Tab::Exports;
+        window.directory = Some(directory.clone());
         if let Err(err) = std::fs::create_dir_all(&directory) {
             window.log.push((
                 directory.display().to_string(),
@@ -436,7 +440,10 @@ impl InkApp {
                 .map(|(path, image)| MapFile { path, image })
                 .collect();
             ink_io::export::write_maps(files, settings.format, settings.bit_depth, |path, r| {
-                let _ = results.send((path.display().to_string(), r.map_err(|e| format!("{e:#}"))));
+                let name = path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                let _ = results.send((name, r.map_err(|e| format!("{e:#}"))));
             });
         });
         let name = self.model.texture_sets[set].name.clone();
@@ -463,6 +470,9 @@ impl InkApp {
 }
 
 fn export_list_tab(ui: &mut egui::Ui, window: &ExportWindow) {
+    if let Some(dir) = &window.directory {
+        ui.label(RichText::new(dir.display().to_string()).small().weak());
+    }
     if let Some(job) = &window.job {
         let progress = job.done as f32 / job.files.max(1) as f32;
         ui.add(

@@ -608,9 +608,17 @@ impl ViewportRenderer {
         );
     }
 
-    /// Uploads the geometry and creates the channel textures of every texture set.
+    /// Uploads the geometry and creates the channel textures of every texture set. A model
+    /// without triangles (no project open) draws nothing.
     pub fn set_model(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, model: &Model) {
         let mesh = &model.mesh;
+        self.sets.clear();
+        self.paint.reset();
+        if mesh.indices.is_empty() {
+            // wgpu can't bind empty buffers.
+            self.mesh = None;
+            return;
+        }
         let vertices: Vec<Vertex> = (0..mesh.vertex_count())
             .map(|i| Vertex {
                 position: mesh.positions[i].into(),
@@ -632,8 +640,6 @@ impl ViewportRenderer {
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::STORAGE,
             }),
         });
-        self.sets.clear();
-        self.paint.reset();
         self.sync_texture_sets(device, queue, model, false);
     }
 

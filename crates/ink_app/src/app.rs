@@ -606,7 +606,8 @@ impl InkApp {
             return;
         }
         let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
-        let pressed = |key| ui.input(|i| i.key_pressed(key));
+        // With Ctrl the keys mean something else: Ctrl+F4 closes the project.
+        let pressed = |key| ui.input(|i| !i.modifiers.command && i.key_pressed(key));
         if pressed(Key::F) {
             self.frame_views();
         }
