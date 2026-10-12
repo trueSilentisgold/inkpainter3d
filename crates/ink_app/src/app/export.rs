@@ -20,6 +20,13 @@ use std::thread::JoinHandle;
 /// Composited blocks waiting to be packed; the GPU waits for the packer beyond this.
 const BLOCKS_IN_FLIGHT: usize = 4;
 
+/// What the packer of a texture set gets.
+enum Packing {
+    Block(ExportBlock),
+    /// Every block was sent: the maps are complete and can be written.
+    Complete,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
     Settings,
@@ -43,6 +50,8 @@ pub(super) struct ExportWindow {
 struct ExportJob {
     directory: PathBuf,
     settings: ExportSettings,
+    /// The files of each texture set to export, by texture set.
+    paths: Vec<Vec<PathBuf>>,
     /// Texture sets still to composite.
     todo: VecDeque<usize>,
     /// Packs and writes the last texture set composited.
@@ -335,6 +344,39 @@ impl InkApp {
             .collect()
     }
 
+    /// The files of the texture sets to export. Names that would come out the same (texture
+    /// sets whose names differ only in characters files can't have, or in case, which
+    /// Windows ignores) get a number, so no set overwrites another's maps.
+    fn export_paths(
+        &self,
+        settings: &ExportSettings,
+        directory: &Path,
+        sets: &[bool],
+    ) -> Vec<Vec<PathBuf>> {
+        let mut taken = std::collections::HashSet::new();
+        let extension = settings.format.extension();
+        (0..sets.len())
+            .map(|set| {
+                if !sets[set] {
+                    return Vec::new();
+                }
+                self.output_files(settings, set)
+                    .into_iter()
+                    .map(|(name, _)| {
+                        let stem = name.strip_suffix(&format!(".{extension}")).unwrap_or(&name);
+                        let mut name = name.clone();
+                        let mut n = 2;
+                        while !taken.insert(name.to_lowercase()) {
+                            name = format!("{stem}_{n}.{extension}");
+                            n += 1;
+                        }
+                        directory.join(name)
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     fn start_export(&mut self, window: &mut ExportWindow) {
         let directory = PathBuf::from(window.settings.directory.trim());
         window.log.clear();
@@ -349,10 +391,12 @@ impl InkApp {
         }
         let todo: VecDeque<usize> = (0..window.sets.len()).filter(|&i| window.sets[i]).collect();
         let files = todo.len() * window.settings.template.maps.len();
+        let paths = self.export_paths(&window.settings, &directory, &window.sets);
         let (sender, results) = mpsc::channel();
         window.job = Some(ExportJob {
             directory,
             settings: window.settings.clone(),
+            paths,
             todo,
             worker: None,
             results,
@@ -415,13 +459,9 @@ impl InkApp {
         let settings = job.settings.clone();
         let template: &'static Template = settings.template;
         let resolution = self.model.texture_sets[set].resolution;
-        let paths: Vec<PathBuf> = self
-            .output_files(&settings, set)
-            .into_iter()
-            .map(|(name, _)| job.directory.join(name))
-            .collect();
+        let paths = std::mem::take(&mut job.paths[set]);
         let normal_format: NormalFormat = self.model.normal_format;
-        let (blocks, receiver) = mpsc::sync_channel::<ExportBlock>(BLOCKS_IN_FLIGHT);
+        let (blocks, receiver) = mpsc::sync_channel::<Packing>(BLOCKS_IN_FLIGHT);
         let results = job.sender.clone();
         let worker = std::thread::spawn(move || {
             let mut maps: Vec<MapImage> = template
@@ -429,10 +469,20 @@ impl InkApp {
                 .iter()
                 .map(|m| MapImage::new(resolution, settings.components(m), settings.bit_depth))
                 .collect();
-            for block in receiver {
-                for (image, map) in maps.iter_mut().zip(template.maps) {
-                    image.pack(&block, map, &settings, normal_format);
+            let mut complete = false;
+            for message in receiver {
+                match message {
+                    Packing::Block(block) => {
+                        for (image, map) in maps.iter_mut().zip(template.maps) {
+                            image.pack(&block, map, &settings, normal_format);
+                        }
+                    }
+                    Packing::Complete => complete = true,
                 }
+            }
+            // A texture set the GPU could not hand over completely writes nothing.
+            if !complete {
+                return;
             }
             let files = paths
                 .into_iter()
@@ -454,18 +504,22 @@ impl InkApp {
             set,
             &mut |block| {
                 // The packer only stops early if it panicked; the join reports it.
-                let _ = blocks.send(block);
+                let _ = blocks.send(Packing::Block(block));
             },
         );
-        drop(blocks);
-        if let Err(err) = result {
-            log::error!("Export of {name} failed: {err}");
-            let _ = job.sender.send((name, Err(err)));
-            // The packer got fewer blocks: don't write half maps.
-            let _ = worker.join();
-            return None;
+        match result {
+            Ok(()) => {
+                let _ = blocks.send(Packing::Complete);
+                Some(worker)
+            }
+            Err(err) => {
+                log::error!("Export of {name} failed: {err}");
+                let _ = job.sender.send((name, Err(err)));
+                drop(blocks);
+                let _ = worker.join();
+                None
+            }
         }
-        Some(worker)
     }
 }
 

@@ -40,22 +40,28 @@ pub fn write_maps(
     });
 }
 
-/// Writes one map. A file that could not be written completely is removed.
+/// Writes one map. The file is replaced only once the new one is complete, so a failed
+/// write leaves the old file (or none) and never half a file.
 pub fn write_map(
     path: &Path,
     image: &MapImage,
     format: FileFormat,
     bit_depth: BitDepth,
 ) -> Result<()> {
+    let mut temp_name = path.file_name().unwrap_or_default().to_owned();
+    temp_name.push(".part");
+    let temp = path.with_file_name(temp_name);
     let result = (|| -> Result<()> {
-        let file = std::fs::File::create(path)?;
+        let file = std::fs::File::create(&temp)?;
         let mut writer = BufWriter::new(file);
         encode(&mut writer, image, format, bit_depth)?;
         writer.flush()?;
+        drop(writer);
+        std::fs::rename(&temp, path)?;
         Ok(())
     })();
     if result.is_err() {
-        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(&temp);
     }
     result.with_context(|| format!("Failed to write {}", path.display()))
 }
@@ -290,7 +296,15 @@ mod tests {
         assert_eq!(written.into_inner().unwrap().len(), 5);
         let back = image::open(dir.join("map3.png")).unwrap().into_luma8();
         assert_eq!(back.as_raw(), &[3, 3]);
-        // A failed write leaves no file behind.
+        // A failed write leaves the old file as it was.
+        let readonly = dir.join("map3.png");
+        let invalid = image(1, MapPixels::U16(vec![1, 2]));
+        assert!(write_map(&readonly, &invalid, FileFormat::Jpeg, BitDepth::Sixteen).is_err());
+        assert_eq!(
+            image::open(&readonly).unwrap().into_luma8().as_raw(),
+            &[3, 3]
+        );
+        assert!(!dir.join("map3.png.part").exists());
         let missing = dir.join("missing").join("map.png");
         assert!(
             write_map(
