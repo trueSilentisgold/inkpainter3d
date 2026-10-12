@@ -92,6 +92,8 @@ pub(super) struct ProjectState {
     opening: Option<Opening>,
     /// Waiting for the answer to "save the changes?".
     leave: Option<Leave>,
+    /// To do once the frame can: what followed a save that another one waited for.
+    after_save: Option<Leave>,
     /// The window may close: the question was answered.
     quit: bool,
     new_dialog: Option<NewProject>,
@@ -115,6 +117,7 @@ impl Default for ProjectState {
             saving: None,
             opening: None,
             leave: None,
+            after_save: None,
             quit: false,
             new_dialog: None,
             configuration: None,
@@ -389,22 +392,27 @@ impl InkApp {
         });
     }
 
-    /// Blocks until the save in progress is done.
+    /// Blocks until the save in progress is done. What was to follow it waits for the
+    /// next frame.
     fn wait_for_save(&mut self) {
-        if let Some(saving) = self.project.saving.take() {
-            let result = saving.job.join();
-            self.save_finished(saving.path, saving.kind, saving.state, result, None);
+        if let Some(saving) = self.project.saving.take()
+            && let Some(then) = self.save_finished(saving)
+        {
+            self.project.after_save = Some(then);
         }
     }
 
-    fn save_finished(
-        &mut self,
-        path: PathBuf,
-        kind: SaveKind,
-        state: (u64, u64),
-        result: std::thread::Result<(anyhow::Result<()>, ImageCache)>,
-        rs: Option<(&RenderState, Option<Leave>)>,
-    ) {
+    /// Waits for a save and takes its result. Returns what was to follow it, if it went
+    /// well.
+    fn save_finished(&mut self, saving: Saving) -> Option<Leave> {
+        let Saving {
+            path,
+            kind,
+            state,
+            then,
+            job,
+        } = saving;
+        let result = job.join();
         let result = match result {
             Ok((result, images)) => {
                 self.project.images = images;
@@ -421,9 +429,7 @@ impl InkApp {
                     self.project.last_backup = Instant::now();
                     self.project.add_recent(&path);
                     self.status = format!("Saved {}", path.display());
-                    if let Some((rs, Some(then))) = rs {
-                        self.do_leave(rs, then);
-                    }
+                    return then;
                 }
                 SaveKind::Copy => self.status = format!("Saved a copy as {}", path.display()),
                 SaveKind::Autosave => {
@@ -437,6 +443,7 @@ impl InkApp {
                 self.status = format!("Error: {err:#}");
             }
         }
+        None
     }
 
     /// Picks up finished saves and opened projects, and backs the project up when it is
@@ -448,15 +455,12 @@ impl InkApp {
             .as_ref()
             .is_some_and(|s| s.job.is_finished())
             && let Some(saving) = self.project.saving.take()
+            && let Some(then) = self.save_finished(saving)
         {
-            let result = saving.job.join();
-            self.save_finished(
-                saving.path,
-                saving.kind,
-                saving.state,
-                result,
-                Some((rs, saving.then)),
-            );
+            self.do_leave(rs, then);
+        }
+        if let Some(then) = self.project.after_save.take() {
+            self.do_leave(rs, then);
         }
         if self
             .project
@@ -556,11 +560,13 @@ impl InkApp {
         s.outline = view.outline;
         s.outline_color = view.outline_color;
         s.outline_width = view.outline_width;
-        if let Some(path) = &view.environment
-            && self.environment_path.as_deref() != Some(Path::new(path))
-        {
+        match &view.environment {
             // A panorama that is gone leaves the current one.
-            self.load_environment(rs, Path::new(path));
+            Some(path) if self.environment_path.as_deref() != Some(Path::new(path)) => {
+                self.load_environment(rs, Path::new(path));
+            }
+            None if self.environment_path.is_some() => self.load_default_environment(rs),
+            _ => {}
         }
     }
 
@@ -648,7 +654,12 @@ impl InkApp {
         if command && pressed(Key::O) {
             self.pick_and_open(rs);
         }
-        if command && pressed(Key::S) && !self.model.texture_sets.is_empty() {
+        // Not in the middle of a stroke: it is recorded when it ends.
+        if command
+            && pressed(Key::S)
+            && !self.model.texture_sets.is_empty()
+            && !self.paint.is_busy()
+        {
             self.save_project(None);
         }
         if command && pressed(Key::F4) {

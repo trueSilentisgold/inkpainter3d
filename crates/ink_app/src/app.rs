@@ -203,6 +203,14 @@ impl InkApp {
         }
     }
 
+    fn load_default_environment(&mut self, rs: &RenderState) {
+        let env = ink_io::default_environment();
+        self.renderer
+            .set_environment(&rs.device, &rs.queue, env.width, env.height, &env.pixels);
+        self.environment_name = env.name;
+        self.environment_path = None;
+    }
+
     fn pick_file(name: &str, extensions: &[&str]) -> Option<PathBuf> {
         rfd::FileDialog::new()
             .add_filter(name, extensions)
