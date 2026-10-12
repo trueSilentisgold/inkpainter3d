@@ -145,6 +145,8 @@ impl InkApp {
     }
 
     fn set_model(&mut self, rs: &RenderState, model: Model) {
+        // An export of the old model stops; what it is writing is finished.
+        self.export = None;
         self.renderer.set_model(&rs.device, &rs.queue, &model);
         self.uv_view.set_model(&rs.device, &model);
         self.paint.reset();
@@ -687,7 +689,9 @@ impl eframe::App for InkApp {
                 .filter(|p| !p.as_os_str().is_empty())
                 .collect()
         });
-        if let Some(path) = dropped.first() {
+        // Dialogs and the export window first need an answer.
+        let dialog = self.project.dialog_open() || self.export.is_some();
+        if let Some(path) = dropped.first().filter(|_| !dialog) {
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -708,7 +712,6 @@ impl eframe::App for InkApp {
         self.poll_project_jobs(ui, &rs);
         self.handle_close_request(ui);
         // Dialogs take the keyboard.
-        let dialog = self.project.dialog_open() || self.export.is_some();
         if !dialog {
             self.shortcuts(ui);
             self.paint_shortcuts(ui);

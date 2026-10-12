@@ -1,8 +1,9 @@
 //! The Export textures window (Ctrl+Shift+E), as Painter's: global settings, the texture
 //! sets to export, the files each one gets, and the list of exports.
 //!
-//! The GPU composites one texture set per frame; a thread per texture set packs the texels
-//! into the output maps as they arrive and writes the files.
+//! The GPU composites a few blocks per frame; a thread per texture set packs the texels
+//! into the output maps as they arrive and writes the files, while the next texture set is
+//! composited.
 
 use super::InkApp;
 use eframe::egui::{self, Color32, Key, RichText};
@@ -21,6 +22,8 @@ use std::thread::JoinHandle;
 const BLOCKS_IN_FLIGHT: usize = 4;
 /// Blocks (512² texels) composited per frame, so the window stays responsive.
 const BLOCKS_PER_FRAME: usize = 4;
+/// Texture sets packed or written at once, for the memory their maps take.
+const SETS_IN_FLIGHT: usize = 2;
 
 /// What the packer of a texture set gets.
 enum Packing {
@@ -56,15 +59,38 @@ struct ExportJob {
     paths: Vec<Vec<PathBuf>>,
     /// Texture sets still to composite.
     todo: VecDeque<usize>,
+    /// Texture sets in the export, and those composited (or given up) so far.
+    sets: usize,
+    sets_done: usize,
     /// The texture set being composited.
     current: Option<SetExport>,
-    /// Packs and writes the last texture set composited.
-    worker: Option<JoinHandle<()>>,
+    /// Write the texture sets composited before.
+    writers: Vec<JoinHandle<()>>,
     results: mpsc::Receiver<(String, Result<(), String>)>,
     sender: mpsc::Sender<(String, Result<(), String>)>,
     files: usize,
     done: usize,
     failed: usize,
+}
+
+impl ExportJob {
+    /// Stops compositing; what is being written is finished.
+    fn stop(&mut self) {
+        self.todo.clear();
+        if let Some(current) = self.current.take() {
+            // Without the last message the packer writes nothing.
+            drop(current.packer);
+            self.writers.push(current.worker);
+            let _ = self.sender.send(("Export".into(), Err("Stopped".into())));
+        }
+    }
+
+    /// Waits for everything being written.
+    fn finish(&mut self) {
+        for writer in self.writers.drain(..) {
+            let _ = writer.join();
+        }
+    }
 }
 
 /// A texture set on its way from the GPU to its packer.
@@ -73,6 +99,8 @@ struct SetExport {
     /// The next block to composite, of `blocks`.
     next: usize,
     blocks: usize,
+    /// Its file names, to report a failure.
+    files: Vec<String>,
     packer: mpsc::SyncSender<Packing>,
     worker: JoinHandle<()>,
 }
@@ -114,8 +142,19 @@ impl InkApp {
 
     pub(super) fn export_shortcut(&mut self, ui: &egui::Ui) {
         let open = ui.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(Key::E));
-        if open && self.export.is_none() && !ui.ctx().text_edit_focused() {
+        // Not during a stroke or a drag: they would change the model under the export.
+        let busy = self.paint.is_busy() || ui.input(|i| i.pointer.any_down());
+        if open && self.export.is_none() && !busy && !ui.ctx().text_edit_focused() {
             self.open_export_window();
+        }
+    }
+
+    /// Stops a running export and waits for the files being written, e.g. before the
+    /// window closes.
+    pub(super) fn stop_export(&mut self) {
+        if let Some(job) = self.export.as_mut().and_then(|w| w.job.as_mut()) {
+            job.stop();
+            job.finish();
         }
     }
 
@@ -124,10 +163,6 @@ impl InkApp {
         let Some(mut window) = self.export.take() else {
             return;
         };
-        if window.sets.len() != self.model.texture_sets.len() {
-            // The model changed under the window.
-            return;
-        }
         self.run_export(&mut window, rs);
         if window.job.is_some() {
             ui.ctx().request_repaint();
@@ -168,6 +203,11 @@ impl InkApp {
                     }
                 });
                 if running {
+                    if ui.button("Stop").clicked()
+                        && let Some(job) = &mut window.job
+                    {
+                        job.stop();
+                    }
                     ui.spinner();
                 }
             });
@@ -404,7 +444,8 @@ impl InkApp {
             return;
         }
         let todo: VecDeque<usize> = (0..window.sets.len()).filter(|&i| window.sets[i]).collect();
-        let files = todo.len() * window.settings.template.maps.len();
+        let sets = todo.len();
+        let files = sets * window.settings.template.maps.len();
         let paths = self.export_paths(&window.settings, &directory, &window.sets);
         let (sender, results) = mpsc::channel();
         window.job = Some(ExportJob {
@@ -412,8 +453,10 @@ impl InkApp {
             settings: window.settings.clone(),
             paths,
             todo,
+            sets,
+            sets_done: 0,
             current: None,
-            worker: None,
+            writers: Vec::new(),
             results,
             sender,
             files,
@@ -436,24 +479,35 @@ impl InkApp {
             }
         };
         collect(job, &mut window.log);
+        let mut finished = Vec::new();
+        let mut i = 0;
+        while i < job.writers.len() {
+            if job.writers[i].is_finished() {
+                finished.push(job.writers.swap_remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        for writer in finished {
+            if writer.join().is_err() {
+                window
+                    .log
+                    .push(("Export".into(), Err("Packing the maps failed".into())));
+                job.done += 1;
+                job.failed += 1;
+            }
+        }
         if job.current.is_some() {
             self.export_blocks(job, rs);
             return;
         }
-        if job.worker.as_ref().is_some_and(|w| w.is_finished())
-            && let Some(worker) = job.worker.take()
-            && worker.join().is_err()
+        if job.writers.len() < SETS_IN_FLIGHT
+            && let Some(set) = job.todo.pop_front()
         {
-            window
-                .log
-                .push(("Export".into(), Err("Packing the maps failed".into())));
-            job.failed += 1;
-        }
-        if job.worker.is_some() {
+            self.start_set_export(job, set, rs);
             return;
         }
-        if let Some(set) = job.todo.pop_front() {
-            self.start_set_export(job, set, rs);
+        if !job.writers.is_empty() || !job.todo.is_empty() {
             return;
         }
         // Everything is written: the last worker sent its results before it ended.
@@ -474,6 +528,13 @@ impl InkApp {
         let template: &'static Template = settings.template;
         let resolution = self.model.texture_sets[set].resolution;
         let paths = std::mem::take(&mut job.paths[set]);
+        let files = paths
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+            })
+            .collect();
         let normal_format: NormalFormat = self.model.normal_format;
         let (packer, receiver) = mpsc::sync_channel::<Packing>(BLOCKS_IN_FLIGHT);
         let results = job.sender.clone();
@@ -517,6 +578,7 @@ impl InkApp {
             set,
             next: 0,
             blocks: self.renderer.export_blocks(set),
+            files,
             packer,
             worker,
         });
@@ -548,17 +610,20 @@ impl InkApp {
         else {
             return;
         };
+        job.sets_done += 1;
         match result {
             Ok(()) => {
                 let _ = current.packer.send(Packing::Complete);
-                job.worker = Some(current.worker);
+                job.writers.push(current.worker);
             }
             Err(err) => {
-                let name = self.model.texture_sets[current.set].name.clone();
+                let name = &self.model.texture_sets[current.set].name;
                 log::error!("Export of {name} failed: {err}");
-                let _ = job.sender.send((name, Err(err)));
+                for file in &current.files {
+                    let _ = job.sender.send((file.clone(), Err(err.clone())));
+                }
                 drop(current.packer);
-                let _ = current.worker.join();
+                job.writers.push(current.worker);
             }
         }
     }
@@ -569,20 +634,24 @@ fn export_list_tab(ui: &mut egui::Ui, window: &ExportWindow) {
         ui.label(RichText::new(dir.display().to_string()).small().weak());
     }
     if let Some(job) = &window.job {
-        let progress = job.done as f32 / job.files.max(1) as f32;
-        ui.add(
-            egui::ProgressBar::new(progress).text(format!("{} of {} files", job.done, job.files)),
-        );
-        if let Some(current) = &job.current {
-            ui.label(
-                RichText::new(format!(
-                    "Compositing block {} of {}",
-                    current.next, current.blocks
-                ))
-                .small()
-                .weak(),
-            );
-        }
+        // Half for compositing, half for writing.
+        let current = job
+            .current
+            .as_ref()
+            .map_or(0.0, |c| c.next as f32 / c.blocks.max(1) as f32);
+        let composited = (job.sets_done as f32 + current) / job.sets.max(1) as f32;
+        let written = job.done as f32 / job.files.max(1) as f32;
+        let text = match &job.current {
+            Some(_) => format!(
+                "Texture set {} of {} · {} of {} files",
+                job.sets_done + 1,
+                job.sets,
+                job.done,
+                job.files
+            ),
+            None => format!("{} of {} files", job.done, job.files),
+        };
+        ui.add(egui::ProgressBar::new(0.5 * (composited + written)).text(text));
     } else if window.log.is_empty() {
         ui.label("Nothing exported yet.");
     }

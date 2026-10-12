@@ -171,6 +171,16 @@ impl InkApp {
         for object in &model.objects {
             object.visible.hash(&mut hasher);
         }
+        let export = &self.project.export;
+        (
+            &export.directory,
+            export.template.key,
+            export.format,
+            export.bit_depth,
+            export.padding,
+            export.dilation,
+        )
+            .hash(&mut hasher);
         (self.history.state(), hasher.finish())
     }
 
@@ -667,18 +677,20 @@ impl InkApp {
         }
     }
 
-    /// The window's close button and Alt+F4 ask about unsaved changes first.
+    /// The window's close button and Alt+F4 ask about unsaved changes first. Before the
+    /// window closes, saves and exported files are finished.
     pub(super) fn handle_close_request(&mut self, ui: &egui::Ui) {
-        if !ui.input(|i| i.viewport().close_requested()) || self.project.quit {
+        if !ui.input(|i| i.viewport().close_requested()) {
             return;
         }
-        if self.has_unsaved_changes() {
+        if !self.project.quit && self.has_unsaved_changes() {
             ui.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if self.project.leave.is_none() {
                 self.project.leave = Some(Leave::Quit);
             }
         } else {
             self.wait_for_save();
+            self.stop_export();
         }
     }
 
