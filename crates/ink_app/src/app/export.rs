@@ -19,6 +19,8 @@ use std::thread::JoinHandle;
 
 /// Composited blocks waiting to be packed; the GPU waits for the packer beyond this.
 const BLOCKS_IN_FLIGHT: usize = 4;
+/// Blocks (512² texels) composited per frame, so the window stays responsive.
+const BLOCKS_PER_FRAME: usize = 4;
 
 /// What the packer of a texture set gets.
 enum Packing {
@@ -54,6 +56,8 @@ struct ExportJob {
     paths: Vec<Vec<PathBuf>>,
     /// Texture sets still to composite.
     todo: VecDeque<usize>,
+    /// The texture set being composited.
+    current: Option<SetExport>,
     /// Packs and writes the last texture set composited.
     worker: Option<JoinHandle<()>>,
     results: mpsc::Receiver<(String, Result<(), String>)>,
@@ -61,6 +65,16 @@ struct ExportJob {
     files: usize,
     done: usize,
     failed: usize,
+}
+
+/// A texture set on its way from the GPU to its packer.
+struct SetExport {
+    set: usize,
+    /// The next block to composite, of `blocks`.
+    next: usize,
+    blocks: usize,
+    packer: mpsc::SyncSender<Packing>,
+    worker: JoinHandle<()>,
 }
 
 impl InkApp {
@@ -398,6 +412,7 @@ impl InkApp {
             settings: window.settings.clone(),
             paths,
             todo,
+            current: None,
             worker: None,
             results,
             sender,
@@ -407,8 +422,8 @@ impl InkApp {
         });
     }
 
-    /// Composites the next texture set once the last one is packed, and collects what was
-    /// written.
+    /// Composites a few blocks of the current texture set, starts the next texture set
+    /// once the last one is packed, and collects what was written.
     fn run_export(&mut self, window: &mut ExportWindow, rs: &RenderState) {
         let Some(job) = &mut window.job else { return };
         let collect = |job: &mut ExportJob, log: &mut Vec<(String, Result<(), String>)>| {
@@ -421,6 +436,10 @@ impl InkApp {
             }
         };
         collect(job, &mut window.log);
+        if job.current.is_some() {
+            self.export_blocks(job, rs);
+            return;
+        }
         if job.worker.as_ref().is_some_and(|w| w.is_finished())
             && let Some(worker) = job.worker.take()
             && worker.join().is_err()
@@ -434,7 +453,7 @@ impl InkApp {
             return;
         }
         if let Some(set) = job.todo.pop_front() {
-            job.worker = self.export_set(job, set, rs);
+            self.start_set_export(job, set, rs);
             return;
         }
         // Everything is written: the last worker sent its results before it ended.
@@ -448,20 +467,15 @@ impl InkApp {
         window.job = None;
     }
 
-    /// Composites a texture set and hands its texels to a thread that packs and writes its
-    /// maps.
-    fn export_set(
-        &mut self,
-        job: &mut ExportJob,
-        set: usize,
-        rs: &RenderState,
-    ) -> Option<JoinHandle<()>> {
+    /// Starts a thread that packs a texture set's texels into its maps as they arrive and
+    /// writes the files once all arrived.
+    fn start_set_export(&mut self, job: &mut ExportJob, set: usize, rs: &RenderState) {
         let settings = job.settings.clone();
         let template: &'static Template = settings.template;
         let resolution = self.model.texture_sets[set].resolution;
         let paths = std::mem::take(&mut job.paths[set]);
         let normal_format: NormalFormat = self.model.normal_format;
-        let (blocks, receiver) = mpsc::sync_channel::<Packing>(BLOCKS_IN_FLIGHT);
+        let (packer, receiver) = mpsc::sync_channel::<Packing>(BLOCKS_IN_FLIGHT);
         let results = job.sender.clone();
         let worker = std::thread::spawn(move || {
             let mut maps: Vec<MapImage> = template
@@ -496,28 +510,55 @@ impl InkApp {
                 let _ = results.send((name, r.map_err(|e| format!("{e:#}"))));
             });
         });
-        let name = self.model.texture_sets[set].name.clone();
+        // The GPU state must match the model before its blocks are counted.
+        self.renderer
+            .sync_texture_sets(&rs.device, &rs.queue, &self.model, false);
+        job.current = Some(SetExport {
+            set,
+            next: 0,
+            blocks: self.renderer.export_blocks(set),
+            packer,
+            worker,
+        });
+    }
+
+    /// Composites the next blocks of the current texture set and hands them to its packer;
+    /// after the last one the packer writes the files.
+    fn export_blocks(&mut self, job: &mut ExportJob, rs: &RenderState) {
+        let Some(current) = &mut job.current else {
+            return;
+        };
+        let end = (current.next + BLOCKS_PER_FRAME).min(current.blocks);
+        let packer = &current.packer;
         let result = self.renderer.export_texture_set(
             &rs.device,
             &rs.queue,
             &self.model,
-            set,
+            current.set,
+            current.next..end,
             &mut |block| {
                 // The packer only stops early if it panicked; the join reports it.
-                let _ = blocks.send(Packing::Block(block));
+                let _ = packer.send(Packing::Block(block));
             },
         );
+        current.next = end;
+        let Some(current) = job
+            .current
+            .take_if(|c| result.is_err() || c.next >= c.blocks)
+        else {
+            return;
+        };
         match result {
             Ok(()) => {
-                let _ = blocks.send(Packing::Complete);
-                Some(worker)
+                let _ = current.packer.send(Packing::Complete);
+                job.worker = Some(current.worker);
             }
             Err(err) => {
+                let name = self.model.texture_sets[current.set].name.clone();
                 log::error!("Export of {name} failed: {err}");
                 let _ = job.sender.send((name, Err(err)));
-                drop(blocks);
-                let _ = worker.join();
-                None
+                drop(current.packer);
+                let _ = current.worker.join();
             }
         }
     }
@@ -532,6 +573,16 @@ fn export_list_tab(ui: &mut egui::Ui, window: &ExportWindow) {
         ui.add(
             egui::ProgressBar::new(progress).text(format!("{} of {} files", job.done, job.files)),
         );
+        if let Some(current) = &job.current {
+            ui.label(
+                RichText::new(format!(
+                    "Compositing block {} of {}",
+                    current.next, current.blocks
+                ))
+                .small()
+                .weak(),
+            );
+        }
     } else if window.log.is_empty() {
         ui.label("Nothing exported yet.");
     }

@@ -614,6 +614,7 @@ impl ViewportRenderer {
         let mesh = &model.mesh;
         self.sets.clear();
         self.paint.reset();
+        self.compositor.forget_images();
         if mesh.indices.is_empty() {
             // wgpu can't bind empty buffers.
             self.mesh = None;
@@ -707,8 +708,17 @@ impl ViewportRenderer {
         }
     }
 
-    /// Composites a texture set at its resolution for the export and hands over its texels,
-    /// a block at a time. Brings the GPU state in line with the model first; the viewport's
+    /// The number of blocks [`Self::export_texture_set`] hands over for a texture set, once
+    /// its GPU state is in line with the model.
+    pub fn export_blocks(&self, set: usize) -> usize {
+        self.sets
+            .get(set)
+            .map_or(0, |s| Compositor::export_chunks(&s.composite))
+    }
+
+    /// Composites blocks of a texture set at its resolution for the export (`blocks` out of
+    /// [`Self::export_blocks`]) and hands over their texels; a few per frame keep the UI
+    /// responsive. Brings the GPU state in line with the model first; the viewport's
     /// textures stay as they are. Fails if the GPU could not hand the texels back.
     pub fn export_texture_set(
         &mut self,
@@ -716,6 +726,7 @@ impl ViewportRenderer {
         queue: &wgpu::Queue,
         model: &Model,
         set: usize,
+        blocks: std::ops::Range<usize>,
         sink: &mut dyn FnMut(ink_core::export::ExportBlock),
     ) -> Result<(), String> {
         self.sync_texture_sets(device, queue, model, false);
@@ -731,6 +742,7 @@ impl ViewportRenderer {
             &self.paint,
             set,
             &mut gpu.composite,
+            blocks,
             sink,
         )
     }

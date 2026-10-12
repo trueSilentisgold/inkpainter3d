@@ -758,6 +758,8 @@ pub(crate) struct Compositor {
     images: HashMap<(u64, bool), wgpu::TextureView>,
     /// Per texture set, the images its last composite used.
     set_images: Vec<HashSet<(u64, bool)>>,
+    /// The export's targets, while an export runs.
+    readback: Option<Readback>,
     dummy_acc: wgpu::TextureView,
     dummy_mask: wgpu::TextureView,
     dummy_tiles: wgpu::TextureView,
@@ -1136,6 +1138,7 @@ impl Compositor {
             temps: None,
             images: HashMap::new(),
             set_images: Vec::new(),
+            readback: None,
             dummy_acc: small("dummy", ACC_FORMAT, 1, d2),
             dummy_mask: small("dummy mask", MASK_FORMAT, 1, d2),
             dummy_tiles: small(
@@ -1280,9 +1283,14 @@ impl Compositor {
         self.build_mips(device, queue, outputs, &mips, size);
     }
 
-    /// Composites the whole texture set for the export, a chunk at a time, and hands over
-    /// every chunk's texels. The channel textures stay as they are. Fails if the GPU could
-    /// not hand the texels back.
+    /// The number of chunks [`Self::export`] hands over for a texture set.
+    pub fn export_chunks(state: &GpuComposite) -> usize {
+        state.pending.len()
+    }
+
+    /// Composites chunks of a texture set for the export (indices from 0 to
+    /// [`Self::export_chunks`], row by row) and hands over each chunk's texels. The channel
+    /// textures stay as they are. Fails if the GPU could not hand the texels back.
     #[allow(clippy::too_many_arguments)]
     pub fn export(
         &mut self,
@@ -1294,6 +1302,7 @@ impl Compositor {
         paint: &PaintCaches,
         set: usize,
         state: &mut GpuComposite,
+        chunks: std::ops::Range<usize>,
         sink: &mut dyn FnMut(ExportBlock),
     ) -> Result<(), String> {
         let size = state.resolution;
@@ -1312,10 +1321,15 @@ impl Compositor {
         }
         self.ensure_temps(device, &program);
         self.upload_images(device, queue, model.texture_sets.len(), set, &program);
-        let rects: Vec<TexelRect> = (0..state.pending.len())
+        let rects: Vec<TexelRect> = chunks
+            .filter(|&i| i < state.pending.len())
             .map(|i| state.chunk_rect(i))
             .collect();
-        let readback = Readback::new(device);
+        // Kept for the next chunks.
+        let readback = self
+            .readback
+            .take()
+            .unwrap_or_else(|| Readback::new(device));
         self.run(
             device,
             queue,
@@ -1327,10 +1341,19 @@ impl Compositor {
             &program,
             &rects,
         );
-        match readback.error.into_inner() {
+        let error = readback.error.take();
+        self.readback = Some(readback);
+        match error {
             Some(err) => Err(err),
             None => Ok(()),
         }
+    }
+
+    /// Forgets the uploaded fill images, e.g. when the model is replaced.
+    pub fn forget_images(&mut self) {
+        self.images.clear();
+        self.set_images.clear();
+        self.readback = None;
     }
 
     fn ensure_temps(&mut self, device: &wgpu::Device, program: &Program) {

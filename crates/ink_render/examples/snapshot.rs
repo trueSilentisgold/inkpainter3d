@@ -403,8 +403,10 @@ fn main() -> Result<()> {
             })
             .collect();
         let started = std::time::Instant::now();
+        renderer.sync_texture_sets(&device, &queue, &model, false);
+        let blocks = renderer.export_blocks(set);
         renderer
-            .export_texture_set(&device, &queue, &model, set, &mut |block| {
+            .export_texture_set(&device, &queue, &model, set, 0..blocks, &mut |block| {
                 for (image, map) in maps.iter_mut().zip(template.maps) {
                     image.pack(&block, map, &settings, model.normal_format);
                 }
