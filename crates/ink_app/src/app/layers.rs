@@ -136,7 +136,7 @@ struct EffectDrop {
     line: [egui::Pos2; 2],
 }
 
-const ROW_HEIGHT: f32 = 36.0;
+const ROW_HEIGHT: f32 = 40.0;
 const INDENT: f32 = 14.0;
 
 impl InkApp {
@@ -1103,14 +1103,18 @@ impl InkApp {
         let channel = self.layers.channel;
         let blend = layer.blending.get(channel);
         let folder = matches!(layer.content, Content::Folder(_));
-        // Right-aligned: the parent lays out right to left, a plain vertical would start
-        // right after the name.
-        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-            // Two stacked controls have to fit into the row.
-            let spacing = ui.spacing_mut();
-            spacing.item_spacing.y = 0.0;
-            spacing.button_padding.y = 1.0;
-            spacing.interact_size.y = 14.0;
+        // The parent lays out right to left: opacity first (it ends up rightmost), then the
+        // blend mode to its left.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut opacity = blend.opacity * 100.0;
+            ui.add(
+                egui::DragValue::new(&mut opacity)
+                    .range(0.0..=100.0)
+                    .speed(0.5)
+                    .max_decimals(0)
+                    .suffix(" %"),
+            )
+            .on_hover_text(format!("{} opacity", channel.label()));
             let mut mode = blend.mode;
             dropdown(ui, mode.short_label(), |ui| {
                 for m in BlendMode::ALL {
@@ -1143,14 +1147,6 @@ impl InkApp {
                 }
             })
             .on_hover_text(format!("{}: {}", channel.label(), blend.mode.label()));
-            let mut opacity = blend.opacity * 100.0;
-            ui.add(
-                egui::DragValue::new(&mut opacity)
-                    .range(0.0..=100.0)
-                    .speed(0.5)
-                    .max_decimals(0),
-            )
-            .on_hover_text(format!("{} opacity", channel.label()));
             if mode != blend.mode || (opacity / 100.0 - blend.opacity).abs() > f32::EPSILON {
                 if let Some(l) = self.stack_mut().and_then(|s| s.find_mut(layer.id)) {
                     let b = l.blending.get_mut(channel);

@@ -36,7 +36,7 @@ pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xF2, 0xF2, 0xF2);
 /// Secondary text: hints, sizes, units. About 5:1 on [`PANEL`].
 pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x98, 0x98, 0x98);
 /// Hidden or unavailable things.
-pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x66, 0x66, 0x66);
+pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x7A, 0x7A, 0x7A);
 
 /// The brand olive: selection outlines, active toggles, success.
 pub const OLIVE: Color32 = Color32::from_rgb(0x7A, 0xB8, 0x30);
@@ -412,7 +412,7 @@ pub fn group_label(ui: &mut Ui, text: &str) {
 }
 
 /// Width of the label column of property grids, so that controls line up across sections.
-pub const LABEL_WIDTH: f32 = 96.0;
+pub const LABEL_WIDTH: f32 = 108.0;
 
 /// A two-column grid of labels and controls.
 pub fn property_grid(id: impl egui::AsIdSalt) -> egui::Grid {
@@ -488,4 +488,20 @@ pub fn overlay_text(
     painter.rect_filled(rect, 4.0, Color32::from_black_alpha(140));
     painter.galley(rect.min + vec2(6.0, 3.0), galley, TEXT);
     rect
+}
+
+/// The title bar of a panel that is not collapsible: the title on the left, `right` (icon
+/// buttons) on the right, on the same bar as [`section`] headers.
+pub fn title_bar(ui: &mut Ui, title: &str, right: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .fill(RAISED)
+        .corner_radius(2.0)
+        .inner_margin(Margin::symmetric(4, 2))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(header(title));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
+            });
+        });
 }

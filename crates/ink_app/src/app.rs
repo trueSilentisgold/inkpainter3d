@@ -387,46 +387,43 @@ impl InkApp {
     }
 
     fn texture_set_list(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(theme::header("Texture set list"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                theme::icon_menu(ui, icons::MENU, "List options", |ui| {
-                    if ui.button("Show all").clicked() {
-                        self.set_all_visible(|_| true);
+        theme::title_bar(ui, "Texture set list", |ui| {
+            theme::icon_menu(ui, icons::MENU, "List options", |ui| {
+                if ui.button("Show all").clicked() {
+                    self.set_all_visible(|_| true);
+                }
+                if ui.button("Hide all").clicked() {
+                    self.set_all_visible(|_| false);
+                }
+                if ui.button("Invert show / hide").clicked() {
+                    self.set_all_visible(|v| !v);
+                }
+                ui.separator();
+                if ui.button("Show all meshes").clicked() {
+                    for object in &mut self.model.objects {
+                        object.visible = true;
                     }
-                    if ui.button("Hide all").clicked() {
-                        self.set_all_visible(|_| false);
-                    }
-                    if ui.button("Invert show / hide").clicked() {
-                        self.set_all_visible(|v| !v);
-                    }
-                    ui.separator();
-                    if ui.button("Show all meshes").clicked() {
-                        for object in &mut self.model.objects {
-                            object.visible = true;
-                        }
-                    }
-                    if ui.button("Expand all").clicked() {
-                        self.expanded.fill(true);
-                    }
-                    if ui.button("Collapse all").clicked() {
-                        self.expanded.fill(false);
-                    }
-                });
-                let mut focus = self.focus.is_some();
-                if theme::icon_toggle(
-                    ui,
-                    icons::FOCUS,
-                    &mut focus,
-                    "Show only the selected texture set (Alt+Q)",
-                )
-                .changed()
-                {
-                    self.toggle_focus();
+                }
+                if ui.button("Expand all").clicked() {
+                    self.expanded.fill(true);
+                }
+                if ui.button("Collapse all").clicked() {
+                    self.expanded.fill(false);
                 }
             });
+            let mut focus = self.focus.is_some();
+            if theme::icon_toggle(
+                ui,
+                icons::FOCUS,
+                &mut focus,
+                "Show only the selected texture set (Alt+Q)",
+            )
+            .changed()
+            {
+                self.toggle_focus();
+            }
         });
-        ui.separator();
+        ui.add_space(2.0);
 
         egui::ScrollArea::vertical()
             .id_salt("texture sets")
