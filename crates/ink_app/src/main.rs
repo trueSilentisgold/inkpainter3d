@@ -17,7 +17,7 @@ fn main() -> eframe::Result {
             .with_title("inkpainter3d")
             .with_icon(
                 eframe::icon_data::from_png_bytes(include_bytes!(
-                    "../../../assets/branding/inkrabbit-logo-256.png"
+                    "../../../assets/branding/app-icon-256.png"
                 ))
                 .expect("the app icon is a valid PNG"),
             )

@@ -1,14 +1,51 @@
-# inkpainter3d
+<p align="center">
+  <img src="docs/images/icon.png" width="128" alt="inkpainter3d icon">
+</p>
 
-**A free, open-source 3D texture painting tool — in the spirit of Substance Painter, built for both realistic PBR and stylized / ink art.**
+<h1 align="center">inkpainter3d</h1>
 
-inkpainter3d lets you paint directly onto 3D models with a layer-based, non-destructive workflow
-and export the result as texture maps for game engines and renderers. It runs natively on
-**Windows and Linux** and will always be **free**.
+<p align="center">
+  <b>A free, open-source 3D texture painter for realistic PBR and stylized art.</b><br>
+  Paint directly onto 3D models, layer by layer, and export textures for Blender, Unity and Godot.
+</p>
 
-> **Status:** early development. Phases 1 to 5 (viewport, texture sets, HDRI lighting, brush engine, layer stack, project files and export) are done: a game asset can be textured and exported end to end. The interface (INKRABBIT design, dockable panels) is in progress; baking comes after it.
+<p align="center">
+  <a href="https://github.com/trueSilentisgold/inkpainter3d/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/trueSilentisgold/inkpainter3d/ci.yml?branch=main&label=CI&color=567428"></a>
+  <img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-567428">
+  <img alt="Platforms: Linux and Windows" src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-567428">
+  <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-B87333">
+  <img alt="Status: early development" src="https://img.shields.io/badge/status-early%20development-B87333">
+</p>
+
+<p align="center">
+  <img src="docs/images/screenshot.png" alt="inkpainter3d: 3D view, UV view, layer stack and properties" width="900">
+</p>
+
+> **Status:** early development. A game asset can already be textured and exported end to
+> end: viewport, texture sets, brush engine, layer stack with masks, project files and
+> export are done. The interface is being finished, baking comes next.
+> See the [roadmap](#roadmap).
+
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#roadmap">Roadmap</a> ·
+  <a href="#getting-started">Getting started</a> ·
+  <a href="#controls">Controls</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#credits">Credits</a>
+</p>
 
 ---
+
+## At a glance
+
+| | |
+|---|---|
+| 🖌️ **Paint** | Brush engine with pen pressure, alphas, lazy mouse and straight lines, in the 3D view and the UV view |
+| 🧱 **Layers** | Paint, fill and folder layers, masks and effects, blend modes per channel, composited on the GPU |
+| 📦 **Export** | Templates for Blender, Unity (HDRP, URP, Built-in), Godot, glTF and Unreal, with padding and bit depths |
+| 💾 **Projects** | One `.ink3d` file with everything, open and documented, with autosave |
+| 🎯 **Painter-like** | Same concepts, terms and shortcuts as Substance 3D Painter, so tutorials carry over |
 
 ## Vision
 
@@ -33,7 +70,10 @@ inkpainter3d aims to be a capable alternative that:
 
 ## Features
 
-### Available now
+<details open>
+<summary><b>Available now</b></summary>
+
+
 - Model import: **FBX** (binary and ASCII), **glTF** (`.gltf`, `.glb`), **OBJ**
   - every material becomes a **texture set**, object names are kept
   - automatic axis and unit conversion (Z-up, centimeters, … → Y-up meters)
@@ -99,8 +139,9 @@ inkpainter3d aims to be a capable alternative that:
   - choose the texture sets, see every file before it is written, follow the export in the
     list of exports
 
-### Planned
-See the [roadmap](#roadmap).
+</details>
+
+What comes next is in the [roadmap](#roadmap).
 
 ## Roadmap
 
@@ -122,7 +163,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 10 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 11 | **Polish** — UDIM, smudge and clone, path tools, post effects, Python API, installers (AppImage / Flatpak, Windows) | |
 
-## Building
+## Getting started
 
 Requires a recent stable [Rust toolchain](https://rustup.rs). On Windows you also need the
 Visual Studio C++ Build Tools.
