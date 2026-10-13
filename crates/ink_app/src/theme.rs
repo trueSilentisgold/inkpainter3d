@@ -1,4 +1,4 @@
-//! The INKRABBIT look: colors, fonts, spacing, icons, and helpers for the widgets that
+//! The look: colors, fonts, spacing, icons, and helpers for the widgets that
 //! recur across panels (headers, icon buttons, rows, property grids), so that panels don't
 //! each pick their own.
 //!
@@ -16,34 +16,34 @@ use std::sync::Arc;
 // ---- Colors (sRGB) ----
 
 /// Text fields, wells, and the gap between the views.
-pub const BG_DEEP: Color32 = Color32::from_rgb(0x12, 0x14, 0x11);
+pub const BG_DEEP: Color32 = Color32::from_rgb(0x1E, 0x1E, 0x1E);
 /// Panels.
-pub const PANEL: Color32 = Color32::from_rgb(0x1B, 0x1D, 0x1A);
+pub const PANEL: Color32 = Color32::from_rgb(0x2B, 0x2B, 0x2B);
 /// Dialogs, menus and popups.
-pub const WINDOW: Color32 = Color32::from_rgb(0x22, 0x25, 0x21);
+pub const WINDOW: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
 /// Hovered rows, headers, thumbnail backgrounds.
-pub const RAISED: Color32 = Color32::from_rgb(0x27, 0x2A, 0x25);
+pub const RAISED: Color32 = Color32::from_rgb(0x35, 0x35, 0x35);
 /// Buttons and other controls.
-pub const WIDGET: Color32 = Color32::from_rgb(0x30, 0x34, 0x2E);
-pub const WIDGET_HOVER: Color32 = Color32::from_rgb(0x3A, 0x3F, 0x37);
-pub const WIDGET_ACTIVE: Color32 = Color32::from_rgb(0x45, 0x4B, 0x41);
+pub const WIDGET: Color32 = Color32::from_rgb(0x3C, 0x3C, 0x3C);
+pub const WIDGET_HOVER: Color32 = Color32::from_rgb(0x48, 0x48, 0x48);
+pub const WIDGET_ACTIVE: Color32 = Color32::from_rgb(0x54, 0x54, 0x54);
 /// Separators and frames.
-pub const BORDER: Color32 = Color32::from_rgb(0x2E, 0x31, 0x2B);
-pub const BORDER_STRONG: Color32 = Color32::from_rgb(0x43, 0x48, 0x3F);
+pub const BORDER: Color32 = Color32::from_rgb(0x1F, 0x1F, 0x1F);
+pub const BORDER_STRONG: Color32 = Color32::from_rgb(0x4A, 0x4A, 0x4A);
 
-pub const TEXT: Color32 = Color32::from_rgb(0xD5, 0xD9, 0xCF);
-pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xF3, 0xF5, 0xEF);
+pub const TEXT: Color32 = Color32::from_rgb(0xD2, 0xD2, 0xD2);
+pub const TEXT_STRONG: Color32 = Color32::from_rgb(0xF2, 0xF2, 0xF2);
 /// Secondary text: hints, sizes, units. About 5:1 on [`PANEL`].
-pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x8E, 0x94, 0x87);
+pub const TEXT_WEAK: Color32 = Color32::from_rgb(0x98, 0x98, 0x98);
 /// Hidden or unavailable things.
-pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x5F, 0x64, 0x5A);
+pub const TEXT_DISABLED: Color32 = Color32::from_rgb(0x66, 0x66, 0x66);
 
 /// The brand olive: selection outlines, active toggles, success.
 pub const OLIVE: Color32 = Color32::from_rgb(0x7A, 0xB8, 0x30);
 /// Olive as a fill behind light text: selected buttons, slider fills, primary buttons.
 pub const OLIVE_FILL: Color32 = Color32::from_rgb(0x4E, 0x6B, 0x24);
 /// Background of a selected row.
-pub const OLIVE_ROW: Color32 = Color32::from_rgb(0x28, 0x33, 0x1E);
+pub const OLIVE_ROW: Color32 = Color32::from_rgb(0x2F, 0x3B, 0x22);
 /// The brand copper: highlights such as drop targets, links and the text cursor.
 pub const COPPER: Color32 = Color32::from_rgb(0xC8, 0x88, 0x40);
 
@@ -180,8 +180,8 @@ fn style() -> egui::Style {
     v.warn_fg_color = WARN;
     v.error_fg_color = DANGER;
     v.weak_text_color = Some(TEXT_WEAK);
-    v.window_corner_radius = CornerRadius::same(8);
-    v.menu_corner_radius = CornerRadius::same(6);
+    v.window_corner_radius = CornerRadius::same(4);
+    v.menu_corner_radius = CornerRadius::same(3);
     v.window_stroke = Stroke::new(1.0, BORDER_STRONG);
     v.window_shadow = Shadow {
         offset: [0, 8],
@@ -199,9 +199,10 @@ fn style() -> egui::Style {
     v.selection.stroke = Stroke::new(1.0, TEXT_STRONG);
     v.text_cursor.stroke = Stroke::new(2.0, COPPER);
     v.slider_trailing_fill = true;
+    v.collapsing_header_frame = true;
     v.handle_shape = egui::style::HandleShape::Circle;
 
-    let radius = CornerRadius::same(4);
+    let radius = CornerRadius::same(2);
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = PANEL;
     w.noninteractive.weak_bg_fill = PANEL;
@@ -379,20 +380,17 @@ pub fn disclosure(ui: &mut Ui, open: bool) -> Response {
 
 // ---- Headers and labels ----
 
-/// A panel title such as `// LAYERS`: monospace capitals with olive slashes, the way
-/// inkrabbit.de labels its sections.
+/// A panel title such as `LAYERS`: small capitals, as in the title bars of Painter's panels.
 pub fn header(title: &str) -> WidgetText {
-    let font = FontId::new(11.0, FontFamily::Name(MONO_MEDIUM.into()));
-    let mut job = egui::text::LayoutJob::default();
-    let format = |color| egui::TextFormat {
-        font_id: font.clone(),
-        color,
-        extra_letter_spacing: 0.6,
+    let format = egui::TextFormat {
+        font_id: FontId::new(11.0, FontFamily::Name(SANS_MEDIUM.into())),
+        color: TEXT,
+        extra_letter_spacing: 0.8,
         valign: egui::Align::Center,
         ..Default::default()
     };
-    job.append("// ", 0.0, format(OLIVE));
-    job.append(&title.to_uppercase(), 0.0, format(TEXT_WEAK));
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&title.to_uppercase(), 0.0, format);
     job.into()
 }
 

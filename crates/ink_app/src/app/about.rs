@@ -32,13 +32,18 @@ impl InkApp {
                         .color(theme::TEXT_WEAK),
                 );
                 ui.add_space(2.0);
-                ui.hyperlink_to("by INKRABBIT", "https://inkrabbit.de");
-                ui.label(RichText::new("Quiet hands. Loud models.").color(theme::TEXT_WEAK));
+                ui.label(
+                    RichText::new("Free, open-source 3D texture painting").color(theme::TEXT_WEAK),
+                );
             });
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
             ui.label("Free software under the GNU GPL 3.0 or later.");
+            ui.horizontal(|ui| {
+                ui.label("Made by");
+                ui.hyperlink_to("INKRABBIT", "https://inkrabbit.de");
+            });
             theme::group_label(ui, "Credits");
             ui.label("Studio Small 09 environment by Poly Haven (CC0)");
             ui.label("Space Grotesk and JetBrains Mono fonts (SIL Open Font License 1.1)");
