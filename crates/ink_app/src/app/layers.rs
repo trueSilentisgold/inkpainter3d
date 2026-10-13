@@ -147,7 +147,7 @@ impl InkApp {
             .map(|s| &s.stack)
     }
 
-    fn stack_mut(&mut self) -> Option<&mut LayerStack> {
+    pub(super) fn stack_mut(&mut self) -> Option<&mut LayerStack> {
         self.model
             .texture_sets
             .get_mut(self.selected_set)
@@ -158,7 +158,7 @@ impl InkApp {
         self.layers.selections.get(self.selected_set)?.as_ref()
     }
 
-    fn select(&mut self, selection: Selection) {
+    pub(super) fn select(&mut self, selection: Selection) {
         if let Some(slot) = self.layers.selections.get_mut(self.selected_set) {
             *slot = Some(selection);
         }
@@ -299,13 +299,13 @@ impl InkApp {
     }
 
     /// Names the undo step of the edit being made now.
-    fn label(&mut self, label: &'static str) {
+    pub(super) fn label(&mut self, label: &'static str) {
         self.layers.label.get_or_insert(label);
     }
 
     // ---- Edits ----
 
-    fn add_layer(&mut self, kind: LayerKind) {
+    pub(super) fn add_layer(&mut self, kind: LayerKind) {
         let anchor = self.selection().map(|s| s.layer);
         let Some(texture_set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
@@ -322,6 +322,23 @@ impl InkApp {
             });
             self.select(Selection::layer(id));
         }
+    }
+
+    /// Adds a fill layer above the selection with these contents, e.g. a material from the
+    /// shelf.
+    pub(super) fn add_fill_layer_with(&mut self, name: String, fill: Fill) {
+        self.add_layer(LayerKind::Fill);
+        let Some(id) = self.selection().map(|s| s.layer) else {
+            return;
+        };
+        for image in fill.images.iter().flatten() {
+            self.layers.images.push(image.clone());
+        }
+        if let Some(layer) = self.stack_mut().and_then(|s| s.find_mut(id)) {
+            layer.name = name;
+            layer.content = Content::Fill(fill);
+        }
+        self.label("Add fill layer");
     }
 
     fn delete_selected(&mut self) {

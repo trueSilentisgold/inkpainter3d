@@ -219,27 +219,47 @@ impl InkApp {
             });
         });
         if let Some(i) = apply {
-            let preset = self.presets[i].clone();
-            // Keep the channels and values: they are the material, not the brush.
-            let material = self.paint.brush().material;
-            let brush = self.paint.brush_mut();
-            *brush = preset.brush;
-            brush.material = material;
-            self.preset_name = preset.name;
+            self.apply_preset(i);
         }
         if save {
             self.save_preset();
         }
         if let Some(i) = delete {
-            if let Some(file) = self.presets[i].file.clone() {
-                let _ = std::fs::remove_file(file);
-            }
-            self.presets.remove(i);
-            self.preset_name = "Custom".to_owned();
+            self.delete_preset(i);
         }
     }
 
-    fn save_preset(&mut self) {
+    /// Makes the preset the current brush. The channels and values stay: they are the
+    /// material, not the brush.
+    pub(super) fn apply_preset(&mut self, index: usize) {
+        let Some(preset) = self.presets.get(index).cloned() else {
+            return;
+        };
+        let material = self.paint.brush().material;
+        let brush = self.paint.brush_mut();
+        *brush = preset.brush;
+        brush.material = material;
+        self.preset_name = preset.name;
+        self.paint.fill_tool = false;
+    }
+
+    pub(super) fn delete_preset(&mut self, index: usize) {
+        if index >= self.presets.len() {
+            return;
+        }
+        if let Some(file) = self.presets[index].file.clone() {
+            let _ = std::fs::remove_file(file);
+        }
+        self.presets.remove(index);
+        self.preset_name = "Custom".to_owned();
+    }
+
+    /// Reads the presets again, after files were added to or removed from the library.
+    pub(super) fn reload_presets(&mut self) {
+        self.presets = load_all();
+    }
+
+    pub(super) fn save_preset(&mut self) {
         let name = self.preset_draft.trim().to_owned();
         let Some(dir) = user_dir() else {
             self.status = "No place to keep presets".to_owned();

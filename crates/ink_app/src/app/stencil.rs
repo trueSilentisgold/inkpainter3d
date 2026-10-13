@@ -250,6 +250,12 @@ impl InkApp {
         }
     }
 
+    /// Uses the image as the stencil.
+    pub(super) fn set_stencil_image(&mut self, image: Arc<ink_core::AlphaImage>) {
+        self.paint.stencil.stencil.image = Some(image);
+        self.paint.stencil.stencil.enabled = true;
+    }
+
     pub(super) fn load_stencil(&mut self, path: &std::path::Path) {
         match ink_io::load_alpha(path) {
             Ok(image) => {

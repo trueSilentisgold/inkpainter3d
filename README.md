@@ -108,6 +108,13 @@ inkpainter3d aims to be a capable alternative that:
     the 3D and the 2D view
   - **stencil**: load an image, place it over the view (S + drag) and paint through it; N
     ignores it
+- **Shelf** (a dockable panel under the viewport)
+  - brushes, alphas, textures and materials with thumbnails, a filter, and your own library
+    on disk; right click an alpha to use it as brush tip or stencil
+  - **PBR folder import**: a folder of maps named like Poly Haven's or ambientCG's becomes a
+    material; click it, or drag it onto the layer stack, to get a fill layer
+  - **online libraries**: search ambientCG and Poly Haven (CC0), download materials in 1K, 2K or
+    4K and use them right away
   - **pen pressure** on size and flow with minimums and a pressure curve: Windows Ink on
     Windows, the tablet protocol on Wayland (GNOME, KDE), XInput2 on X11; on Wayland the
     pen's eraser end erases
@@ -167,7 +174,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
 | 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts; the interface stays English for now | ✅ done |
-| 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | |
+| 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | ✅ done |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
 | 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
 | 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | |
@@ -266,7 +273,9 @@ CI builds, lints and tests every push on Windows and Linux.
 ## Credits
 
 The built-in environment is [Studio Small 09](https://polyhaven.com/a/studio_small_09) by
-Poly Haven, released under CC0.
+Poly Haven, released under CC0. The shelf's online libraries are [ambientCG](https://ambientcg.com)
+and [Poly Haven](https://polyhaven.com); their materials are CC0 and are downloaded only when
+you ask for them.
 
 The interface uses [Space Grotesk](https://github.com/floriankarsten/space-grotesk)
 (© 2020 The Space Grotesk Project Authors) and

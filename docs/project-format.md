@@ -128,7 +128,7 @@ mask. Effects are listed bottom to top:
 ```json
 {
   "id": 21, "tool": "paint", "space": "surface", "alpha": "round",
-  "hardness": 0.8, "opacity": 1.0, "backface_cos": 0.0,
+  "hardness": 0.8, "alignment": "tangent_wrap", "opacity": 1.0, "backface_cos": 0.0,
   "material": { "channels": ["base_color", "roughness"], "values": { … }, "grayscale": 1.0 },
   "camera": { "view_proj": [ … 16 … ], "eye": [0, 1, 4], "forward": [0, 0, -1], "aspect": 1.6, "orthographic": false, "height": 0.73 },
   "hidden_objects": [], "hidden_sets": [],
@@ -139,6 +139,16 @@ mask. Effects are listed bottom to top:
 - `tool`: `"paint"` or `"erase"`. `space`: `"surface"` (painted in the 3D view; dabs in
   world space) or `"uv"` (painted in the 2D view; dabs in UV space, origin top left).
 - `alpha`: `"round"`, `"square"` or `{ "image": n }`, an index into the top-level `alphas`.
+- `alignment`: how the tip is projected onto the model, `"tangent_wrap"` (default, also when the
+  key is missing), `"tangent_planar"` or `"camera"`.
+- `fill` (optional): a Polygon Fill stroke covers whole triangles and has no dabs:
+  `{ "triangles": [ … triangle indices … ] }` or `{ "object": n }` (every triangle of the
+  object in the texture set).
+- `stencil` (optional): `{ "alpha": n, "affine": [a, b, c, d, e, f] }`, an index into the top-level
+  `alphas` and how a point maps into the stencil image's `[-1, 1]` square: `x' = a x + b y + c`,
+  `y' = d x + e y + f`. The input is `(ndc.x * aspect, ndc.y)` of the stroke's camera for surface
+  strokes and the UV for strokes of the 2D view. Dabs use it per dab, so a stroke looks the
+  same live and replayed.
 - `backface_cos`: the cosine of the backface culling angle; -1 paints every surface.
 - `material`: what the brush paints, as for fill layers; `grayscale` is the value painted
   into masks.

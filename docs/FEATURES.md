@@ -439,7 +439,8 @@ Taste in Klammern = Painter-Shortcut.
       Live-Strich und Neuzeichnen gleich aussehen.
 - [x] `P0` **Material des Pinsels:** Wert oder Farbe pro Kanal; Kanäle einzeln ein- und
       ausschaltbar. Der Eraser hat eigene Kanal-Schalter.
-- [ ] `P1` Material des Pinsels aus Textur oder Material aus dem Shelf
+- [ ] `P1` Material des Pinsels aus Textur oder Material aus dem Shelf (ein Material lässt sich
+      bisher nur als Fill Layer anlegen)
 
 **Presets**
 
@@ -547,19 +548,29 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 ## 12. Shelf (Asset-Bibliothek)
 
-- [ ] `P1` **Kategorien** wie in Painter: Materials, Smart Materials, Smart Masks, Brushes,
-      Alphas, Grunges, Procedurals, Textures, Filters, Generators, Environments, Export
-      Presets, Templates
-- [ ] `P1` Suche, Filter, Vorschaubilder; Drag & Drop auf Layer Stack, Viewport und
-      Parameterfelder
-- [ ] `P1` **Eigene Ressourcen importieren** (Bilder, Presets), entweder in die Bibliothek oder
-      nur ins Projekt
+Das Shelf ist ein andockbares Fenster (standardmäßig unter dem Viewport) mit den Kategorien
+Brushes, Alphas, Textures, Materials und Online. Die eigene Bibliothek liegt im Datenordner
+(`shelf/brushes`, `alphas`, `textures`, `materials`), der Ordner-Knopf öffnet sie.
+
+- [x] `P1` **Kategorien** und Vorschaubilder. Umgesetzt: Brushes (Presets mit Vorschaustrich),
+      Alphas (fünf im Code erzeugte plus eigene), Textures, Materials, Online. Smart Materials,
+      Smart Masks, Grunges, Procedurals, Filters, Generators, Environments, Export Presets und
+      Templates folgen mit den Phasen 9 und 12.
+- [x] `P1` Suche (Filter) und Drag & Drop: Materials und Textures lassen sich auf den Layer Stack
+      ziehen und werden zum Fill Layer. Brushes und Alphas wirken per Klick. Drop auf Viewport und
+      Parameterfelder fehlt noch.
+- [x] `P1` **Eigene Ressourcen importieren** (Pinsel-Presets, Alphas, Texturen, Materialien) in die
+      Bibliothek. Rechtsklick: Löschen, Alpha als Pinselform oder Stencil nutzen. Nur-im-Projekt
+      gibt es nicht.
 - [ ] `P2` Eigene Bibliotheks-Ordner (Sub-Libraries), Favoriten, Tags
-- [ ] `P1` ＋ **PBR-Materialordner importieren:** ein Ordner mit Base Color, Roughness, Normal …
-      im Format von Poly Haven oder ambientCG wird automatisch ein Material
-- [ ] `P1` ＋ **Online-Bibliotheken im Shelf:** ambientCG und Poly Haven (zusammen mehrere
-      tausend CC0-Materialien) direkt durchsuchen und herunterladen. Das ist der Ersatz für
-      Substance 3D Assets, die nur mit Adobes Engine laufen.
+- [x] `P1` ＋ **PBR-Materialordner importieren:** ein Ordner mit Base Color, Roughness, Normal …
+      im Format von Poly Haven oder ambientCG wird zu einem `.inkmat`-Material (ZIP aus
+      `material.json`, den Karten und `preview.png`). Erkannt werden die Dateinamen beider
+      Seiten; ARM- und AO-Karten bleiben außen vor, weil es keinen AO-Kanal gibt.
+- [x] `P1` ＋ **Online-Bibliotheken im Shelf:** ambientCG und Poly Haven (zusammen mehrere
+      tausend CC0-Materialien) durchsuchen, Vorschau, Download in 1K, 2K oder 4K in die
+      Bibliothek und als Fill Layer anlegen. Das ist der Ersatz für Substance 3D Assets, die nur mit
+      Adobes Engine laufen.
 
 ---
 
@@ -767,7 +778,7 @@ texturieren und exportieren.**
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
-| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill ✅; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
+| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
 | 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
 | 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | |

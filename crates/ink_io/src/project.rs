@@ -1014,7 +1014,7 @@ pub(crate) fn encode_alpha(alpha: &AlphaImage) -> Result<Encoded> {
     })
 }
 
-fn png_encoder(bytes: &mut Vec<u8>) -> image::codecs::png::PngEncoder<&mut Vec<u8>> {
+pub(crate) fn png_encoder(bytes: &mut Vec<u8>) -> image::codecs::png::PngEncoder<&mut Vec<u8>> {
     image::codecs::png::PngEncoder::new_with_quality(
         bytes,
         image::codecs::png::CompressionType::Fast,

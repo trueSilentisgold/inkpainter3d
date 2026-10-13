@@ -5,6 +5,7 @@ mod layers;
 mod painting;
 mod presets;
 mod project;
+mod shelf;
 mod stencil;
 mod views;
 
@@ -54,6 +55,7 @@ pub struct InkApp {
     paint: PaintState,
     /// Brush presets, shipped and the user's.
     presets: Vec<presets::Preset>,
+    shelf: shelf::ShelfState,
     /// What the preset box shows: the last preset applied.
     preset_name: String,
     /// The name being typed for a new preset.
@@ -130,6 +132,7 @@ impl InkApp {
             status: format!("GPU: {} ({:?})", info.name, info.backend),
             paint: PaintState::default(),
             presets: presets::load_all(),
+            shelf: Default::default(),
             preset_name: "Custom".to_owned(),
             preset_draft: String::new(),
             layers: LayersState::default(),

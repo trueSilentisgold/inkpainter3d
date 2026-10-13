@@ -1,6 +1,8 @@
 //! Model and environment import, project files and texture export.
 
 pub mod export;
+pub mod material;
+pub mod online;
 pub mod preset;
 pub mod project;
 
@@ -337,8 +339,62 @@ pub const MAX_TEXTURE_SIZE: u32 = 8192;
 /// (the renderer decodes sRGB where the image is used as a color); HDR and EXR files are
 /// linear floats.
 pub fn load_texture(path: &Path) -> Result<TextureImage> {
-    let mut image =
-        image::open(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let image = image::open(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    texture_from_image(name, image)
+}
+
+/// Decodes an image held in memory; `file_name` tells the format by its extension and
+/// names the texture.
+pub fn decode_texture(file_name: &str, bytes: &[u8]) -> Result<TextureImage> {
+    let path = Path::new(file_name);
+    let image = match path
+        .extension()
+        .and_then(image::ImageFormat::from_extension)
+    {
+        Some(format) => image::load_from_memory_with_format(bytes, format),
+        None => image::load_from_memory(bytes),
+    }
+    .with_context(|| format!("Failed to read {file_name}"))?;
+    let name = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    texture_from_image(name, image)
+}
+
+/// The texels as 8-bit sRGB RGBA, for previews. Float images are tone-clamped.
+pub fn texture_to_rgba8(texture: &TextureImage) -> Vec<u8> {
+    match &texture.texels {
+        Texels::Rgba8(v) => v.clone(),
+        Texels::Rgba16(v) => v.iter().map(|&x| (x >> 8) as u8).collect(),
+        Texels::RgbaF32(v) => v
+            .chunks_exact(4)
+            .flat_map(|p| {
+                let encode = |c: f32| {
+                    let c = c.clamp(0.0, 1.0);
+                    let s = if c <= 0.003_130_8 {
+                        c * 12.92
+                    } else {
+                        1.055 * c.powf(1.0 / 2.4) - 0.055
+                    };
+                    (s * 255.0 + 0.5) as u8
+                };
+                [
+                    encode(p[0]),
+                    encode(p[1]),
+                    encode(p[2]),
+                    (p[3].clamp(0.0, 1.0) * 255.0) as u8,
+                ]
+            })
+            .collect(),
+    }
+}
+
+fn texture_from_image(name: String, mut image: image::DynamicImage) -> Result<TextureImage> {
     if image.width() == 0 || image.height() == 0 {
         bail!("Image is empty");
     }
@@ -360,10 +416,6 @@ pub fn load_texture(path: &Path) -> Result<TextureImage> {
         | image::DynamicImage::ImageRgba16(_) => Texels::Rgba16(image.into_rgba16().into_raw()),
         _ => Texels::Rgba8(image.into_rgba8().into_raw()),
     };
-    let name = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
     Ok(TextureImage::new(name, width, height, texels))
 }
 

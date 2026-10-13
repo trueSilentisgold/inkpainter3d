@@ -51,8 +51,9 @@ reads or writes files; `ink_render` does everything wgpu and depends only on `in
 (`ink_io` is a dev-dependency for the snapshot example); `ink_app` is the eframe/egui UI
 (`app.rs` with `app/views.rs` for the 3D and 2D views, `app/painting.rs` for the brush,
 `app/layers.rs` for the layer stack panel and the properties of fills and effects,
-`app/project.rs` for the File menu's project commands and `app/export.rs` for the export
-window), `theme.rs` (the INKRABBIT look: color tokens, fonts, the SVG icons in `assets/icons`
+`app/project.rs` for the File menu's project commands, `app/export.rs` for the export
+window, `app/presets.rs` for brush presets, `app/stencil.rs` for the stencil and `app/shelf/`
+for the shelf: library folders, thumbnails on worker threads, the online libraries), `theme.rs` (the INKRABBIT look: color tokens, fonts, the SVG icons in `assets/icons`
 and helpers for recurring widgets such as section headers, icon buttons, rows and property
 grids; use them instead of styling widgets ad hoc)
 plus `pen.rs`, pen input on Linux: a Wayland tablet client and an XInput2 pressure reader
@@ -154,6 +155,16 @@ Things that are easy to get wrong:
   normal format); `TEMPLATES` are the output templates. The export window composites a
   few blocks per frame (so the window stays responsive) and hands them to a thread per
   texture set that packs them and writes the files once all arrived.
+- **Fills and stencils.** A Polygon Fill is a `Stroke` without dabs whose `fill` lists the
+  triangles it covers (`ink_core::fill`); `rasterize` draws those triangles with the dab
+  shader's `ALIGN_FILL` code. A stroke's `stencil` is an affine map from the view (or the UV
+  square in the 2D view) into the image, applied per dab in the shader, never to the finished
+  coverage: live strokes draw dabs in chunks, replays in others, and both must give the same
+  pixels. `Stroke::alignment` picks wrap, planar or camera projection of the tip.
+- **Shelf and online access.** `ink_io::preset` (`.inkbrush`) and `ink_io::material`
+  (`.inkmat`) are ZIPs of JSON and images; `ink_io::online` (ureq) talks to ambientCG and Poly
+  Haven and is only ever called from worker threads. Content we ship stays code-made; online
+  materials are downloaded on request into the user's library.
 - **Buffers reused across draws** (stroke params, dabs, apply params) are written with
   `queue.write_buffer` and submitted per draw: writes land before the next `submit`, so
   several draws in one encoder would all see the last write.
