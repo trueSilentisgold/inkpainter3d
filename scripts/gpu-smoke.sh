@@ -210,6 +210,13 @@ check_bake bake-cube cube "bake=curvature res=512" "curvature,0,100:r > 240" "cu
 # A flat quad against a bumpy copy: the bump's slopes tilt the normal, its top is high.
 check_bake bake-high "$data/bake_low.obj" "bake=normal,height,id res=128 bakehigh=$data/bake_high.obj front=0.15 rear=0.05"     "normal,5,5:r > 120 && r < 135 && b > 250" "normal,64,100:g < 110" "normal,64,28:g > 150"     "height,64,64:r > 180" "height,5,5:r < 90" "id,64,64:r > 200"
 
+# Generators read the baked maps: edge wear on a cube is red at its edges and not on its faces.
+check generator-edge cube "bake=curvature,position res=512 generator=edge_wear display=basecolor" \
+    "704,400:$red" "500,400:$grey" "600,300:$grey"
+# Without baked maps a generator still runs: noise falls back to the UV space and varies.
+check generator-noise sphere "generator=noise gparam=scale:4 gparam=contrast:6 display=basecolor" \
+    "500,400:r > 100" "640,300:r > 100"
+
 if [ "$failures" -gt 0 ]; then
     echo "$failures check(s) failed; the renders are in $out"
     exit 1

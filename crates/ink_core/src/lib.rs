@@ -6,6 +6,7 @@ pub mod brush;
 pub mod bvh;
 pub mod export;
 pub mod fill;
+pub mod generator;
 pub mod history;
 pub mod layer;
 pub mod mesh;
@@ -21,6 +22,7 @@ pub use brush::{
 };
 pub use bvh::{Bvh, RayHit};
 pub use fill::{FillShape, FillTarget};
+pub use generator::{Generator, GeneratorKind};
 pub use history::{Command, History};
 pub use layer::{
     BlendMode, Blending, ChannelBlend, Content, Effect, EffectKind, Fill, Folder, GrayFill, Layer,

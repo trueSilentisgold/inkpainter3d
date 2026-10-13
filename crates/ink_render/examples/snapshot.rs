@@ -43,6 +43,10 @@
 //! `bakehigh=file.obj` is the high-poly, `rays=16`, `sub=2`, `dilation=8`, `front=0.1` and `rear=0.1` tune it, and
 //! `bprobe=map,x,y` prints a texel as `bprobe map x y r g b` (8 bits).
 //!
+//! Generators: `generator=edge_wear` (a `GeneratorKind::key`) puts a red fill layer with a black
+//! mask holding that generator on top; `gparam=key:value` (may be given several times) sets
+//! its parameters. Bake the mesh maps it reads in the same run with `bake=`.
+//!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
 //!
@@ -208,6 +212,27 @@ fn main() -> Result<()> {
         None => center.map_or(0, |hit| model.parts[hit.part].texture_set),
     };
     let target = build_stack(&mut model, set, &option, &flag)?;
+    if let Some(key) = option("generator") {
+        let kind = ink_core::GeneratorKind::from_key(key)
+            .with_context(|| format!("unknown generator {key}"))?;
+        let mut generator = ink_core::Generator::new(kind);
+        for a in &args[3..] {
+            if let Some((k, v)) = a.strip_prefix("gparam=").and_then(|p| p.split_once(':')) {
+                generator.set(k, v.parse()?);
+            }
+        }
+        let mut layer = Layer::new(LayerKind::Fill, "Generator".into(), &mut model.ids);
+        if let Content::Fill(fill) = &mut layer.content {
+            fill.values.base_color = [0.9, 0.1, 0.1];
+        }
+        let mut mask = Mask::new(0.0, model.next_id());
+        mask.effects.push(Effect::new(
+            model.next_id(),
+            EffectKind::Generator(generator),
+        ));
+        layer.mask = Some(mask);
+        model.texture_sets[set].stack.layers.push(layer);
+    }
     for layer in model.texture_sets[set].stack.iter() {
         let b = layer.blending.get(Channel::BaseColor);
         eprintln!(

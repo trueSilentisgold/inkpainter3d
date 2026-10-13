@@ -1185,7 +1185,14 @@ mod tests {
         validate("paint_seeds.wgsl", include_str!("paint_seeds.wgsl"));
         validate("paint_depth.wgsl", include_str!("paint_depth.wgsl"));
         validate("paint_tiles.wgsl", include_str!("paint_tiles.wgsl"));
-        validate("composite.wgsl", include_str!("composite.wgsl"));
+        validate(
+            "composite.wgsl",
+            &format!(
+                "{}\n{}",
+                include_str!("composite.wgsl"),
+                include_str!("generators.wgsl")
+            ),
+        );
         validate(
             "composite_resolve.wgsl",
             include_str!("composite_resolve.wgsl"),

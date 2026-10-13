@@ -4,10 +4,11 @@
 use super::InkApp;
 use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Image, ImageSource, Key, RichText, Sense, Stroke as Line, vec2};
+use ink_core::generator::ParamKind;
 use ink_core::{
     BlendMode, Channel, ChannelKind, ChannelSet, Command, Content, Effect, EffectKind, Fill,
-    GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place, Projection, ProjectionMode,
-    TextureImage,
+    Generator, GeneratorKind, GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place,
+    Projection, ProjectionMode, TextureImage,
 };
 use std::sync::Arc;
 
@@ -578,6 +579,7 @@ impl InkApp {
             EffectKind::Paint(_) => "Add paint effect",
             EffectKind::Fill(_) => "Add fill effect",
             EffectKind::Levels(_) => "Add levels",
+            EffectKind::Generator(_) => "Add generator",
         });
         let has_mask = self
             .stack()
@@ -820,6 +822,15 @@ impl InkApp {
             self.add_effect(layer, EffectKind::Levels(Levels::default()));
             ui.close();
         }
+        ui.separator();
+        ui.label(RichText::new("GENERATORS").small().color(theme::TEXT_WEAK));
+        for kind in GeneratorKind::ALL {
+            if icon_text_button(ui, icons::EFFECT_GENERATOR, kind.label()) {
+                self.add_effect(layer, EffectKind::Generator(Generator::new(kind)));
+                ui.close();
+            }
+        }
+        ui.separator();
         ui.label(
             RichText::new("Effects go into the mask; one is added if needed.")
                 .small()
@@ -1285,6 +1296,7 @@ impl InkApp {
             EffectKind::Paint(_) => icons::LAYER_PAINT,
             EffectKind::Fill(_) => icons::LAYER_FILL,
             EffectKind::Levels(_) => icons::EFFECT_LEVELS,
+            EffectKind::Generator(_) => icons::EFFECT_GENERATOR,
         };
         let tint = if effect.visible {
             theme::TEXT
@@ -1438,6 +1450,7 @@ impl InkApp {
                 match &mut edited.kind {
                     EffectKind::Fill(gray) => gray_fill_properties(ui, gray, &images, &mut load),
                     EffectKind::Levels(levels) => levels_properties(ui, levels),
+                    EffectKind::Generator(generator) => generator_properties(ui, generator),
                     EffectKind::Paint(_) => return false,
                 }
                 if edited != effect {
@@ -1464,6 +1477,7 @@ impl InkApp {
             Target::Effect(id) => match layer.mask.as_ref()?.effect(id)?.kind {
                 EffectKind::Fill(_) => Some("Fill"),
                 EffectKind::Levels(_) => Some("Levels"),
+                EffectKind::Generator(_) => Some("Generator"),
                 EffectKind::Paint(_) => None,
             },
             Target::Mask => None,
@@ -1806,6 +1820,59 @@ fn gray_fill_properties(
             image_slot(ui, &mut fill.image, images, None, load);
         });
         ui.end_row();
+    });
+}
+
+/// The parameters of a generator, from its description.
+fn generator_properties(ui: &mut egui::Ui, generator: &mut Generator) {
+    let kind = generator.kind;
+    theme::group_label(ui, kind.label());
+    let missing = !kind.mesh_maps().is_empty();
+    if missing {
+        let names: Vec<&str> = kind.mesh_maps().iter().map(|m| m.label()).collect();
+        ui.label(
+            RichText::new(format!(
+                "Reads: {}. Bake them first (Ctrl+Shift+B).",
+                names.join(", ")
+            ))
+            .small()
+            .color(theme::TEXT_WEAK),
+        );
+    }
+    theme::property_grid("generator").show(ui, |ui| {
+        for (i, param) in kind.params().iter().enumerate() {
+            ui.label(param.label);
+            let value = &mut generator.values[i];
+            match param.kind {
+                ParamKind::Choice(names) => {
+                    let mut index = (*value as usize).min(names.len() - 1);
+                    egui::ComboBox::from_id_salt(("generator choice", param.key))
+                        .selected_text(names[index])
+                        .show_ui(ui, |ui| {
+                            for (n, name) in names.iter().enumerate() {
+                                ui.selectable_value(&mut index, n, *name);
+                            }
+                        });
+                    *value = index as f32;
+                }
+                ParamKind::Int => {
+                    let mut n = value.round() as i32;
+                    ui.add(egui::Slider::new(
+                        &mut n,
+                        param.min as i32..=param.max as i32,
+                    ));
+                    *value = n as f32;
+                }
+                ParamKind::Float => {
+                    ui.add(
+                        egui::Slider::new(value, param.min..=param.max)
+                            .logarithmic(param.log)
+                            .max_decimals(2),
+                    );
+                }
+            }
+            ui.end_row();
+        }
     });
 }
 

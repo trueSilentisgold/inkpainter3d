@@ -10,10 +10,10 @@ use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
     Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending,
     BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect,
-    EffectKind, Fill, FillTarget, Folder, GrayFill, IdSource, Ids, Layer, LayerStack, Levels, Mask,
-    Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model, NormalFormat, PaintLayer, Part,
-    Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil, Texels,
-    TextureImage, TextureSet, Tool,
+    EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GrayFill, IdSource, Ids, Layer,
+    LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model, NormalFormat,
+    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil,
+    Texels, TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -484,6 +484,15 @@ enum FileEffectKind {
     Paint(FilePaint),
     Fill(FileGrayFill),
     Levels(FileLevels),
+    Generator(FileGenerator),
+}
+
+/// A generator by the keys of its kind and parameters, so the order of the parameters in the
+/// program can change.
+#[derive(Serialize, Deserialize)]
+struct FileGenerator {
+    kind: String,
+    params: BTreeMap<String, f32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -824,6 +833,16 @@ impl Saver {
                                 input: finite_n(levels.input),
                                 gamma: finite(levels.gamma),
                                 output: finite_n(levels.output),
+                            }),
+                            EffectKind::Generator(g) => FileEffectKind::Generator(FileGenerator {
+                                kind: g.kind.key().to_owned(),
+                                params: g
+                                    .kind
+                                    .params()
+                                    .iter()
+                                    .zip(g.values)
+                                    .map(|(p, v)| (p.key.to_owned(), finite(v)))
+                                    .collect(),
                             }),
                         },
                     })
@@ -1426,6 +1445,15 @@ impl Loader<'_> {
                             gamma: levels.gamma,
                             output: levels.output,
                         }),
+                        FileEffectKind::Generator(g) => {
+                            let kind = GeneratorKind::from_key(&g.kind)
+                                .with_context(|| format!("Unknown generator {:?}", g.kind))?;
+                            let mut generator = Generator::new(kind);
+                            for (key, value) in g.params {
+                                generator.set(&key, value);
+                            }
+                            EffectKind::Generator(generator)
+                        }
                     };
                     effects.push(Effect {
                         id,
@@ -1833,6 +1861,11 @@ mod tests {
         );
         levels.visible = false;
         mask.effects.push(levels);
+        let mut wear = Generator::new(GeneratorKind::EdgeWear);
+        wear.set("noise_scale", 33.0);
+        wear.set("invert", 1.0);
+        mask.effects
+            .push(Effect::new(ids.next(), EffectKind::Generator(wear)));
         mask.enabled = false;
         fill.mask = Some(mask);
         let mut folder = Layer::new(LayerKind::Folder, "Dirt".into(), ids);
