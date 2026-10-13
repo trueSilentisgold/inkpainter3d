@@ -656,7 +656,7 @@ Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) 
       Painter. Das Layout merkt sich das Programm beim Beenden; Window → Save layout und
       Load layout schreiben und lesen Dateien, Reset layout stellt das Standard-Layout her.
 - [ ] `P1` Dunkles Design, skalierbar für HiDPI
-- [ ] `P1` Deutsche und englische Oberfläche
+- [ ] `P2` Deutsche Oberfläche (mit den Begriffen der deutschen Painter-Oberfläche). Die Oberfläche ist bewusst englisch, damit möglichst viele Menschen das Programm nutzen können; weitere Sprachen folgen im Feinschliff.
 
 ---
 
@@ -762,10 +762,10 @@ texturieren und exportieren.**
 | 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ✅ fertig |
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
-| 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts, deutsche und englische Oberfläche | ⏳ in Arbeit |
+| 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
 | 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
 | 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
 | 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
-| 12 | **Feinschliff:** UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |
+| 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |

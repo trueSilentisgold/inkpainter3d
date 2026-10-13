@@ -23,7 +23,7 @@
 
 > **Status:** early development. A game asset can already be textured and exported end to
 > end: viewport, texture sets, brush engine, layer stack with masks, project files and
-> export are done. The interface is being finished, baking comes next.
+> export, and the interface with dockable panels are done. Next come brushes and a shelf, then baking.
 > See the [roadmap](#roadmap).
 
 <p align="center">
@@ -159,13 +159,13 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | ✅ done |
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
-| 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts, German and English UI | ⏳ in progress |
+| 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts; the interface stays English for now | ✅ done |
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
 | 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
 | 10 | **Remaining tools** — projection, symmetry, stencil, color selection, geometry mask, anchor points | |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
-| 12 | **Polish** — UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
+| 12 | **Polish** — translations, UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 
 ## Getting started
 
