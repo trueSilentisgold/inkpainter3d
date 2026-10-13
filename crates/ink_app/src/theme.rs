@@ -246,7 +246,8 @@ pub mod icons {
 
     macro_rules! icons {
         ($($name:ident = $file:literal,)*) => {
-            $(pub const $name: ImageSource<'static> =
+            $(#[allow(dead_code)]
+            pub const $name: ImageSource<'static> =
                 include_image!(concat!("../../../assets/icons/", $file, ".svg"));)*
         };
     }

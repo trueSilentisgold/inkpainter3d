@@ -2,7 +2,8 @@
 //! selection, the edits on them with undo, and the properties of fill layers and effects.
 
 use super::InkApp;
-use eframe::egui::{self, Color32, Key, RichText, Sense, Stroke as Line};
+use crate::theme::{self, icons};
+use eframe::egui::{self, Color32, Image, ImageSource, Key, RichText, Sense, Stroke as Line, vec2};
 use ink_core::{
     BlendMode, Channel, ChannelKind, ChannelSet, Command, Content, Effect, EffectKind, Fill,
     GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place, Projection, ProjectionMode,
@@ -12,6 +13,9 @@ use std::sync::Arc;
 
 /// Largest projection scale and offset: typed values like "inf" stay finite.
 const PROJECTION_RANGE: f32 = 1000.0;
+/// Width of a slider next to an image slot: shorter than usual, so that both fit into the
+/// control column of the property grids.
+const SLOT_SLIDER_WIDTH: f32 = 72.0;
 
 /// What in a layer is selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,7 +136,7 @@ struct EffectDrop {
     line: [egui::Pos2; 2],
 }
 
-const ROW_HEIGHT: f32 = 34.0;
+const ROW_HEIGHT: f32 = 36.0;
 const INDENT: f32 = 14.0;
 
 impl InkApp {
@@ -642,8 +646,7 @@ impl InkApp {
         self.drop_effect(ui);
         if let Some(id) = dragged {
             if let Some(drop) = &drop {
-                ui.painter()
-                    .line_segment(drop.line, Line::new(2.0, ui.visuals().selection.bg_fill));
+                ui.painter().line_segment(drop.line, theme::DROP_LINE);
             }
             if ui.input(|i| i.pointer.any_released()) {
                 if let Some(drop) = drop
@@ -676,51 +679,72 @@ impl InkApp {
                 })
                 .response
                 .on_hover_text("The channel whose blending mode and opacity the layers show");
+            // Painter's order, left to right: effect, mask, paint layer, fill layer, folder,
+            // delete. The layout runs right to left, so the buttons are added the other way.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
                 let enabled = selected.is_some();
                 if ui
-                    .add_enabled(enabled, egui::Button::new("🗑"))
-                    .on_hover_text("Delete the selected layer or effect (Delete)")
+                    .add_enabled_ui(enabled, |ui| {
+                        theme::icon_button(
+                            ui,
+                            icons::DELETE,
+                            "Delete the selected layer or effect (Delete)",
+                        )
+                    })
+                    .inner
                     .clicked()
                 {
                     self.delete_selected();
                 }
-                if ui
-                    .button("🗀")
-                    .on_hover_text("Add a folder above the selected layer")
-                    .clicked()
+                if theme::icon_button(
+                    ui,
+                    icons::ADD_FOLDER,
+                    "Add a folder above the selected layer",
+                )
+                .clicked()
                 {
                     self.add_layer(LayerKind::Folder);
                 }
-                if ui
-                    .button("🎨")
-                    .on_hover_text("Add a fill layer above the selected layer")
-                    .clicked()
+                if theme::icon_button(
+                    ui,
+                    icons::ADD_FILL_LAYER,
+                    "Add a fill layer above the selected layer",
+                )
+                .clicked()
                 {
                     self.add_layer(LayerKind::Fill);
                 }
-                if ui
-                    .button("🖊")
-                    .on_hover_text("Add a paint layer above the selected layer")
-                    .clicked()
+                if theme::icon_button(
+                    ui,
+                    icons::ADD_PAINT_LAYER,
+                    "Add a paint layer above the selected layer",
+                )
+                .clicked()
                 {
                     self.add_layer(LayerKind::Paint);
                 }
                 ui.add_enabled_ui(enabled, |ui| {
-                    ui.menu_button("◑", |ui| {
-                        if let Some(layer) = selected {
-                            self.mask_menu(ui, layer);
-                        }
-                    })
-                    .response
-                    .on_hover_text("Add a mask to the selected layer");
-                    ui.menu_button("✨", |ui| {
-                        if let Some(layer) = selected {
-                            self.effect_menu(ui, layer);
-                        }
-                    })
-                    .response
-                    .on_hover_text("Add an effect to the selected layer's mask");
+                    theme::icon_menu(
+                        ui,
+                        icons::ADD_MASK,
+                        "Add a mask to the selected layer",
+                        |ui| {
+                            if let Some(layer) = selected {
+                                self.mask_menu(ui, layer);
+                            }
+                        },
+                    );
+                    theme::icon_menu(
+                        ui,
+                        icons::ADD_EFFECT,
+                        "Add an effect to the selected layer's mask",
+                        |ui| {
+                            if let Some(layer) = selected {
+                                self.effect_menu(ui, layer);
+                            }
+                        },
+                    );
                 });
             });
         });
@@ -767,15 +791,15 @@ impl InkApp {
     }
 
     fn effect_menu(&mut self, ui: &mut egui::Ui, layer: u64) {
-        if ui.button("Add paint").clicked() {
+        if icon_text_button(ui, icons::LAYER_PAINT, "Add paint") {
             self.add_effect(layer, EffectKind::Paint(ink_core::PaintLayer::new(0)));
             ui.close();
         }
-        if ui.button("Add fill").clicked() {
+        if icon_text_button(ui, icons::LAYER_FILL, "Add fill") {
             self.add_effect(layer, EffectKind::Fill(GrayFill::default()));
             ui.close();
         }
-        if ui.button("Add levels").clicked() {
+        if icon_text_button(ui, icons::EFFECT_LEVELS, "Add levels") {
             self.add_effect(layer, EffectKind::Levels(Levels::default()));
             ui.close();
         }
@@ -874,14 +898,7 @@ impl InkApp {
         let width = ui.available_width();
         let (rect, row) =
             ui.allocate_exact_size(egui::vec2(width, ROW_HEIGHT), Sense::click_and_drag());
-        let visuals = ui.visuals().clone();
-        if main || extra {
-            ui.painter()
-                .rect_filled(rect, 3.0, visuals.selection.bg_fill.gamma_multiply(0.35));
-        } else if row.hovered() {
-            ui.painter()
-                .rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
-        }
+        theme::paint_row(ui, rect, main || extra, row.hovered());
         if row.drag_started_by(egui::PointerButton::Primary) {
             egui::DragAndDrop::set_payload(ui.ctx(), layer.id);
             if !main && !extra {
@@ -892,23 +909,23 @@ impl InkApp {
             && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
         {
             ui.painter().text(
-                pointer + egui::vec2(14.0, 0.0),
+                pointer + vec2(14.0, 0.0),
                 egui::Align2::LEFT_CENTER,
                 &layer.name,
                 egui::FontId::proportional(13.0),
-                visuals.strong_text_color(),
+                theme::TEXT_STRONG,
             );
         }
 
         let mut child = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(rect.shrink2(egui::vec2(4.0, 2.0)))
+                .max_rect(rect.shrink2(vec2(4.0, 2.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         let ui = &mut child;
         ui.add_space(depth as f32 * INDENT);
         // Eye.
-        if super::eye(ui, layer.visible).clicked() {
+        if theme::eye(ui, layer.visible).clicked() {
             if let Some(l) = self.stack_mut().and_then(|s| s.find_mut(layer.id)) {
                 l.visible = !l.visible;
             }
@@ -921,8 +938,7 @@ impl InkApp {
                 .is_some_and(|s| s.target == Target::Content);
         let content_thumb = match &layer.content {
             Content::Folder(folder) => {
-                let arrow = if folder.expanded { "⏷" } else { "⏵" };
-                if ui.add(egui::Button::new(arrow).frame(false)).clicked()
+                if theme::disclosure(ui, folder.expanded).clicked()
                     && let Some(Content::Folder(f)) = self
                         .stack_mut()
                         .and_then(|s| s.find_mut(layer.id))
@@ -930,24 +946,17 @@ impl InkApp {
                 {
                     f.expanded = !f.expanded;
                 }
-                thumbnail(ui, content_selected, |painter, r| {
-                    painter.text(
-                        r.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "🗀",
-                        egui::FontId::proportional(14.0),
-                        Color32::from_gray(210),
-                    );
+                let glyph = if folder.expanded {
+                    icons::FOLDER_OPEN
+                } else {
+                    icons::FOLDER
+                };
+                thumbnail(ui, content_selected, |ui, rect| {
+                    paint_icon(ui, glyph, theme::ICON, rect.center());
                 })
             }
-            Content::Paint(_) => thumbnail(ui, content_selected, |painter, r| {
-                painter.text(
-                    r.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "🖊",
-                    egui::FontId::proportional(14.0),
-                    Color32::from_gray(210),
-                );
+            Content::Paint(_) => thumbnail(ui, content_selected, |ui, rect| {
+                paint_icon(ui, icons::LAYER_PAINT, theme::ICON, rect.center());
             }),
             Content::Fill(fill) => {
                 let [r, g, b] = fill
@@ -955,17 +964,21 @@ impl InkApp {
                     .base_color
                     .map(|c| (c.clamp(0.0, 1.0) * 255.0) as u8);
                 let has_color = fill.channels.contains(Channel::BaseColor);
-                thumbnail(ui, content_selected, |painter, rect| {
+                thumbnail(ui, content_selected, |ui, rect| {
                     if has_color {
-                        painter.rect_filled(rect.shrink(3.0), 2.0, Color32::from_rgb(r, g, b));
+                        ui.painter()
+                            .rect_filled(rect.shrink(3.0), 2.0, Color32::from_rgb(r, g, b));
+                        // The badge sits on a plate, so that it reads on any color.
+                        let badge = rect.right_bottom() - vec2(8.0, 8.0);
+                        ui.painter().rect_filled(
+                            egui::Rect::from_center_size(badge, egui::Vec2::splat(14.0)),
+                            3.0,
+                            theme::RAISED,
+                        );
+                        paint_icon(ui, icons::LAYER_FILL, 12.0, badge);
+                    } else {
+                        paint_icon(ui, icons::LAYER_FILL, theme::ICON, rect.center());
                     }
-                    painter.text(
-                        rect.right_bottom() - egui::vec2(5.0, 5.0),
-                        egui::Align2::CENTER_CENTER,
-                        "🎨",
-                        egui::FontId::proportional(9.0),
-                        Color32::WHITE,
-                    );
                 })
             }
         };
@@ -976,7 +989,8 @@ impl InkApp {
                 && selection
                     .as_ref()
                     .is_some_and(|s| s.target != Target::Content);
-            let response = thumbnail(ui, mask_selected, |painter, rect| {
+            let response = thumbnail(ui, mask_selected, |ui, rect| {
+                let painter = ui.painter();
                 let v = (mask.background * 255.0) as u8;
                 painter.rect_filled(rect.shrink(3.0), 1.0, Color32::from_gray(v));
                 if !mask.paint.strokes.is_empty() || !mask.effects.is_empty() {
@@ -986,11 +1000,11 @@ impl InkApp {
                     let r = rect.shrink(3.0);
                     painter.line_segment(
                         [r.left_top(), r.right_bottom()],
-                        Line::new(2.0, Color32::RED),
+                        Line::new(2.0, theme::DANGER),
                     );
                     painter.line_segment(
                         [r.right_top(), r.left_bottom()],
-                        Line::new(2.0, Color32::RED),
+                        Line::new(2.0, theme::DANGER),
                     );
                 }
             })
@@ -1035,10 +1049,10 @@ impl InkApp {
         } else {
             let mut name = RichText::new(&layer.name);
             if !layer.visible {
-                name = name.weak();
+                name = name.color(theme::TEXT_DISABLED);
             }
             if extra {
-                name = name.color(visuals.selection.stroke.color);
+                name = name.color(theme::TEXT_STRONG);
             }
             ui.add(egui::Label::new(name).truncate().selectable(false));
         }
@@ -1092,42 +1106,42 @@ impl InkApp {
         // Right-aligned: the parent lays out right to left, a plain vertical would start
         // right after the name.
         ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
+            // Two stacked controls have to fit into the row.
+            let spacing = ui.spacing_mut();
+            spacing.item_spacing.y = 0.0;
+            spacing.button_padding.y = 1.0;
+            spacing.interact_size.y = 14.0;
             let mut mode = blend.mode;
-            ui.menu_button(
-                RichText::new(format!("{} ⏷", mode.short_label())).small(),
-                |ui| {
-                    for m in BlendMode::ALL {
-                        if !folder && !m.for_layers() {
-                            continue;
-                        }
-                        if m == BlendMode::Multiply
-                            || m == BlendMode::Tint
-                            || m == BlendMode::NormalMapCombine
-                        {
-                            ui.separator();
-                        }
-                        if ui.selectable_label(m == mode, m.label()).clicked() {
-                            mode = m;
-                            ui.close();
-                        }
+            dropdown(ui, mode.short_label(), |ui| {
+                for m in BlendMode::ALL {
+                    if !folder && !m.for_layers() {
+                        continue;
                     }
-                    // (Not a context menu on the button: it would share the menu's popup.)
-                    ui.separator();
-                    if ui
-                        .button("Apply to all channels")
-                        .on_hover_text(format!(
-                            "Use this mode and opacity of {} for every channel",
-                            channel.label()
-                        ))
-                        .clicked()
+                    if m == BlendMode::Multiply
+                        || m == BlendMode::Tint
+                        || m == BlendMode::NormalMapCombine
                     {
-                        self.apply_blend_to_all(layer.id, blend.mode, blend.opacity);
+                        ui.separator();
+                    }
+                    if ui.selectable_label(m == mode, m.label()).clicked() {
+                        mode = m;
                         ui.close();
                     }
-                },
-            )
-            .response
+                }
+                // (Not a context menu on the button: it would share the menu's popup.)
+                ui.separator();
+                if ui
+                    .button("Apply to all channels")
+                    .on_hover_text(format!(
+                        "Use this mode and opacity of {} for every channel",
+                        channel.label()
+                    ))
+                    .clicked()
+                {
+                    self.apply_blend_to_all(layer.id, blend.mode, blend.opacity);
+                    ui.close();
+                }
+            })
             .on_hover_text(format!("{}: {}", channel.label(), blend.mode.label()));
             let mut opacity = blend.opacity * 100.0;
             ui.add(
@@ -1173,8 +1187,7 @@ impl InkApp {
             return;
         };
         if let Some(drop) = self.layers.effect_drop {
-            ui.painter()
-                .line_segment(drop.line, Line::new(2.0, ui.visuals().selection.bg_fill));
+            ui.painter().line_segment(drop.line, theme::DROP_LINE);
         }
         if !ui.input(|i| i.pointer.any_released()) {
             return;
@@ -1241,39 +1254,35 @@ impl InkApp {
                 line: [egui::pos2(left, y), egui::pos2(rect.right(), y)],
             });
         }
-        let visuals = ui.visuals().clone();
-        if selected {
-            ui.painter()
-                .rect_filled(rect, 3.0, visuals.selection.bg_fill.gamma_multiply(0.35));
-        } else if row.hovered() {
-            ui.painter()
-                .rect_filled(rect, 3.0, visuals.widgets.hovered.weak_bg_fill);
-        }
+        theme::paint_row(ui, rect, selected, row.hovered());
         let mut child = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(rect.shrink2(egui::vec2(4.0, 1.0)))
+                .max_rect(rect.shrink2(vec2(4.0, 1.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         let ui = &mut child;
         ui.add_space(depth as f32 * INDENT);
         let mut changed: Option<Effect> = None;
-        if super::eye(ui, effect.visible).clicked() {
+        if theme::eye(ui, effect.visible).clicked() {
             let mut e = effect.clone();
             e.visible = !e.visible;
             changed = Some(e);
         }
-        let icon = match effect.kind {
-            EffectKind::Paint(_) => "🖊",
-            EffectKind::Fill(_) => "🎨",
-            EffectKind::Levels(_) => "📊",
+        let kind_icon = match effect.kind {
+            EffectKind::Paint(_) => icons::LAYER_PAINT,
+            EffectKind::Fill(_) => icons::LAYER_FILL,
+            EffectKind::Levels(_) => icons::EFFECT_LEVELS,
         };
-        ui.label(format!("{icon} {}", effect.label()));
+        let tint = if effect.visible {
+            theme::TEXT
+        } else {
+            theme::TEXT_DISABLED
+        };
+        ui.add(theme::icon(kind_icon, theme::ICON, tint));
+        ui.add(egui::Label::new(RichText::new(effect.label()).color(tint)).selectable(false));
         let mut remove = false;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            remove = ui
-                .add(egui::Button::new("✖").frame(false))
-                .on_hover_text("Remove the effect")
-                .clicked();
+            remove = theme::icon_button(ui, icons::REMOVE, "Remove the effect").clicked();
             // Levels has no blending, as in Painter.
             if !matches!(effect.kind, EffectKind::Levels(_)) {
                 let mut opacity = effect.opacity * 100.0;
@@ -1284,17 +1293,14 @@ impl InkApp {
                         .max_decimals(0),
                 );
                 let mut mode = effect.blend;
-                ui.menu_button(
-                    RichText::new(format!("{} ⏷", mode.short_label())).small(),
-                    |ui| {
-                        for m in BlendMode::ALL.into_iter().filter(|m| m.for_masks()) {
-                            if ui.selectable_label(m == mode, m.label()).clicked() {
-                                mode = m;
-                                ui.close();
-                            }
+                dropdown(ui, mode.short_label(), |ui| {
+                    for m in BlendMode::ALL.into_iter().filter(|m| m.for_masks()) {
+                        if ui.selectable_label(m == mode, m.label()).clicked() {
+                            mode = m;
+                            ui.close();
                         }
-                    },
-                );
+                    }
+                });
                 if mode != effect.blend || (opacity / 100.0 - effect.opacity).abs() > f32::EPSILON {
                     let mut e = changed.take().unwrap_or_else(|| effect.clone());
                     e.blend = mode;
@@ -1515,21 +1521,48 @@ struct LoadRequest {
 fn thumbnail(
     ui: &mut egui::Ui,
     selected: bool,
-    paint: impl FnOnce(&egui::Painter, egui::Rect),
+    paint: impl FnOnce(&egui::Ui, egui::Rect),
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), Sense::click());
-    let painter = ui.painter();
-    painter.rect_filled(rect, 3.0, Color32::from_gray(45));
-    paint(painter, rect);
+    let (rect, response) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+    ui.painter().rect_filled(rect, 3.0, theme::RAISED);
+    paint(ui, rect);
     if selected {
-        painter.rect_stroke(
+        ui.painter().rect_stroke(
             rect,
             3.0,
-            Line::new(2.0, ui.visuals().selection.stroke.color),
+            Line::new(2.0, theme::OLIVE),
             egui::StrokeKind::Inside,
         );
     }
     response
+}
+
+/// An icon centered at a point, in the color of text.
+fn paint_icon(ui: &egui::Ui, source: ImageSource<'static>, size: f32, center: egui::Pos2) {
+    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(size));
+    theme::icon(source, size, theme::TEXT).paint_at(ui, rect);
+}
+
+/// A dropdown button of a row: the text with a small chevron, framed only when hovered.
+fn dropdown<R>(
+    ui: &mut egui::Ui,
+    text: &str,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::Response {
+    let chevron = Image::new(icons::CHEVRON_DOWN).fit_to_exact_size(egui::Vec2::splat(10.0));
+    let button = egui::Button::new((RichText::new(text).small(), chevron))
+        .image_tint_follows_text_color(true)
+        .frame_when_inactive(false);
+    egui::containers::menu::MenuButton::from_button(button)
+        .ui(ui, add_contents)
+        .0
+}
+
+/// A button, or menu item, with an icon in front of its text.
+fn icon_text_button(ui: &mut egui::Ui, source: ImageSource<'static>, text: &str) -> bool {
+    let icon = Image::new(source).fit_to_exact_size(egui::Vec2::splat(theme::ICON));
+    ui.add(egui::Button::new((icon, text)).image_tint_follows_text_color(true))
+        .clicked()
 }
 
 /// "Layer 1 copy 1", "Layer 1 copy 2", …
@@ -1545,90 +1578,84 @@ fn copy_name(stack: &LayerStack, name: &str) -> String {
 }
 
 fn projection_ui(ui: &mut egui::Ui, projection: &mut Projection) {
-    egui::Grid::new("projection")
-        .num_columns(2)
-        .spacing([12.0, 6.0])
-        .show(ui, |ui| {
-            ui.label("Projection");
-            egui::ComboBox::from_id_salt("projection mode")
-                .selected_text(match projection.mode {
-                    ProjectionMode::Uv => "UV projection",
-                    ProjectionMode::TriPlanar => "Tri-planar projection",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut projection.mode, ProjectionMode::Uv, "UV projection");
-                    ui.selectable_value(
-                        &mut projection.mode,
-                        ProjectionMode::TriPlanar,
-                        "Tri-planar projection",
-                    );
-                });
+    theme::property_grid("projection").show(ui, |ui| {
+        ui.label("Projection");
+        egui::ComboBox::from_id_salt("projection mode")
+            .selected_text(match projection.mode {
+                ProjectionMode::Uv => "UV projection",
+                ProjectionMode::TriPlanar => "Tri-planar projection",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut projection.mode, ProjectionMode::Uv, "UV projection");
+                ui.selectable_value(
+                    &mut projection.mode,
+                    ProjectionMode::TriPlanar,
+                    "Tri-planar projection",
+                );
+            });
+        ui.end_row();
+        if projection.mode == ProjectionMode::TriPlanar {
+            ui.label("Hardness");
+            ui.add(egui::Slider::new(&mut projection.hardness, 0.0..=1.0));
             ui.end_row();
-            if projection.mode == ProjectionMode::TriPlanar {
-                ui.label("Hardness");
-                ui.add(egui::Slider::new(&mut projection.hardness, 0.0..=1.0));
-                ui.end_row();
-            }
-            ui.label("Scale");
-            ui.horizontal(|ui| {
-                let speed = 0.01 * projection.scale[0].abs().max(0.1);
-                let changed = ui
-                    .add(
-                        egui::DragValue::new(&mut projection.scale[0])
-                            .speed(speed)
-                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
-                            .max_decimals(3),
-                    )
-                    .changed();
-                let locked = ui.id().with("scale lock");
-                let mut lock = ui.data(|d| d.get_temp::<bool>(locked)).unwrap_or(true);
-                if lock {
-                    if changed {
-                        projection.scale[1] = projection.scale[0];
-                    }
-                } else {
-                    let speed = 0.01 * projection.scale[1].abs().max(0.1);
-                    ui.add(
-                        egui::DragValue::new(&mut projection.scale[1])
-                            .speed(speed)
-                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
-                            .max_decimals(3),
-                    );
-                }
-                if ui
-                    .toggle_value(&mut lock, "🔒")
-                    .on_hover_text("Same scale for U and V")
-                    .changed()
-                    && lock
-                {
+        }
+        ui.label("Scale");
+        ui.horizontal(|ui| {
+            let speed = 0.01 * projection.scale[0].abs().max(0.1);
+            let changed = ui
+                .add(
+                    egui::DragValue::new(&mut projection.scale[0])
+                        .speed(speed)
+                        .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
+                        .max_decimals(3),
+                )
+                .changed();
+            let locked = ui.id().with("scale lock");
+            let mut lock = ui.data(|d| d.get_temp::<bool>(locked)).unwrap_or(true);
+            if lock {
+                if changed {
                     projection.scale[1] = projection.scale[0];
                 }
-                ui.data_mut(|d| d.insert_temp(locked, lock));
+            } else {
+                let speed = 0.01 * projection.scale[1].abs().max(0.1);
+                ui.add(
+                    egui::DragValue::new(&mut projection.scale[1])
+                        .speed(speed)
+                        .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
+                        .max_decimals(3),
+                );
+            }
+            let glyph = if lock { icons::LINK } else { icons::UNLINK };
+            if theme::icon_toggle(ui, glyph, &mut lock, "Same scale for U and V").changed() && lock
+            {
+                projection.scale[1] = projection.scale[0];
+            }
+            ui.data_mut(|d| d.insert_temp(locked, lock));
+        });
+        ui.end_row();
+        ui.label("Rotation");
+        ui.add(egui::Slider::new(&mut projection.rotation, 0.0..=360.0).suffix("°"));
+        ui.end_row();
+        // Painter has no UV offset for tri-planar projections.
+        if projection.mode == ProjectionMode::Uv {
+            ui.label("Offset");
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut projection.offset[0])
+                        .speed(0.005)
+                        .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
+                        .max_decimals(3),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut projection.offset[1])
+                        .speed(0.005)
+                        .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
+                        .max_decimals(3),
+                );
             });
             ui.end_row();
-            ui.label("Rotation");
-            ui.add(egui::Slider::new(&mut projection.rotation, 0.0..=360.0).suffix("°"));
-            ui.end_row();
-            // Painter has no UV offset for tri-planar projections.
-            if projection.mode == ProjectionMode::Uv {
-                ui.label("Offset");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::DragValue::new(&mut projection.offset[0])
-                            .speed(0.005)
-                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
-                            .max_decimals(3),
-                    );
-                    ui.add(
-                        egui::DragValue::new(&mut projection.offset[1])
-                            .speed(0.005)
-                            .range(-PROJECTION_RANGE..=PROJECTION_RANGE)
-                            .max_decimals(3),
-                    );
-                });
-                ui.end_row();
-            }
-        });
+        }
+    });
 }
 
 /// An image slot: the image's name with a menu to load or pick one, and a button to clear.
@@ -1642,34 +1669,37 @@ fn image_slot(
     let text = image
         .as_ref()
         .map_or("uniform".to_owned(), |i| i.name.clone());
-    ui.menu_button(RichText::new(format!("🖼 {text}")).small(), |ui| {
-        if ui.button("Load image…").clicked() {
-            *load = Some(LoadRequest {
-                channel,
-                image: None,
-            });
-            ui.close();
-        }
-        if !images.is_empty() {
-            ui.separator();
-            for i in images {
-                if ui.button(&i.name).clicked() {
-                    *load = Some(LoadRequest {
-                        channel,
-                        image: Some(i.clone()),
-                    });
-                    ui.close();
+    let button = egui::Button::new((
+        Image::new(icons::IMAGE).fit_to_exact_size(egui::Vec2::splat(theme::ICON)),
+        RichText::new(text).small(),
+    ))
+    .image_tint_follows_text_color(true);
+    egui::containers::menu::MenuButton::from_button(button)
+        .ui(ui, |ui| {
+            if ui.button("Load image…").clicked() {
+                *load = Some(LoadRequest {
+                    channel,
+                    image: None,
+                });
+                ui.close();
+            }
+            if !images.is_empty() {
+                ui.separator();
+                for i in images {
+                    if ui.button(&i.name).clicked() {
+                        *load = Some(LoadRequest {
+                            channel,
+                            image: Some(i.clone()),
+                        });
+                        ui.close();
+                    }
                 }
             }
-        }
-    })
-    .response
-    .on_hover_text("Use an image instead of the uniform value");
+        })
+        .0
+        .on_hover_text("Use an image instead of the uniform value");
     if image.is_some()
-        && ui
-            .add(egui::Button::new("✖").frame(false))
-            .on_hover_text("Back to the uniform value")
-            .clicked()
+        && theme::icon_button(ui, icons::REMOVE, "Back to the uniform value").clicked()
     {
         *image = None;
     }
@@ -1681,17 +1711,16 @@ fn fill_properties(
     images: &[Arc<TextureImage>],
     load: &mut Option<LoadRequest>,
 ) {
-    section(ui, "FILL");
+    theme::group_label(ui, "FILL");
     projection_ui(ui, &mut fill.projection);
 
-    section(ui, "MATERIAL");
+    theme::group_label(ui, "MATERIAL");
     // Painter's channel buttons; Alt+click on base color turns every channel on.
     ui.horizontal_wrapped(|ui| {
         for channel in Channel::ALL {
-            let mut on = fill.channels.contains(channel);
-            let response = ui
-                .toggle_value(&mut on, channel.short_label())
-                .on_hover_text(match channel {
+            let on = fill.channels.contains(channel);
+            let response =
+                theme::chip(ui, on, channel.short_label()).on_hover_text(match channel {
                     Channel::BaseColor => "Set the base color (Alt+click: every channel)",
                     _ => "Set this channel",
                 });
@@ -1699,48 +1728,52 @@ fn fill_properties(
                 if channel == Channel::BaseColor && ui.input(|i| i.modifiers.alt) {
                     fill.channels = ChannelSet::ALL;
                 } else {
-                    fill.channels.set(channel, on);
+                    fill.channels.set(channel, !on);
                 }
             }
         }
     });
     ui.add_space(4.0);
-    egui::Grid::new("fill material")
-        .num_columns(2)
-        .spacing([12.0, 6.0])
-        .show(ui, |ui| {
-            for channel in Channel::ALL
-                .into_iter()
-                .filter(|&c| fill.channels.contains(c))
-            {
-                ui.label(channel.label());
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        if fill.images[channel.index()].is_none() {
-                            super::channel_value_edit(ui, &mut fill.values, channel);
-                        }
-                        image_slot(
-                            ui,
-                            &mut fill.images[channel.index()],
-                            images,
-                            Some(channel),
-                            load,
-                        );
-                    });
-                    if channel.kind() == ChannelKind::Normal
-                        && fill.images[channel.index()].is_some()
-                    {
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut fill.normal_directx, true, "DirectX");
-                            ui.selectable_value(&mut fill.normal_directx, false, "OpenGL");
-                        })
-                        .response
-                        .on_hover_text("Normal map format of the image; Painter assumes DirectX");
+    theme::property_grid("fill material").show(ui, |ui| {
+        for channel in Channel::ALL
+            .into_iter()
+            .filter(|&c| fill.channels.contains(c))
+        {
+            ui.label(channel.label());
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().slider_width = SLOT_SLIDER_WIDTH;
+                    if fill.images[channel.index()].is_none() {
+                        super::channel_value_edit(ui, &mut fill.values, channel);
                     }
+                    image_slot(
+                        ui,
+                        &mut fill.images[channel.index()],
+                        images,
+                        Some(channel),
+                        load,
+                    );
                 });
-                ui.end_row();
-            }
-        });
+                if channel.kind() == ChannelKind::Normal && fill.images[channel.index()].is_some() {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for (directx, label) in [(true, "DirectX"), (false, "OpenGL")] {
+                            let selected = fill.normal_directx == directx;
+                            // Both look like buttons, the selected one in olive.
+                            let button =
+                                egui::Button::selectable(selected, label).frame_when_inactive(true);
+                            if ui.add(button).clicked() {
+                                fill.normal_directx = directx;
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Normal map format of the image; Painter assumes DirectX");
+                }
+            });
+            ui.end_row();
+        }
+    });
 }
 
 fn gray_fill_properties(
@@ -1749,65 +1782,62 @@ fn gray_fill_properties(
     images: &[Arc<TextureImage>],
     load: &mut Option<LoadRequest>,
 ) {
-    section(ui, "FILL");
+    theme::group_label(ui, "FILL");
     projection_ui(ui, &mut fill.projection);
-    section(ui, "GRAYSCALE");
-    ui.horizontal(|ui| {
-        if fill.image.is_none() {
-            ui.add(egui::Slider::new(&mut fill.value, 0.0..=1.0));
-        }
-        image_slot(ui, &mut fill.image, images, None, load);
+    theme::group_label(ui, "GRAYSCALE");
+    theme::property_grid("gray fill").show(ui, |ui| {
+        ui.label("Value");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().slider_width = SLOT_SLIDER_WIDTH;
+            if fill.image.is_none() {
+                ui.add(egui::Slider::new(&mut fill.value, 0.0..=1.0));
+            }
+            image_slot(ui, &mut fill.image, images, None, load);
+        });
+        ui.end_row();
     });
 }
 
 fn levels_properties(ui: &mut egui::Ui, levels: &mut Levels) {
-    section(ui, "LEVELS");
-    egui::Grid::new("levels")
-        .num_columns(2)
-        .spacing([12.0, 6.0])
-        .show(ui, |ui| {
-            ui.label("Input");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut levels.input[0])
-                        .range(0.0..=1.0)
-                        .speed(0.005),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut levels.input[1])
-                        .range(0.0..=1.0)
-                        .speed(0.005),
-                );
-            });
-            ui.end_row();
-            ui.label("Gamma");
-            ui.add(egui::Slider::new(&mut levels.gamma, 0.1..=10.0).logarithmic(true));
-            ui.end_row();
-            ui.label("Output");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut levels.output[0])
-                        .range(0.0..=1.0)
-                        .speed(0.005),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut levels.output[1])
-                        .range(0.0..=1.0)
-                        .speed(0.005),
-                );
-            });
-            ui.end_row();
-            ui.label("");
-            if ui.button("Invert").clicked() {
-                levels.output.swap(0, 1);
-            }
-            ui.end_row();
+    theme::group_label(ui, "LEVELS");
+    theme::property_grid("levels").show(ui, |ui| {
+        ui.label("Input");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut levels.input[0])
+                    .range(0.0..=1.0)
+                    .speed(0.005),
+            );
+            ui.add(
+                egui::DragValue::new(&mut levels.input[1])
+                    .range(0.0..=1.0)
+                    .speed(0.005),
+            );
         });
-}
-
-fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(title).small().weak());
+        ui.end_row();
+        ui.label("Gamma");
+        ui.add(egui::Slider::new(&mut levels.gamma, 0.1..=10.0).logarithmic(true));
+        ui.end_row();
+        ui.label("Output");
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut levels.output[0])
+                    .range(0.0..=1.0)
+                    .speed(0.005),
+            );
+            ui.add(
+                egui::DragValue::new(&mut levels.output[1])
+                    .range(0.0..=1.0)
+                    .speed(0.005),
+            );
+        });
+        ui.end_row();
+        ui.label("");
+        if icon_text_button(ui, icons::INVERT, "Invert") {
+            levels.output.swap(0, 1);
+        }
+        ui.end_row();
+    });
 }
 
 #[cfg(test)]

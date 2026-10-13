@@ -1,3 +1,4 @@
+mod about;
 mod export;
 mod layers;
 mod painting;
@@ -5,6 +6,7 @@ mod project;
 mod views;
 
 use crate::pen::{PenInput, PenNotice};
+use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Key, RichText, Sense};
 use eframe::egui_wgpu::RenderState;
 use ink_core::{AlphaMode, History, Mesh, Model};
@@ -19,6 +21,10 @@ use std::path::{Path, PathBuf};
 use views::Layout;
 
 const RESOLUTIONS: [u32; 6] = [128, 256, 512, 1024, 2048, 4096];
+
+/// Height of the rows of the texture set list.
+const SET_ROW_HEIGHT: f32 = 24.0;
+const OBJECT_ROW_HEIGHT: f32 = 22.0;
 
 pub struct InkApp {
     model: Model,
@@ -68,6 +74,8 @@ pub struct InkApp {
     project: ProjectState,
     /// The Export textures window, while it is open.
     export: Option<export::ExportWindow>,
+    /// The About dialog (Help menu) is open.
+    about_open: bool,
     /// The window closes at the end of the frame.
     quit_requested: bool,
 }
@@ -128,6 +136,7 @@ impl InkApp {
             tool_before_eraser: None,
             project: ProjectState::default(),
             export: None,
+            about_open: false,
             quit_requested: false,
         };
         app.set_model(render_state, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
@@ -262,6 +271,7 @@ impl InkApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
         egui::MenuBar::new().ui(ui, |ui| {
+            ui.add(theme::icon(icons::INKRABBIT, theme::ICON, theme::OLIVE));
             ui.menu_button("File", |ui| {
                 self.project_menu(ui, rs);
                 ui.separator();
@@ -336,19 +346,41 @@ impl InkApp {
                 }
             });
             ui.menu_button("View", |ui| {
-                if ui.button("Frame model (F)").clicked() {
+                if ui
+                    .add(egui::Button::new("Frame model").shortcut_text("F"))
+                    .clicked()
+                {
                     self.frame_views();
                 }
-                ui.checkbox(&mut self.camera.orthographic, "Orthographic (F5 / F6)");
+                if menu_check(ui, self.camera.orthographic, "Orthographic", "F5 / F6").clicked() {
+                    self.camera.orthographic = !self.camera.orthographic;
+                }
                 ui.separator();
-                ui.radio_value(&mut self.layout, Layout::Both, "3D / 2D (F1)");
-                ui.radio_value(&mut self.layout, Layout::Model, "3D only (F2)");
-                ui.radio_value(&mut self.layout, Layout::Uv, "2D only (F3)");
-                ui.checkbox(&mut self.layout_swapped, "Swap 3D and 2D (F4)");
-                ui.checkbox(&mut self.uv_wireframe, "UV wireframe in 2D");
+                for (layout, label, key) in [
+                    (Layout::Both, "3D / 2D", "F1"),
+                    (Layout::Model, "3D only", "F2"),
+                    (Layout::Uv, "2D only", "F3"),
+                ] {
+                    if menu_check(ui, self.layout == layout, label, key).clicked() {
+                        self.layout = layout;
+                    }
+                }
+                if menu_check(ui, self.layout_swapped, "Swap 3D and 2D", "F4").clicked() {
+                    self.layout_swapped = !self.layout_swapped;
+                }
+                if menu_check(ui, self.uv_wireframe, "UV wireframe in 2D", "").clicked() {
+                    self.uv_wireframe = !self.uv_wireframe;
+                }
                 ui.separator();
                 for mode in DisplayMode::ALL {
-                    ui.radio_value(&mut self.settings.display, mode, mode.label());
+                    if menu_check(ui, self.settings.display == mode, mode.label(), "").clicked() {
+                        self.settings.display = mode;
+                    }
+                }
+            });
+            ui.menu_button("Help", |ui| {
+                if ui.button("About inkpainter3d").clicked() {
+                    self.about_open = true;
                 }
             });
         });
@@ -356,9 +388,9 @@ impl InkApp {
 
     fn texture_set_list(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("TEXTURE SET LIST").small().strong());
+            ui.label(theme::header("Texture set list"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("☰", |ui| {
+                theme::icon_menu(ui, icons::MENU, "List options", |ui| {
                     if ui.button("Show all").clicked() {
                         self.set_all_visible(|_| true);
                     }
@@ -381,11 +413,14 @@ impl InkApp {
                         self.expanded.fill(false);
                     }
                 });
-                let focus = self.focus.is_some();
-                if ui
-                    .selectable_label(focus, "◎ Focus")
-                    .on_hover_text("Show only the selected texture set (Alt+Q)")
-                    .clicked()
+                let mut focus = self.focus.is_some();
+                if theme::icon_toggle(
+                    ui,
+                    icons::FOCUS,
+                    &mut focus,
+                    "Show only the selected texture set (Alt+Q)",
+                )
+                .changed()
                 {
                     self.toggle_focus();
                 }
@@ -410,42 +445,48 @@ impl InkApp {
 
     fn texture_set_row(&mut self, ui: &mut egui::Ui, set: usize) {
         let selected = set == self.selected_set;
-        let row = ui.horizontal(|ui| {
-            let arrow = if self.expanded[set] { "⏷" } else { "⏵" };
-            if ui
-                .add(egui::Button::new(arrow).frame(false))
-                .on_hover_text("Show the meshes using this material")
-                .clicked()
-            {
-                self.expanded[set] = !self.expanded[set];
-            }
-            let visible = self.model.texture_sets[set].visible;
-            if eye(ui, visible).clicked() {
-                self.focus = None;
-                self.model.texture_sets[set].visible = !visible;
-            }
-            let [r, g, b] = texture_set_color(set).map(|c| (c * 255.0) as u8);
-            let (swatch, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-            ui.painter()
-                .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
-            let ts = &self.model.texture_sets[set];
-            let resolution = ts.resolution;
-            let mut name = RichText::new(&ts.name);
-            if !visible {
-                name = name.weak();
-            }
-            if ui.selectable_label(selected, name).clicked() {
-                self.select_set(set);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("{resolution}×{resolution}"))
-                        .small()
-                        .weak(),
-                );
-            });
-        });
-        if row.response.contains_pointer() {
+        let visible = self.model.texture_sets[set].visible;
+        let resolution = self.model.texture_sets[set].resolution;
+        let (rect, row) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), SET_ROW_HEIGHT),
+            Sense::click(),
+        );
+        theme::paint_row(ui, rect, selected, row.contains_pointer());
+        let room = row_detail(ui, rect, &format!("{resolution}×{resolution}"));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(room.shrink2(egui::vec2(4.0, 2.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let ui = &mut child;
+        if theme::disclosure(ui, self.expanded[set])
+            .on_hover_text("Show the meshes using this material")
+            .clicked()
+        {
+            self.expanded[set] = !self.expanded[set];
+        }
+        if theme::eye(ui, visible).clicked() {
+            self.focus = None;
+            self.model.texture_sets[set].visible = !visible;
+        }
+        let [r, g, b] = texture_set_color(set).map(|c| (c * 255.0) as u8);
+        let (swatch, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), Sense::hover());
+        ui.painter()
+            .rect_filled(swatch, 2.0, Color32::from_rgb(r, g, b));
+        let color = match (visible, selected) {
+            (false, _) => theme::TEXT_WEAK,
+            (true, true) => theme::TEXT_STRONG,
+            (true, false) => theme::TEXT,
+        };
+        ui.add(
+            egui::Label::new(RichText::new(&self.model.texture_sets[set].name).color(color))
+                .selectable(false)
+                .truncate(),
+        );
+        if row.clicked() {
+            self.select_set(set);
+        }
+        if row.contains_pointer() {
             self.hover = Highlight {
                 texture_set: Some(set),
                 object: None,
@@ -454,33 +495,44 @@ impl InkApp {
     }
 
     fn object_row(&mut self, ui: &mut egui::Ui, set: usize, object: usize) {
-        let row = ui.horizontal(|ui| {
-            ui.add_space(26.0);
-            let visible = self.model.objects[object].visible;
-            if eye(ui, visible).clicked() {
-                self.model.objects[object].visible = !visible;
-            }
-            let mut name = RichText::new(&self.model.objects[object].name);
-            if !visible || !self.model.texture_sets[set].visible {
-                name = name.weak();
-            }
-            ui.label(name);
-            let other_sets = self.model.sets_of_object(object).len() - 1;
-            if other_sets > 0 {
-                ui.label(RichText::new("⧉").weak()).on_hover_text(format!(
+        let (rect, row) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), OBJECT_ROW_HEIGHT),
+            Sense::hover(),
+        );
+        theme::paint_row(ui, rect, false, row.contains_pointer());
+        let triangles = self.model.triangle_count(set, object);
+        let room = row_detail(ui, rect, &format!("{triangles} tris"));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(room.shrink2(egui::vec2(4.0, 1.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        let ui = &mut child;
+        ui.add_space(26.0);
+        let visible = self.model.objects[object].visible;
+        if theme::eye(ui, visible).clicked() {
+            self.model.objects[object].visible = !visible;
+        }
+        let dimmed = !visible || !self.model.texture_sets[set].visible;
+        let color = if dimmed {
+            theme::TEXT_WEAK
+        } else {
+            theme::TEXT
+        };
+        ui.add(
+            egui::Label::new(RichText::new(&self.model.objects[object].name).color(color))
+                .selectable(false)
+                .truncate(),
+        );
+        let other_sets = self.model.sets_of_object(object).len() - 1;
+        if other_sets > 0 {
+            ui.add(theme::icon(icons::MULTI_MATERIAL, 14.0, theme::TEXT_WEAK))
+                .on_hover_text(format!(
                     "This mesh also uses {other_sets} other material{}",
                     if other_sets == 1 { "" } else { "s" }
                 ));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    RichText::new(format!("{} tris", self.model.triangle_count(set, object)))
-                        .small()
-                        .weak(),
-                );
-            });
-        });
-        if row.response.contains_pointer() {
+        }
+        if row.contains_pointer() {
             self.hover = Highlight {
                 texture_set: Some(set),
                 object: Some(object),
@@ -489,10 +541,7 @@ impl InkApp {
     }
 
     fn layers_section(&mut self, ui: &mut egui::Ui) {
-        let response = egui::CollapsingHeader::new(RichText::new("LAYERS").small().strong())
-            .id_salt("layers")
-            .default_open(true)
-            .show(ui, |ui| self.layer_stack_panel(ui));
+        let response = theme::section("Layers").show(ui, |ui| self.layer_stack_panel(ui));
         let rect = response
             .body_response
             .map_or(response.header_response.rect, |b| {
@@ -505,99 +554,98 @@ impl InkApp {
         let title = self
             .selection_properties_title()
             .unwrap_or(match self.paint.tool {
-                ink_core::Tool::Paint => "PROPERTIES - PAINT",
-                ink_core::Tool::Erase => "PROPERTIES - ERASER",
+                ink_core::Tool::Paint => "Properties - Paint",
+                ink_core::Tool::Erase => "Properties - Eraser",
             });
-        egui::CollapsingHeader::new(RichText::new(title).small().strong())
-            .id_salt("properties")
-            .default_open(true)
-            .show(ui, |ui| {
-                if !self.selection_properties(ui) {
-                    self.properties_panel(ui);
-                }
-            });
+        // The title changes with the selection, the open state does not.
+        theme::section(title).id_salt("properties").show(ui, |ui| {
+            if !self.selection_properties(ui) {
+                self.properties_panel(ui);
+            }
+        });
     }
 
     fn texture_set_settings(&mut self, ui: &mut egui::Ui) {
         let Some(set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
         };
-        egui::Grid::new("texture set settings")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Name");
-                ui.label(RichText::new(&set.name).strong());
-                ui.end_row();
-                ui.label("Size");
-                egui::ComboBox::from_id_salt("resolution")
-                    .selected_text(format!("{0} × {0}", set.resolution))
-                    .show_ui(ui, |ui| {
-                        for r in RESOLUTIONS {
-                            ui.selectable_value(&mut set.resolution, r, format!("{r} × {r}"));
-                        }
-                    });
-                ui.end_row();
-                ui.label("Opacity");
-                egui::ComboBox::from_id_salt("alpha mode")
-                    .selected_text(alpha_label(set.alpha_mode))
-                    .show_ui(ui, |ui| {
-                        for mode in [AlphaMode::Opaque, AlphaMode::Test, AlphaMode::Blend] {
-                            ui.selectable_value(&mut set.alpha_mode, mode, alpha_label(mode));
-                        }
-                    });
-                ui.end_row();
-            });
+        theme::property_grid("texture set settings").show(ui, |ui| {
+            ui.label("Name");
+            ui.label(RichText::new(&set.name).strong());
+            ui.end_row();
+            ui.label("Size");
+            egui::ComboBox::from_id_salt("resolution")
+                .selected_text(format!("{0} × {0}", set.resolution))
+                .show_ui(ui, |ui| {
+                    for r in RESOLUTIONS {
+                        ui.selectable_value(&mut set.resolution, r, format!("{r} × {r}"));
+                    }
+                });
+            ui.end_row();
+            ui.label("Opacity");
+            egui::ComboBox::from_id_salt("alpha mode")
+                .selected_text(alpha_label(set.alpha_mode))
+                .show_ui(ui, |ui| {
+                    for mode in [AlphaMode::Opaque, AlphaMode::Test, AlphaMode::Blend] {
+                        ui.selectable_value(&mut set.alpha_mode, mode, alpha_label(mode));
+                    }
+                });
+            ui.end_row();
+        });
     }
 
     fn display_settings(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
         let mut load = false;
         let s = &mut self.settings;
+        // PBR and Stylized share the row.
+        let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut s.shading, ShadingMode::Pbr, "PBR");
-            ui.selectable_value(&mut s.shading, ShadingMode::Toon, "Stylized");
+            for (mode, label) in [(ShadingMode::Pbr, "PBR"), (ShadingMode::Toon, "Stylized")] {
+                let button =
+                    choice_button(s.shading == mode, label).min_size(egui::vec2(half, 22.0));
+                if ui.add(button).clicked() {
+                    s.shading = mode;
+                }
+            }
         });
         ui.add_space(6.0);
-        egui::Grid::new("display")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Environment");
-                ui.horizontal(|ui| {
-                    ui.label(&self.environment_name);
-                    load = ui.small_button("Load…").clicked();
-                });
-                ui.end_row();
-                ui.label("Rotation");
-                ui.drag_angle(&mut s.environment_rotation)
-                    .on_hover_text("Or drag with Shift + right mouse button in the viewport");
-                ui.end_row();
-                ui.label("Exposure");
-                ui.add(egui::Slider::new(&mut s.exposure, -5.0..=5.0).suffix(" EV"));
-                ui.end_row();
-                ui.label("Background");
-                ui.add(egui::Slider::new(&mut s.background_opacity, 0.0..=1.0));
-                ui.end_row();
-                ui.label("Background blur");
-                ui.add(egui::Slider::new(&mut s.background_blur, 0.0..=1.0));
-                ui.end_row();
-                if s.shading == ShadingMode::Toon {
-                    ui.label("Shade bands");
-                    ui.add(egui::Slider::new(&mut s.toon_bands, 2..=6));
-                    ui.end_row();
-                    ui.label("Ink outline");
-                    ui.checkbox(&mut s.outline, "");
-                    ui.end_row();
-                    if s.outline {
-                        ui.label("Outline color");
-                        srgb_edit(ui, &mut s.outline_color);
-                        ui.end_row();
-                        ui.label("Outline width");
-                        ui.add(egui::Slider::new(&mut s.outline_width, 0.0..=8.0).suffix(" px"));
-                        ui.end_row();
-                    }
-                }
+        theme::property_grid("display").show(ui, |ui| {
+            ui.label("Environment");
+            ui.horizontal(|ui| {
+                ui.label(&self.environment_name);
+                load = ui.small_button("Load…").clicked();
             });
+            ui.end_row();
+            ui.label("Rotation");
+            ui.drag_angle(&mut s.environment_rotation)
+                .on_hover_text("Or drag with Shift + right mouse button in the viewport");
+            ui.end_row();
+            ui.label("Exposure");
+            ui.add(egui::Slider::new(&mut s.exposure, -5.0..=5.0).suffix(" EV"));
+            ui.end_row();
+            ui.label("Background");
+            ui.add(egui::Slider::new(&mut s.background_opacity, 0.0..=1.0));
+            ui.end_row();
+            ui.label("Background blur");
+            ui.add(egui::Slider::new(&mut s.background_blur, 0.0..=1.0));
+            ui.end_row();
+            if s.shading == ShadingMode::Toon {
+                ui.label("Shade bands");
+                ui.add(egui::Slider::new(&mut s.toon_bands, 2..=6));
+                ui.end_row();
+                ui.label("Ink outline");
+                ui.checkbox(&mut s.outline, "");
+                ui.end_row();
+                if s.outline {
+                    ui.label("Outline color");
+                    srgb_edit(ui, &mut s.outline_color);
+                    ui.end_row();
+                    ui.label("Outline width");
+                    ui.add(egui::Slider::new(&mut s.outline_width, 0.0..=8.0).suffix(" px"));
+                    ui.end_row();
+                }
+            }
+        });
         ui.add_space(6.0);
         if ui.button("Reset").clicked() {
             *s = ViewportSettings {
@@ -692,7 +740,7 @@ impl eframe::App for InkApp {
                 .collect()
         });
         // Dialogs and the export window first need an answer.
-        let dialog = self.project.dialog_open() || self.export.is_some();
+        let dialog = self.project.dialog_open() || self.export.is_some() || self.about_open;
         if let Some(path) = dropped.first().filter(|_| !dialog) {
             let ext = path
                 .extension()
@@ -733,17 +781,17 @@ impl eframe::App for InkApp {
         egui::Panel::top("tool bar").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&self.status).small());
+                status_message(ui, &self.status);
                 if let Some(info) = &self.hover_info {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(info).small());
+                        ui.label(RichText::new(info).small().color(theme::TEXT_WEAK));
                     });
                 }
             });
         });
         egui::Panel::left("tools")
             .resizable(false)
-            .exact_size(76.0)
+            .exact_size(44.0)
             .show(ui, |ui| self.tool_strip(ui));
         egui::Panel::right("panels")
             .default_size(340.0)
@@ -753,13 +801,9 @@ impl eframe::App for InkApp {
                     ui.add_space(10.0);
                     self.layers_section(ui);
                     self.properties_section(ui);
-                    egui::CollapsingHeader::new(
-                        RichText::new("TEXTURE SET SETTINGS").small().strong(),
-                    )
-                    .default_open(true)
-                    .show(ui, |ui| self.texture_set_settings(ui));
-                    egui::CollapsingHeader::new(RichText::new("DISPLAY SETTINGS").small().strong())
-                        .default_open(true)
+                    theme::section("Texture set settings")
+                        .show(ui, |ui| self.texture_set_settings(ui));
+                    theme::section("Display settings")
                         .show(ui, |ui| self.display_settings(ui, &rs));
                 });
             });
@@ -769,6 +813,7 @@ impl eframe::App for InkApp {
         egui::CentralPanel::no_frame().show(ui, |ui| self.views(ui, &rs));
         self.project_dialogs(ui, &rs);
         self.export_window(ui, &rs);
+        self.about_dialog(ui);
         self.update_title(ui);
         if std::mem::take(&mut self.quit_requested) {
             ui.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -785,15 +830,53 @@ fn is_project(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case(ink_io::project::PROJECT_EXTENSION))
 }
 
-/// Visibility toggle in the texture set list.
-fn eye(ui: &mut egui::Ui, visible: bool) -> egui::Response {
-    let (text, color) = if visible {
-        ("👁", ui.visuals().text_color())
+/// A modal dialog with the frame of a window; the default frame has a menu's narrow margin.
+fn dialog(ui: &egui::Ui, id: &str) -> egui::Modal {
+    egui::Modal::new(egui::Id::new(id)).frame(egui::Frame::window(ui.style()))
+}
+
+/// A button that is olive while selected and a plain control otherwise: the PBR / Stylized
+/// switch and the tabs of the export window.
+fn choice_button<'a>(selected: bool, text: impl egui::IntoAtoms<'a>) -> egui::Button<'a> {
+    egui::Button::selectable(selected, text).frame_when_inactive(true)
+}
+
+/// A menu entry with an olive check mark while it is on and its shortcut at the right.
+fn menu_check(ui: &mut egui::Ui, on: bool, text: &str, shortcut: &str) -> egui::Response {
+    const MARK: f32 = 14.0;
+    let mark = if on {
+        egui::Atom::from(theme::icon(icons::CHECK, MARK, theme::OLIVE))
     } else {
-        ("👁", ui.visuals().weak_text_color().gamma_multiply(0.4))
+        egui::Atom::custom(egui::Id::new("menu check space"), egui::vec2(MARK, MARK))
     };
-    ui.add(egui::Button::new(RichText::new(text).color(color)).frame(false))
-        .on_hover_text(if visible { "Hide" } else { "Show" })
+    let mut button = egui::Button::new((mark, text));
+    if !shortcut.is_empty() {
+        button = button.shortcut_text(shortcut);
+    }
+    ui.add(button)
+}
+
+/// The weak, small text at the right end of a list row (a texture set's size, a mesh's
+/// triangles). Returns the rest of the row, for its contents.
+fn row_detail(ui: &egui::Ui, row: egui::Rect, text: &str) -> egui::Rect {
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, theme::TEXT_WEAK);
+    let size = galley.size();
+    let pos = egui::pos2(row.right() - 6.0 - size.x, row.center().y - size.y / 2.0);
+    ui.painter().galley(pos, galley, theme::TEXT_WEAK);
+    egui::Rect::from_min_max(row.min, egui::pos2(pos.x - 6.0, row.max.y))
+}
+
+/// The status line: errors are red and carry an icon.
+fn status_message(ui: &mut egui::Ui, status: &str) {
+    if status.starts_with("Error") {
+        ui.add(theme::icon(icons::ERROR, 14.0, theme::DANGER));
+        ui.label(RichText::new(status).small().color(theme::DANGER));
+    } else {
+        ui.label(RichText::new(status).small());
+    }
 }
 
 fn alpha_label(mode: AlphaMode) -> &'static str {

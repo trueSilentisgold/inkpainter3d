@@ -5,8 +5,9 @@
 //! into the output maps as they arrive and writes the files, while the next texture set is
 //! composited.
 
-use super::InkApp;
-use eframe::egui::{self, Color32, Key, RichText};
+use super::{InkApp, choice_button, dialog};
+use crate::theme::{self, icons};
+use eframe::egui::{self, Key, RichText};
 use eframe::egui_wgpu::RenderState;
 use ink_core::NormalFormat;
 use ink_core::export::{
@@ -168,13 +169,19 @@ impl InkApp {
             ui.ctx().request_repaint();
         }
         let mut close = false;
-        let modal = egui::Modal::new(egui::Id::new("export textures")).show(ui.ctx(), |ui| {
+        let modal = dialog(ui, "export textures").show(ui.ctx(), |ui| {
             ui.set_width(720.0);
             ui.heading("Export textures");
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut window.tab, Tab::Settings, "Export settings");
-                ui.selectable_value(&mut window.tab, Tab::Exports, "List of exports");
+                for (tab, label) in [
+                    (Tab::Settings, "Export settings"),
+                    (Tab::Exports, "List of exports"),
+                ] {
+                    if ui.add(choice_button(window.tab == tab, label)).clicked() {
+                        window.tab = tab;
+                    }
+                }
             });
             ui.separator();
             match window.tab {
@@ -195,7 +202,7 @@ impl InkApp {
                     let any = window.sets.iter().any(|&s| s);
                     let has_directory = !window.settings.directory.trim().is_empty();
                     if ui
-                        .add_enabled(any && has_directory, egui::Button::new("Export"))
+                        .add_enabled(any && has_directory, theme::primary_button("Export"))
                         .clicked()
                     {
                         self.project.export = window.settings.clone();
@@ -220,99 +227,93 @@ impl InkApp {
 
     fn export_settings_tab(&mut self, ui: &mut egui::Ui, window: &mut ExportWindow) {
         let settings = &mut window.settings;
-        ui.label(RichText::new("GLOBAL SETTINGS").small().strong());
-        egui::Grid::new("export settings")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                ui.label("Output directory");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut settings.directory).desired_width(440.0),
-                    );
-                    if ui.button("…").clicked() {
-                        let mut dialog = rfd::FileDialog::new();
-                        if Path::new(&settings.directory).is_dir() {
-                            dialog = dialog.set_directory(&settings.directory);
-                        }
-                        if let Some(dir) = dialog.pick_folder() {
-                            settings.directory = dir.display().to_string();
+        ui.label(theme::header("Global settings"));
+        theme::property_grid("export settings").show(ui, |ui| {
+            ui.label("Output directory");
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut settings.directory).desired_width(440.0));
+                let browse =
+                    egui::Button::new(theme::icon(icons::FOLDER_OPEN, theme::ICON, theme::TEXT))
+                        .image_tint_follows_text_color(true);
+                if ui.add(browse).on_hover_text("Choose folder…").clicked() {
+                    let mut dialog = rfd::FileDialog::new();
+                    if Path::new(&settings.directory).is_dir() {
+                        dialog = dialog.set_directory(&settings.directory);
+                    }
+                    if let Some(dir) = dialog.pick_folder() {
+                        settings.directory = dir.display().to_string();
+                    }
+                }
+            });
+            ui.end_row();
+            ui.label("Output template");
+            egui::ComboBox::from_id_salt("export template")
+                .width(320.0)
+                .selected_text(settings.template.label)
+                .show_ui(ui, |ui| {
+                    for template in TEMPLATES {
+                        if ui
+                            .selectable_label(
+                                std::ptr::eq(settings.template, template),
+                                template.label,
+                            )
+                            .clicked()
+                        {
+                            settings.template = template;
                         }
                     }
                 });
-                ui.end_row();
-                ui.label("Output template");
-                egui::ComboBox::from_id_salt("export template")
-                    .width(320.0)
-                    .selected_text(settings.template.label)
+            ui.end_row();
+            ui.label("File type");
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("export format")
+                    .selected_text(settings.format.label())
                     .show_ui(ui, |ui| {
-                        for template in TEMPLATES {
-                            if ui
-                                .selectable_label(
-                                    std::ptr::eq(settings.template, template),
-                                    template.label,
-                                )
-                                .clicked()
-                            {
-                                settings.template = template;
-                            }
+                        for format in FileFormat::ALL {
+                            ui.selectable_value(&mut settings.format, format, format.label());
                         }
                     });
-                ui.end_row();
-                ui.label("File type");
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("export format")
-                        .selected_text(settings.format.label())
-                        .show_ui(ui, |ui| {
-                            for format in FileFormat::ALL {
-                                ui.selectable_value(&mut settings.format, format, format.label());
-                            }
-                        });
-                    if !settings.format.bit_depths().contains(&settings.bit_depth) {
-                        settings.bit_depth = settings.format.bit_depths()[0];
-                    }
-                    egui::ComboBox::from_id_salt("export depth")
-                        .selected_text(settings.bit_depth.label())
-                        .show_ui(ui, |ui| {
-                            for &depth in settings.format.bit_depths() {
-                                ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
-                            }
-                        });
-                });
-                ui.end_row();
-                ui.label("Size");
-                ui.label("Based on each texture set's size");
-                ui.end_row();
-                ui.label("Padding");
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("export padding")
-                        .width(260.0)
-                        .selected_text(settings.padding.label())
-                        .show_ui(ui, |ui| {
-                            for padding in Padding::ALL {
-                                ui.selectable_value(
-                                    &mut settings.padding,
-                                    padding,
-                                    padding.label(),
-                                );
-                            }
-                        });
-                    if settings.padding.has_distance() {
-                        ui.label("Dilation distance");
-                        ui.add(
-                            egui::DragValue::new(&mut settings.dilation)
-                                .range(0..=ExportSettings::MAX_DILATION)
-                                .suffix(" px"),
-                        );
-                    }
-                });
-                ui.end_row();
+                if !settings.format.bit_depths().contains(&settings.bit_depth) {
+                    settings.bit_depth = settings.format.bit_depths()[0];
+                }
+                egui::ComboBox::from_id_salt("export depth")
+                    .selected_text(settings.bit_depth.label())
+                    .show_ui(ui, |ui| {
+                        for &depth in settings.format.bit_depths() {
+                            ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
+                        }
+                    });
             });
+            ui.end_row();
+            ui.label("Size");
+            ui.label("Based on each texture set's size");
+            ui.end_row();
+            ui.label("Padding");
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("export padding")
+                    .width(260.0)
+                    .selected_text(settings.padding.label())
+                    .show_ui(ui, |ui| {
+                        for padding in Padding::ALL {
+                            ui.selectable_value(&mut settings.padding, padding, padding.label());
+                        }
+                    });
+                if settings.padding.has_distance() {
+                    ui.label("Dilation distance");
+                    ui.add(
+                        egui::DragValue::new(&mut settings.dilation)
+                            .range(0..=ExportSettings::MAX_DILATION)
+                            .suffix(" px"),
+                    );
+                }
+            });
+            ui.end_row();
+        });
 
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("TEXTURE SETS").small().strong());
-            ui.menu_button("☰", |ui| {
+            ui.label(theme::header("Texture sets"));
+            theme::icon_menu(ui, icons::MENU, "Check texture sets", |ui| {
                 if ui.button("Check all").clicked() {
                     window.sets.fill(true);
                 }
@@ -347,11 +348,11 @@ impl InkApp {
                 });
             let ui = &mut columns[1];
             let set = &self.model.texture_sets[window.preview];
-            ui.label(
-                RichText::new(format!("OUTPUT MAPS - {}", set.name))
-                    .small()
-                    .strong(),
-            );
+            // The texture set's name keeps its case, so it isn't part of the header.
+            ui.horizontal(|ui| {
+                ui.label(theme::header("Output maps"));
+                ui.label(RichText::new(&set.name).small().color(theme::TEXT_WEAK));
+            });
             egui::ScrollArea::vertical()
                 .id_salt("export maps")
                 .max_height(200.0)
@@ -661,15 +662,16 @@ fn export_list_tab(ui: &mut egui::Ui, window: &ExportWindow) {
         .stick_to_bottom(true)
         .show(ui, |ui| {
             for (file, result) in &window.log {
-                match result {
-                    Ok(()) => ui.label(
-                        RichText::new(format!("✔ {file}")).color(Color32::from_rgb(140, 200, 140)),
-                    ),
-                    Err(err) => ui.label(
-                        RichText::new(format!("✖ {file}: {err}"))
-                            .color(Color32::from_rgb(230, 120, 110)),
-                    ),
-                };
+                ui.horizontal(|ui| match result {
+                    Ok(()) => {
+                        ui.add(theme::icon(icons::CHECK, theme::ICON, theme::OLIVE));
+                        ui.label(file);
+                    }
+                    Err(err) => {
+                        ui.add(theme::icon(icons::ERROR, theme::ICON, theme::DANGER));
+                        ui.label(RichText::new(format!("{file}: {err}")).color(theme::DANGER));
+                    }
+                });
             }
         });
 }
