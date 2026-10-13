@@ -38,7 +38,7 @@ pub struct Selection {
 }
 
 impl Selection {
-    fn layer(layer: u64) -> Self {
+    pub(super) fn layer(layer: u64) -> Self {
         Self {
             layer,
             target: Target::Content,
@@ -47,7 +47,7 @@ impl Selection {
     }
 
     /// The selected layers, the main one first.
-    fn layers(&self) -> Vec<u64> {
+    pub(super) fn layers(&self) -> Vec<u64> {
         let mut layers = vec![self.layer];
         layers.extend(self.more.iter().filter(|&&l| l != self.layer));
         layers

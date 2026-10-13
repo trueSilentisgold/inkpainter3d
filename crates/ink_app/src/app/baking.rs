@@ -200,11 +200,17 @@ impl InkApp {
             .default_width(440.0)
             .resizable(true)
             .show(ui.ctx(), |ui| {
-                let height = (ui.ctx().content_rect().height() - 140.0).max(240.0);
+                let running = self.baking.job.is_some();
+                // The settings scroll; the button and the results stay in view below them.
+                let height = (ui.ctx().content_rect().height() - 330.0).max(200.0);
                 egui::ScrollArea::vertical()
                     .max_height(height)
-                    .auto_shrink([true, true])
-                    .show(ui, |ui| self.baking_body(ui, &mut start, &mut layer_for));
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!running, |ui| self.baking_settings(ui));
+                    });
+                ui.separator();
+                self.baking_footer(ui, &mut start, &mut layer_for);
             });
         self.baking.open = open;
         if start {
@@ -213,64 +219,56 @@ impl InkApp {
         self.baking_layer(layer_for);
     }
 
-    fn baking_body(
+    /// The Bake button or the progress, and the maps baked so far.
+    fn baking_footer(
         &mut self,
         ui: &mut egui::Ui,
         start: &mut bool,
         layer_for: &mut Option<MeshMap>,
     ) {
-        {
-            {
-                let running = self.baking.job.is_some();
-                ui.add_enabled_ui(!running, |ui| {
-                    self.baking_settings(ui);
-                });
-                ui.separator();
-                match &self.baking.job {
-                    Some(job) => {
-                        let fraction = job.progress.load(Ordering::Relaxed) as f32 / 1000.0;
-                        ui.add(
-                            egui::ProgressBar::new(fraction)
-                                .show_percentage()
-                                .desired_width(300.0),
-                        );
-                        if ui.button("Cancel").clicked() {
-                            job.cancel.store(true, Ordering::Relaxed);
-                        }
-                    }
-                    None => {
-                        let any = self.baking.selected.iter().any(|s| *s);
-                        if ui.add_enabled(any, theme::primary_button("Bake")).clicked() {
-                            *start = true;
-                        }
-                        if let Some(error) = &self.baking.error {
-                            ui.label(RichText::new(error).color(theme::DANGER));
-                        }
-                    }
+        match &self.baking.job {
+            Some(job) => {
+                let fraction = job.progress.load(Ordering::Relaxed) as f32 / 1000.0;
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .show_percentage()
+                        .desired_width(300.0),
+                );
+                if ui.button("Cancel").clicked() {
+                    job.cancel.store(true, Ordering::Relaxed);
                 }
-                if !self.baking.previews.is_empty() {
-                    ui.separator();
-                    theme::group_label(ui, "Baked maps of the selected texture set");
-                    ui.horizontal_wrapped(|ui| {
-                        for (map, texture) in &self.baking.previews {
-                            ui.vertical(|ui| {
-                                ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
-                                    texture.id(),
-                                    egui::vec2(72.0, 72.0),
-                                )));
-                                ui.label(RichText::new(map.label()).small());
-                                if ui
-                                    .small_button("Add as layer")
-                                    .on_hover_text("Shows the map as a fill layer")
-                                    .clicked()
-                                {
-                                    *layer_for = Some(*map);
-                                }
-                            });
+            }
+            None => {
+                let any = self.baking.selected.iter().any(|s| *s);
+                if ui.add_enabled(any, theme::primary_button("Bake")).clicked() {
+                    *start = true;
+                }
+                if let Some(error) = &self.baking.error {
+                    ui.label(RichText::new(error).color(theme::DANGER));
+                }
+            }
+        }
+        if !self.baking.previews.is_empty() {
+            ui.separator();
+            theme::group_label(ui, "Baked maps of the selected texture set");
+            ui.horizontal_wrapped(|ui| {
+                for (map, texture) in &self.baking.previews {
+                    ui.vertical(|ui| {
+                        ui.add(egui::Image::from_texture(egui::load::SizedTexture::new(
+                            texture.id(),
+                            egui::vec2(72.0, 72.0),
+                        )));
+                        ui.label(RichText::new(map.label()).small());
+                        if ui
+                            .small_button("Add as layer")
+                            .on_hover_text("Shows the map as a fill layer")
+                            .clicked()
+                        {
+                            *layer_for = Some(*map);
                         }
                     });
                 }
-            }
+            });
         }
     }
 

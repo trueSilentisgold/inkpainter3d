@@ -16,6 +16,9 @@ pub fn builtin_alphas() -> Vec<Arc<AlphaImage>> {
         make("Splatter", splatter),
         make("Scratches", scratches),
         make("Hair strokes", hair),
+        make("Cracks", cracks),
+        make("Blotches", blotches),
+        make("Dust", dust),
     ]
 }
 
@@ -176,6 +179,60 @@ fn hair(values: &mut [f32]) {
             Vec2::new(x + wobble, bottom),
             0.006,
             0.45 + rng.next_f32() * 0.55,
+        );
+    }
+}
+
+fn cracks(values: &mut [f32]) {
+    let mut rng = Rng::new(71);
+    for _ in 0..9 {
+        let mut p = Vec2::new(0.15 + rng.next_f32() * 0.7, 0.15 + rng.next_f32() * 0.7);
+        let mut angle = rng.next_f32() * std::f32::consts::TAU;
+        let mut width = 0.006 + rng.next_f32() * 0.004;
+        for step in 0..26 {
+            angle += (rng.next_f32() - 0.5) * 1.1;
+            let next = p + Vec2::from_angle(angle) * 0.022;
+            stroke(values, p, next, width, 0.8 + rng.next_f32() * 0.2);
+            // Now and then a thinner branch splits off.
+            if step % 6 == 3 {
+                let side = angle + (rng.next_f32() - 0.5) * 2.4;
+                stroke(
+                    values,
+                    next,
+                    next + Vec2::from_angle(side) * 0.07,
+                    width * 0.5,
+                    0.7,
+                );
+            }
+            p = next;
+            width *= 0.97;
+        }
+    }
+}
+
+fn blotches(values: &mut [f32]) {
+    let mut rng = Rng::new(83);
+    let layers: Vec<_> = [2, 4, 9]
+        .into_iter()
+        .map(|c| value_noise(&mut rng, c))
+        .collect();
+    each_pixel(values, |x, y| {
+        let n = layers[0](x, y) * 0.55 + layers[1](x, y) * 0.3 + layers[2](x, y) * 0.15;
+        ((n - 0.5) * 7.0 + 0.5).clamp(0.0, 1.0)
+    });
+}
+
+fn dust(values: &mut [f32]) {
+    let mut rng = Rng::new(97);
+    for _ in 0..1200 {
+        let angle = rng.next_f32() * std::f32::consts::TAU;
+        let distance = rng.next_f32().sqrt() * 0.4;
+        blob(
+            values,
+            0.5 + angle.cos() * distance,
+            0.5 + angle.sin() * distance,
+            0.004 + rng.next_f32().powi(2) * 0.01,
+            0.5 + rng.next_f32() * 0.5,
         );
     }
 }

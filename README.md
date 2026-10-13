@@ -21,10 +21,11 @@
   <img src="docs/images/screenshot.png" alt="inkpainter3d: 3D view, UV view, layer stack and properties" width="900">
 </p>
 
-> **Status:** early development. A game asset can already be textured and exported end to
-> end: viewport, texture sets, brush engine, layer stack with masks, project files and
-> export, and the interface with dockable panels are done. Next come brushes and a shelf, then baking.
-> See the [roadmap](#roadmap).
+> **Status:** early development. A game asset can be textured and exported end to end:
+> viewport, texture sets, brush engine with presets, stencil and polygon fill, layer stack with
+> masks, project files and export, a shelf with online libraries, baking of mesh maps, and
+> generators with smart materials are done. Next come the remaining tools (projection,
+> symmetry, color selection), then stylized and vector layers. See the [roadmap](#roadmap).
 
 <p align="center">
   <a href="#features">Features</a> ·
@@ -113,6 +114,13 @@ inkpainter3d aims to be a capable alternative that:
     tangent space normal, height and ID from one or more high-poly meshes
   - antialiasing, dilation, ray counts, distances, matching by `_low` / `_high` names; the
     maps are saved in the project
+- **Generators** as mask effects: mask builder, edge wear, dirt, position gradient, light,
+  noise (Perlin, fractal, cells, clouds), and curvature, occlusion and thickness on their own
+  - they read the baked mesh maps, so edges wear and dirt gathers on any model; without maps
+    they fall back to noise
+- **Smart materials and smart masks**: save the selected layers or a mask as a preset, apply it
+  with a click or by dragging it onto the layer stack; twelve materials and six masks ship with
+  the app, all made in code
 - **Shelf** (a dockable panel under the viewport)
   - brushes, alphas, textures and materials with thumbnails, a filter, and your own library
     on disk; right click an alpha to use it as brush tip or stencil
@@ -181,7 +189,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts; the interface stays English for now | ✅ done |
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | ✅ done |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ✅ done |
-| 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
+| 9 | **Generators** — mask builder, edge wear, dirt, noises, smart materials and masks, starter content (filters that need neighboring texels come later) | ✅ done |
 | 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 12 | **Polish** — translations, UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |

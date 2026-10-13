@@ -4,6 +4,8 @@
 //! textures onto the layer stack.
 
 mod content;
+mod smart;
+mod starter;
 
 use super::InkApp;
 use super::presets::user_dir as brush_dir;
@@ -13,6 +15,8 @@ use eframe::egui::{self, Color32, Sense, TextureHandle};
 use ink_core::{Alpha, AlphaImage, Fill, TextureImage};
 use ink_io::material;
 use ink_io::online::{OnlineAsset, Resolution, Source};
+use ink_io::project::smart::{Smart, SmartKind};
+pub use smart::SmartRef;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,15 +29,19 @@ pub enum Category {
     Alphas,
     Textures,
     Materials,
+    SmartMaterials,
+    SmartMasks,
     Online,
 }
 
 impl Category {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 7] = [
         Self::Brushes,
         Self::Alphas,
         Self::Textures,
         Self::Materials,
+        Self::SmartMaterials,
+        Self::SmartMasks,
         Self::Online,
     ];
 
@@ -43,6 +51,8 @@ impl Category {
             Self::Alphas => "Alphas",
             Self::Textures => "Textures",
             Self::Materials => "Materials",
+            Self::SmartMaterials => "Smart materials",
+            Self::SmartMasks => "Smart masks",
             Self::Online => "Online",
         }
     }
@@ -54,6 +64,8 @@ impl Category {
             Self::Alphas => Some("alphas"),
             Self::Textures => Some("textures"),
             Self::Materials => Some("materials"),
+            Self::SmartMaterials => Some("smart_materials"),
+            Self::SmartMasks => Some("smart_masks"),
             Self::Online => None,
         }
     }
@@ -64,6 +76,7 @@ impl Category {
 pub enum ShelfDrag {
     Material(PathBuf),
     Texture(PathBuf),
+    Smart(SmartRef),
 }
 
 fn library_dir(category: Category) -> Option<PathBuf> {
@@ -133,6 +146,13 @@ enum Event {
         image: egui::ColorImage,
     },
     Imported(anyhow::Result<String>),
+    SmartThumb {
+        generation: u64,
+        path: PathBuf,
+        name: String,
+        image: egui::ColorImage,
+    },
+    Smart(anyhow::Result<Smart>),
 }
 
 /// Something the user asked for while the panel was drawn.
@@ -153,6 +173,8 @@ enum Action {
     Search,
     LoadMore,
     Download(OnlineAsset),
+    ApplySmart(SmartRef),
+    SaveSmart(SmartKind, String),
 }
 
 pub struct ShelfState {
@@ -164,6 +186,7 @@ pub struct ShelfState {
     textures: Vec<FileItem>,
     materials: Vec<FileItem>,
     brush_pictures: HashMap<String, TextureHandle>,
+    smart: smart::SmartShelf,
     scanned: bool,
     /// Thumbnails from older scans are dropped.
     generation: u64,
@@ -185,6 +208,7 @@ impl Default for ShelfState {
             textures: Vec::new(),
             materials: Vec::new(),
             brush_pictures: HashMap::new(),
+            smart: Default::default(),
             scanned: false,
             generation: 0,
             online: Online {
@@ -292,6 +316,8 @@ impl InkApp {
         };
         shelf.textures = files(Category::Textures, ink_io::TEXTURE_EXTENSIONS, &mut jobs);
         shelf.materials = files(Category::Materials, &[material::EXTENSION], &mut jobs);
+        self.smart_rescan(ctx, generation);
+        let shelf = &mut self.shelf;
 
         let (tx, ctx) = (shelf.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
@@ -465,6 +491,35 @@ impl InkApp {
                         ));
                     }
                 }
+                Event::SmartThumb {
+                    generation,
+                    path,
+                    name,
+                    image,
+                } => {
+                    if generation == self.shelf.generation
+                        && let Some(item) = self
+                            .shelf
+                            .smart
+                            .items
+                            .iter_mut()
+                            .find(|i| matches!(&i.source, SmartRef::File(p) if *p == path))
+                    {
+                        item.name = name;
+                        item.thumb = Some(ctx.load_texture(
+                            path.to_string_lossy(),
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                    }
+                }
+                Event::Smart(result) => {
+                    self.shelf.jobs.retain(|j| !j.starts_with("Loading"));
+                    match result {
+                        Ok(smart) => self.apply_smart(&smart),
+                        Err(error) => self.status = format!("Error: {error:#}"),
+                    }
+                }
                 Event::Imported(result) => {
                     self.shelf.jobs.retain(|j| !j.starts_with("Importing"));
                     match result {
@@ -606,6 +661,11 @@ impl InkApp {
             Action::Search => self.shelf_search(ctx, false),
             Action::LoadMore => self.shelf_search(ctx, true),
             Action::Download(asset) => self.shelf_download(ctx, asset, true),
+            Action::ApplySmart(source) => self.smart_apply(ctx, source),
+            Action::SaveSmart(kind, name) => match kind {
+                SmartKind::Material => self.save_smart_material(ctx, name),
+                SmartKind::Mask => self.save_smart_mask(ctx, name),
+            },
         }
     }
 
@@ -615,6 +675,9 @@ impl InkApp {
             Category::Alphas => ("Images", ink_io::ALPHA_EXTENSIONS),
             Category::Textures => ("Images", ink_io::TEXTURE_EXTENSIONS),
             Category::Materials => ("Materials", &[material::EXTENSION]),
+            Category::SmartMaterials | Category::SmartMasks => {
+                ("Smart presets", &[ink_io::project::smart::EXTENSION])
+            }
             Category::Online => return,
         };
         let Some(files) = rfd::FileDialog::new()
@@ -738,32 +801,25 @@ impl InkApp {
         }
 
         let mut actions: Vec<Action> = Vec::new();
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(92.0);
-                for category in Category::ALL {
-                    let selected = self.shelf.category == category;
-                    if ui
-                        .add_sized(
-                            [92.0, 24.0],
-                            egui::Button::selectable(selected, category.label()),
-                        )
-                        .clicked()
-                    {
-                        self.shelf.category = category;
-                    }
+        // The categories as a row of tabs above everything, so the panel can stay low.
+        ui.horizontal_wrapped(|ui| {
+            for category in Category::ALL {
+                let selected = self.shelf.category == category;
+                if ui
+                    .add(egui::Button::selectable(selected, category.label()))
+                    .clicked()
+                {
+                    self.shelf.category = category;
                 }
-            });
-            ui.separator();
-            ui.vertical(|ui| {
-                self.shelf_toolbar(ui, &mut actions);
-                ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .id_salt(("shelf", self.shelf.category))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.shelf_grid(ui, &mut actions));
-            });
+            }
         });
+        ui.add_space(2.0);
+        self.shelf_toolbar(ui, &mut actions);
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .id_salt(("shelf", self.shelf.category))
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.shelf_grid(ui, &mut actions));
         for action in actions {
             self.do_action(&ctx, action);
         }
@@ -834,6 +890,9 @@ impl InkApp {
                         actions.push(Action::SaveBrush(self.shelf.brush_name.trim().to_owned()));
                         self.shelf.brush_name.clear();
                     }
+                }
+                if let Some(kind) = category.smart_kind() {
+                    self.smart_toolbar(ui, kind, actions);
                 }
                 if category == Category::Materials
                     && ui
@@ -1000,6 +1059,10 @@ impl InkApp {
                     }
                 });
             }
+            Category::SmartMaterials => {
+                self.smart_grid(ui, SmartKind::Material, &filter, actions);
+            }
+            Category::SmartMasks => self.smart_grid(ui, SmartKind::Mask, &filter, actions),
             Category::Online => {
                 let have: std::collections::HashSet<String> = library_dir(Category::Materials)
                     .map(|dir| {
@@ -1073,6 +1136,7 @@ impl InkApp {
             match &*drag {
                 ShelfDrag::Material(path) => self.shelf_load_material(&ctx, path.clone()),
                 ShelfDrag::Texture(path) => self.shelf_load_texture(&ctx, path.clone()),
+                ShelfDrag::Smart(source) => self.smart_apply(&ctx, source.clone()),
             }
         }
     }

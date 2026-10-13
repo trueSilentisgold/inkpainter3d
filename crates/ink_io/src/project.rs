@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// File extension of project files.
+pub mod smart;
+
 pub const PROJECT_EXTENSION: &str = "ink3d";
 
 const FORMAT: &str = "inkpainter3d project";

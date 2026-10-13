@@ -126,7 +126,10 @@ mask. Effects are listed bottom to top:
 ```
 
 `kind` is `{ "paint": { … } }` (a paint layer), `{ "fill": { "value": 1.0, "image": null, "projection": { … } } }`
-(a grayscale fill; the image's red channel is used) or `{ "levels": { … } }`.
+(a grayscale fill; the image's red channel is used), `{ "levels": { … } }` or
+`{ "generator": { "kind": "edge_wear", "params": { "amount": 0.5, "noise_scale": 24 } } }`. A
+generator's `kind` and `params` are named by the keys in `ink_core::generator`; parameters
+that are missing take their defaults, unknown ones are ignored.
 
 ### Strokes
 
