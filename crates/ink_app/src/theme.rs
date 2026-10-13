@@ -421,18 +421,26 @@ pub fn property_grid(id: impl egui::AsIdSalt) -> egui::Grid {
 /// A toggle chip, such as the channels a brush or fill layer sets (color, height, rough …):
 /// outlined in olive while on, as Painter outlines enabled channels.
 pub fn chip(ui: &mut Ui, on: bool, text: &str) -> Response {
-    let (fill, stroke, color) = if on {
-        (OLIVE_ROW, Stroke::new(1.0, OLIVE), TEXT_STRONG)
-    } else {
-        (WIDGET, Stroke::new(1.0, WIDGET), TEXT_WEAK)
+    // Painted by hand at a fixed size: a button grows and shrinks a pixel or two with its
+    // hover state, which makes a column of chips jump under the pointer.
+    let (rect, response) = ui.allocate_exact_size(vec2(LABEL_WIDTH, 24.0), egui::Sense::click());
+    let hovered = response.hovered();
+    let (fill, stroke, color) = match (on, hovered) {
+        (true, false) => (OLIVE_ROW, Stroke::new(1.0, OLIVE), TEXT_STRONG),
+        (true, true) => (OLIVE_FILL, Stroke::new(1.0, OLIVE), TEXT_STRONG),
+        (false, false) => (WIDGET, Stroke::new(1.0, WIDGET), TEXT_WEAK),
+        (false, true) => (WIDGET_HOVER, Stroke::new(1.0, BORDER_STRONG), TEXT),
     };
-    ui.add_sized(
-        [LABEL_WIDTH, 22.0],
-        egui::Button::new(RichText::new(text).color(color))
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(2.0),
-    )
+    let painter = ui.painter();
+    painter.rect(rect, 2.0, fill, stroke, egui::StrokeKind::Inside);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        TextStyle::Button.resolve(ui.style()),
+        color,
+    );
+    response
 }
 
 /// The confirming button of a dialog.
