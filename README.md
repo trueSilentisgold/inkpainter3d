@@ -157,11 +157,12 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
 | 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts, German and English UI | ⏳ in progress |
-| 7 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
-| 8 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
-| 9 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
-| 10 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
-| 11 | **Polish** — UDIM, smudge and clone, path tools, post effects, Python API, installers (AppImage / Flatpak, Windows) | |
+| 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | |
+| 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
+| 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
+| 10 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
+| 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
+| 12 | **Polish** — UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 
 ## Getting started
 

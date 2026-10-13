@@ -761,8 +761,9 @@ texturieren und exportieren.**
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts, deutsche und englische Oberfläche | ⏳ in Arbeit |
-| 7 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
-| 8 | **Generatoren und Bibliothek:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Shelf, Starter-Inhalte | |
-| 9 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
-| 10 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
-| 11 | **Feinschliff:** UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Python-API, Installer (AppImage / Flatpak, Windows) | |
+| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
+| 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
+| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
+| 10 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
+| 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
+| 12 | **Feinschliff:** UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |
