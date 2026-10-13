@@ -276,6 +276,20 @@ fn fs_outline() -> @location(0) vec4<f32> {
     return vec4<f32>(u.ink.rgb, 1.0);
 }
 
+// ---- Wireframe: the mesh edges, nudged towards the camera so they sit on the surface ----
+
+@vertex
+fn vs_wire(v: VsIn) -> @builtin(position) vec4<f32> {
+    var clip = u.view_proj * vec4<f32>(v.position, 1.0);
+    clip.z = clip.z - 2e-4 * clip.w;
+    return clip;
+}
+
+@fragment
+fn fs_wire() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.62, 0.9, 0.25, 0.75);
+}
+
 // ---- Background: environment over a gradient (fullscreen triangle) ----
 
 struct BgOut {

@@ -1018,7 +1018,7 @@ fn home() -> Option<PathBuf> {
 
 /// Where settings go: `~/.config/inkpainter3d` on Linux, `%APPDATA%\inkpainter3d` on
 /// Windows.
-fn config_dir() -> Option<PathBuf> {
+pub(super) fn config_dir() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("APPDATA").map(PathBuf::from)
     } else {

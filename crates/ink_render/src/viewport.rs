@@ -120,6 +120,8 @@ pub struct ViewportSettings {
     pub outline: bool,
     pub outline_color: [f32; 3],
     pub outline_width: f32,
+    /// Draws the edges of the mesh over the surface.
+    pub wireframe: bool,
 }
 
 impl Default for ViewportSettings {
@@ -135,6 +137,7 @@ impl Default for ViewportSettings {
             outline: true,
             outline_color: [0.05, 0.05, 0.07],
             outline_width: 2.0,
+            wireframe: false,
         }
     }
 }
@@ -209,6 +212,10 @@ impl Vertex {
 pub(crate) struct GpuMesh {
     pub vertices: wgpu::Buffer,
     pub indices: wgpu::Buffer,
+    /// The edges of each part (line list indices), for the wireframe.
+    pub edges: wgpu::Buffer,
+    /// Where each part's edges are in `edges`, in `Model::parts` order.
+    pub edge_ranges: Vec<std::ops::Range<u32>>,
 }
 
 struct GpuTextureSet {
@@ -338,6 +345,7 @@ pub struct ViewportRenderer {
     mesh_pipeline: wgpu::RenderPipeline,
     blend_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
+    wire_pipeline: wgpu::RenderPipeline,
     background_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     global_layout: wgpu::BindGroupLayout,
@@ -440,6 +448,7 @@ impl ViewportRenderer {
             depth_write: bool,
             depth_compare: wgpu::CompareFunction,
             blend: Option<wgpu::BlendState>,
+            lines: bool,
         }
         let pipeline = |d: PipelineDesc| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -452,7 +461,11 @@ impl ViewportRenderer {
                     buffers: d.buffers,
                 },
                 primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    topology: if d.lines {
+                        wgpu::PrimitiveTopology::LineList
+                    } else {
+                        wgpu::PrimitiveTopology::TriangleList
+                    },
                     front_face: wgpu::FrontFace::Ccw,
                     cull_mode: d.cull_mode,
                     ..Default::default()
@@ -495,6 +508,7 @@ impl ViewportRenderer {
             depth_write: true,
             depth_compare: wgpu::CompareFunction::Less,
             blend: None,
+            lines: false,
         });
         let blend_pipeline = pipeline(PipelineDesc {
             label: "mesh alpha blend",
@@ -506,6 +520,7 @@ impl ViewportRenderer {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Less,
             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            lines: false,
         });
         let outline_pipeline = pipeline(PipelineDesc {
             label: "outline",
@@ -517,6 +532,19 @@ impl ViewportRenderer {
             depth_write: true,
             depth_compare: wgpu::CompareFunction::Less,
             blend: None,
+            lines: false,
+        });
+        let wire_pipeline = pipeline(PipelineDesc {
+            label: "wireframe",
+            layout: &global_only,
+            vs: "vs_wire",
+            fs: "fs_wire",
+            buffers: &mesh_buffers,
+            cull_mode: None,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            lines: true,
         });
         let background_pipeline = pipeline(PipelineDesc {
             label: "background",
@@ -528,6 +556,7 @@ impl ViewportRenderer {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Always,
             blend: None,
+            lines: false,
         });
 
         let material_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -568,6 +597,7 @@ impl ViewportRenderer {
             mesh_pipeline,
             blend_pipeline,
             outline_pipeline,
+            wire_pipeline,
             background_pipeline,
             uniform_buffer,
             global_layout,
@@ -628,7 +658,14 @@ impl ViewportRenderer {
                 tangent: mesh.tangents[i].into(),
             })
             .collect();
+        let (edge_indices, edge_ranges) = edge_lists(model);
         self.mesh = Some(GpuMesh {
+            edges: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("mesh edges"),
+                contents: bytemuck::cast_slice(&edge_indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            edge_ranges,
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh vertices"),
                 contents: bytemuck::cast_slice(&vertices),
@@ -844,6 +881,15 @@ impl ViewportRenderer {
                     let h = highlight.matches(part) as u32;
                     pass.draw_indexed(part.indices.clone(), 0, h..h + 1);
                 }
+                if settings.wireframe && !mesh.edge_ranges.is_empty() {
+                    pass.set_pipeline(&self.wire_pipeline);
+                    pass.set_index_buffer(mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
+                    for (part, edges) in model.parts.iter().zip(&mesh.edge_ranges) {
+                        if model.is_part_visible(part) {
+                            pass.draw_indexed(edges.clone(), 0, 0..1);
+                        }
+                    }
+                }
             }
         }
         queue.submit([encoder.finish()]);
@@ -881,6 +927,28 @@ impl ViewportRenderer {
             sh: self.environment.irradiance_sh,
         }
     }
+}
+
+/// The edges of every part as line list indices, each edge once per part, and where each
+/// part's edges are.
+fn edge_lists(model: &Model) -> (Vec<u32>, Vec<std::ops::Range<u32>>) {
+    let mut indices = Vec::new();
+    let mut ranges = Vec::with_capacity(model.parts.len());
+    let mut seen = std::collections::HashSet::new();
+    for part in &model.parts {
+        let start = indices.len() as u32;
+        seen.clear();
+        let triangles = &model.mesh.indices[part.indices.start as usize..part.indices.end as usize];
+        for tri in triangles.chunks_exact(3) {
+            for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+                if seen.insert((a.min(b), a.max(b))) {
+                    indices.extend([a, b]);
+                }
+            }
+        }
+        ranges.push(start..indices.len() as u32);
+    }
+    (indices, ranges)
 }
 
 fn create_global_bind_group(

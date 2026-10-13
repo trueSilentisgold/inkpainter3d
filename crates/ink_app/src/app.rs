@@ -1,4 +1,5 @@
 mod about;
+mod docking;
 mod export;
 mod layers;
 mod painting;
@@ -52,7 +53,7 @@ pub struct InkApp {
     layers: LayersState,
     /// Whether the pointer was over the layer stack last frame; Ctrl+C / X / V and Delete
     /// act on layers only there, as in Painter.
-    layers_hovered: bool,
+    pub(super) layers_hovered: bool,
     history: History,
     layout: Layout,
     /// F4: 2D view on the left, 3D on the right.
@@ -78,28 +79,8 @@ pub struct InkApp {
     about_open: bool,
     /// The window closes at the end of the frame.
     quit_requested: bool,
-    /// The tab shown in the lower half of the right-hand panel.
-    right_tab: RightTab,
-}
-
-/// Tabs of the lower half of the right-hand panel.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RightTab {
-    Properties,
-    TextureSet,
-    Display,
-}
-
-impl RightTab {
-    const ALL: [Self; 3] = [Self::Properties, Self::TextureSet, Self::Display];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Properties => "Properties",
-            Self::TextureSet => "Texture set",
-            Self::Display => "Display",
-        }
-    }
+    /// The panels and the viewport.
+    dock: egui_dock::DockState<docking::Tab>,
 }
 
 impl InkApp {
@@ -150,7 +131,7 @@ impl InkApp {
             uv_texture: None,
             uv_camera: UvCamera::default(),
             uv_display: DisplayMode::Material,
-            uv_wireframe: true,
+            uv_wireframe: false,
             uv_rotation: None,
             uv_auto_frame: true,
             uv_framed_size: None,
@@ -160,7 +141,7 @@ impl InkApp {
             export: None,
             about_open: false,
             quit_requested: false,
-            right_tab: RightTab::Properties,
+            dock: docking::load_layout(),
         };
         app.set_model(render_state, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
         app.mark_saved();
@@ -391,7 +372,10 @@ impl InkApp {
                 if menu_check(ui, self.layout_swapped, "Swap 3D and 2D", "F4").clicked() {
                     self.layout_swapped = !self.layout_swapped;
                 }
-                if menu_check(ui, self.uv_wireframe, "UV wireframe in 2D", "").clicked() {
+                if menu_check(ui, self.settings.wireframe, "Wireframe in 3D", "").clicked() {
+                    self.settings.wireframe = !self.settings.wireframe;
+                }
+                if menu_check(ui, self.uv_wireframe, "Wireframe in 2D", "").clicked() {
                     self.uv_wireframe = !self.uv_wireframe;
                 }
                 ui.separator();
@@ -401,6 +385,7 @@ impl InkApp {
                     }
                 }
             });
+            ui.menu_button("Window", |ui| self.window_menu(ui));
             ui.menu_button("Help", |ui| {
                 if ui.button("About inkpainter3d").clicked() {
                     self.about_open = true;
@@ -409,8 +394,8 @@ impl InkApp {
         });
     }
 
-    fn texture_set_list(&mut self, ui: &mut egui::Ui) {
-        theme::title_bar(ui, "Texture set list", |ui| {
+    pub(super) fn texture_set_list(&mut self, ui: &mut egui::Ui) {
+        theme::toolbar_right(ui, |ui| {
             theme::icon_menu(ui, icons::MENU, "List options", |ui| {
                 if ui.button("Show all").clicked() {
                     self.set_all_visible(|_| true);
@@ -560,17 +545,7 @@ impl InkApp {
         }
     }
 
-    fn layers_section(&mut self, ui: &mut egui::Ui) {
-        let response = theme::section("Layers").show(ui, |ui| self.layer_stack_panel(ui));
-        let rect = response
-            .body_response
-            .map_or(response.header_response.rect, |b| {
-                b.rect.union(response.header_response.rect)
-            });
-        self.layers_hovered = ui.rect_contains_pointer(rect);
-    }
-
-    fn properties_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn properties_section(&mut self, ui: &mut egui::Ui) {
         let title = self
             .selection_properties_title()
             .unwrap_or(match self.paint.tool {
@@ -584,7 +559,7 @@ impl InkApp {
         }
     }
 
-    fn texture_set_settings(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn texture_set_settings(&mut self, ui: &mut egui::Ui) {
         let Some(set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
         };
@@ -613,7 +588,7 @@ impl InkApp {
         });
     }
 
-    fn display_settings(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
+    pub(super) fn display_settings(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
         let mut load = false;
         let s = &mut self.settings;
         // PBR and Stylized share the row.
@@ -721,6 +696,10 @@ impl InkApp {
 }
 
 impl eframe::App for InkApp {
+    fn on_exit(&mut self) {
+        self.save_layout();
+    }
+
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         // Tab would move keyboard focus to a button, which turns every shortcut off. In
         // Painter it hides the UI (not there yet); in text fields it keeps working.
@@ -812,56 +791,10 @@ impl eframe::App for InkApp {
             .resizable(false)
             .exact_size(44.0)
             .show(ui, |ui| self.tool_strip(ui));
-        // Right: what you pick from (texture sets, layers) above, what you edit (properties,
-        // settings) below, in tabs.
-        egui::Panel::right("panels")
-            .default_size(340.0)
-            .show(ui, |ui| {
-                egui::Panel::top("stack")
-                    .resizable(true)
-                    .default_size(320.0)
-                    .size_range(160.0..=ui.available_height() - 120.0)
-                    .show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("stack scroll")
-                            .show(ui, |ui| {
-                                self.texture_set_list(ui);
-                                ui.add_space(8.0);
-                                self.layers_section(ui);
-                            });
-                    });
-                egui::CentralPanel::default().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let width = (ui.available_width()
-                            - ui.spacing().item_spacing.x * (RightTab::ALL.len() as f32 - 1.0))
-                            / RightTab::ALL.len() as f32;
-                        for tab in RightTab::ALL {
-                            let selected = self.right_tab == tab;
-                            if ui
-                                .add_sized(
-                                    [width, 24.0],
-                                    egui::Button::selectable(selected, tab.label()),
-                                )
-                                .clicked()
-                            {
-                                self.right_tab = tab;
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .id_salt("tab scroll")
-                        .show(ui, |ui| match self.right_tab {
-                            RightTab::Properties => self.properties_section(ui),
-                            RightTab::TextureSet => self.texture_set_settings(ui),
-                            RightTab::Display => self.display_settings(ui, &rs),
-                        });
-                });
-            });
+        egui::CentralPanel::no_frame().show(ui, |ui| self.dock(ui, &rs));
         self.end_stack_edits(ui, stack_before);
         self.sync_system_clipboard(ui);
         self.validate_selection();
-        egui::CentralPanel::no_frame().show(ui, |ui| self.views(ui, &rs));
         self.project_dialogs(ui, &rs);
         self.export_window(ui, &rs);
         self.about_dialog(ui);
@@ -967,7 +900,7 @@ fn channel_value_edit(
 /// Color button for an sRGB color stored as floats.
 fn srgb_edit(ui: &mut egui::Ui, color: &mut [f32; 3]) -> egui::Response {
     let mut srgb = color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
-    let response = ui.color_edit_button_srgb(&mut srgb);
+    let response = theme::color_button(ui, &mut srgb);
     if response.changed() {
         *color = srgb.map(|c| c as f32 / 255.0);
     }

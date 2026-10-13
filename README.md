@@ -86,6 +86,9 @@ inkpainter3d aims to be a capable alternative that:
   - select the texture set under the cursor with Ctrl+Alt+right click
 - Texture set settings: size (128 to 4096), opacity mode (opaque, alpha test, alpha blend)
 - Viewport
+  - **dockable panels**: move, split, stack and tear off every panel; the layout is remembered, and can be saved to files (Window menu)
+  - mesh wireframe on or off in the 3D and the 2D view
+  - color picker with a **hex code** field
   - **PBR** with image based lighting from HDR panoramas (`.hdr`, `.exr`), rotation,
     exposure, background opacity and blur; a CC0 studio HDRI is built in
   - **Stylized**: banded toon shading, rim light, ink outline with adjustable color and width
@@ -157,10 +160,10 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
 | 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts, German and English UI | ⏳ in progress |
-| 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | |
+| 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
 | 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
-| 10 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
+| 10 | **Remaining tools** — projection, symmetry, stencil, color selection, geometry mask, anchor points | |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 12 | **Polish** — UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 
