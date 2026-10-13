@@ -1546,9 +1546,9 @@ fn dropdown<R>(
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::Response {
     let chevron = Image::new(icons::CHEVRON_DOWN).fit_to_exact_size(egui::Vec2::splat(10.0));
-    let button = egui::Button::new((RichText::new(text).small(), chevron))
+    let button = egui::Button::new((RichText::new(text), chevron))
         .image_tint_follows_text_color(true)
-        .frame_when_inactive(false);
+        .min_size(egui::vec2(60.0, 24.0));
     egui::containers::menu::MenuButton::from_button(button)
         .ui(ui, add_contents)
         .0

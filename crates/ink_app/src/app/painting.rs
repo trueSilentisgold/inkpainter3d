@@ -784,97 +784,102 @@ impl InkApp {
         let alphas = self.paint.alphas.clone();
         let brush = self.paint.brush_mut();
 
-        theme::group_label(ui, "BRUSH");
-        theme::property_grid("brush").show(ui, |ui| {
-            ui.label("Size");
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::Slider::new(&mut brush.size, Brush::SIZE_RANGE)
-                        .logarithmic(true)
-                        .max_decimals(2),
-                );
-                pressure_toggle(ui, &mut brush.pressure.size, "Size follows pen pressure");
-            });
-            ui.end_row();
-            ui.label("Size space");
-            egui::ComboBox::from_id_salt("size space")
-                .selected_text(size_space_label(brush.size_space))
-                .show_ui(ui, |ui| {
-                    for space in [SizeSpace::Object, SizeSpace::Viewport] {
-                        ui.selectable_value(&mut brush.size_space, space, size_space_label(space));
-                    }
+        theme::group(ui, "Brush", true, |ui| {
+            theme::property_grid("brush").show(ui, |ui| {
+                ui.label("Size");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Slider::new(&mut brush.size, Brush::SIZE_RANGE)
+                            .logarithmic(true)
+                            .max_decimals(2),
+                    );
+                    pressure_toggle(ui, &mut brush.pressure.size, "Size follows pen pressure");
                 });
-            ui.end_row();
-            ui.label("Flow");
-            ui.horizontal(|ui| {
-                percent_slider(ui, &mut brush.flow, 0.0..=100.0);
-                pressure_toggle(ui, &mut brush.pressure.flow, "Flow follows pen pressure");
-            });
-            ui.end_row();
-            ui.label("Stroke opacity");
-            percent_slider(ui, &mut brush.opacity, 0.0..=100.0);
-            ui.end_row();
-            ui.label("Spacing");
-            let mut spacing = brush.spacing * 100.0;
-            if ui
-                .add(
-                    egui::Slider::new(&mut spacing, 1.0..=1000.0)
-                        .logarithmic(true)
-                        .suffix(" %"),
-                )
-                .changed()
-            {
-                brush.spacing = spacing / 100.0;
-            }
-            ui.end_row();
-            ui.label("Angle");
-            ui.add(egui::Slider::new(&mut brush.angle, 0.0..=360.0).suffix("°"));
-            ui.end_row();
-            ui.label("Backface culling");
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut brush.backface_culling, "");
-                ui.add_enabled(
-                    brush.backface_culling,
-                    egui::Slider::new(&mut brush.backface_angle, 0.0..=180.0).suffix("°"),
-                );
-            });
-            ui.end_row();
-            if brush.pressure.size {
-                ui.label("Minimum size");
-                percent_slider(ui, &mut brush.pressure.min_size, 0.0..=100.0);
                 ui.end_row();
-            }
-            if brush.pressure.flow {
-                ui.label("Minimum flow");
-                percent_slider(ui, &mut brush.pressure.min_flow, 0.0..=100.0);
-                ui.end_row();
-            }
-        });
-
-        theme::group_label(ui, "ALPHA");
-        theme::property_grid("alpha").show(ui, |ui| {
-            ui.label("Shape");
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("alpha")
-                    .selected_text(brush.alpha.name().to_owned())
+                ui.label("Size space");
+                egui::ComboBox::from_id_salt("size space")
+                    .selected_text(size_space_label(brush.size_space))
                     .show_ui(ui, |ui| {
-                        let mut choices = vec![Alpha::Round, Alpha::Square];
-                        choices.extend(alphas.iter().cloned().map(Alpha::Image));
-                        for alpha in choices {
-                            let selected = brush.alpha.same(&alpha);
-                            if ui.selectable_label(selected, alpha.name()).clicked() {
-                                brush.alpha = alpha;
-                            }
+                        for space in [SizeSpace::Object, SizeSpace::Viewport] {
+                            ui.selectable_value(
+                                &mut brush.size_space,
+                                space,
+                                size_space_label(space),
+                            );
                         }
                     });
-                load_alpha = ui.button("Load…").clicked();
-            });
-            ui.end_row();
-            if !matches!(brush.alpha, Alpha::Image(_)) {
-                ui.label("Hardness");
-                ui.add(egui::Slider::new(&mut brush.hardness, 0.0..=1.0));
                 ui.end_row();
-            }
+                ui.label("Flow");
+                ui.horizontal(|ui| {
+                    percent_slider(ui, &mut brush.flow, 0.0..=100.0);
+                    pressure_toggle(ui, &mut brush.pressure.flow, "Flow follows pen pressure");
+                });
+                ui.end_row();
+                ui.label("Stroke opacity");
+                percent_slider(ui, &mut brush.opacity, 0.0..=100.0);
+                ui.end_row();
+                ui.label("Spacing");
+                let mut spacing = brush.spacing * 100.0;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut spacing, 1.0..=1000.0)
+                            .logarithmic(true)
+                            .suffix(" %"),
+                    )
+                    .changed()
+                {
+                    brush.spacing = spacing / 100.0;
+                }
+                ui.end_row();
+                ui.label("Angle");
+                ui.add(egui::Slider::new(&mut brush.angle, 0.0..=360.0).suffix("°"));
+                ui.end_row();
+                ui.label("Backface culling");
+                ui.checkbox(&mut brush.backface_culling, "");
+                ui.end_row();
+                if brush.backface_culling {
+                    ui.label("Angle limit");
+                    ui.add(egui::Slider::new(&mut brush.backface_angle, 0.0..=180.0).suffix("°"));
+                    ui.end_row();
+                }
+                if brush.pressure.size {
+                    ui.label("Minimum size");
+                    percent_slider(ui, &mut brush.pressure.min_size, 0.0..=100.0);
+                    ui.end_row();
+                }
+                if brush.pressure.flow {
+                    ui.label("Minimum flow");
+                    percent_slider(ui, &mut brush.pressure.min_flow, 0.0..=100.0);
+                    ui.end_row();
+                }
+            });
+        });
+
+        theme::group(ui, "Alpha", false, |ui| {
+            theme::property_grid("alpha").show(ui, |ui| {
+                ui.label("Shape");
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("alpha")
+                        .selected_text(brush.alpha.name().to_owned())
+                        .show_ui(ui, |ui| {
+                            let mut choices = vec![Alpha::Round, Alpha::Square];
+                            choices.extend(alphas.iter().cloned().map(Alpha::Image));
+                            for alpha in choices {
+                                let selected = brush.alpha.same(&alpha);
+                                if ui.selectable_label(selected, alpha.name()).clicked() {
+                                    brush.alpha = alpha;
+                                }
+                            }
+                        });
+                    load_alpha = ui.button("Load…").clicked();
+                });
+                ui.end_row();
+                if !matches!(brush.alpha, Alpha::Image(_)) {
+                    ui.label("Hardness");
+                    ui.add(egui::Slider::new(&mut brush.hardness, 0.0..=1.0));
+                    ui.end_row();
+                }
+            });
         });
 
         let material = &mut brush.material;
@@ -904,14 +909,13 @@ impl InkApp {
                 });
             }
         } else {
-            theme::group_label(
-                ui,
-                match tool {
-                    Tool::Paint => "MATERIAL",
-                    Tool::Erase => "CHANNELS",
-                },
-            );
-            Self::material_grid(ui, tool, material);
+            let title = match tool {
+                Tool::Paint => "Material",
+                Tool::Erase => "Channels",
+            };
+            theme::group(ui, title, true, |ui| {
+                Self::material_grid(ui, tool, material)
+            });
         }
 
         if load_alpha

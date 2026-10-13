@@ -167,6 +167,8 @@ fn style() -> egui::Style {
     s.menu_margin = Margin::same(5);
     s.indent = 14.0;
     s.slider_width = 120.0;
+    // Value fields of sliders and drag values share one width.
+    s.interact_size.x = 52.0;
     s.slider_rail_height = 4.0;
     s.combo_width = 120.0;
 
@@ -430,11 +432,12 @@ pub fn chip(ui: &mut Ui, on: bool, text: &str) -> Response {
     } else {
         (WIDGET, Stroke::new(1.0, WIDGET), TEXT_WEAK)
     };
-    ui.add(
+    ui.add_sized(
+        [LABEL_WIDTH, 22.0],
         egui::Button::new(RichText::new(text).color(color))
             .fill(fill)
             .stroke(stroke)
-            .corner_radius(10.0),
+            .corner_radius(2.0),
     )
 }
 
@@ -504,4 +507,25 @@ pub fn title_bar(ui: &mut Ui, title: &str, right: impl FnOnce(&mut Ui)) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
             });
         });
+}
+
+/// A collapsible group inside a panel (BRUSH, ALPHA, MATERIAL …): a small title with an
+/// arrow, lighter than a panel [`section`].
+pub fn group<R>(
+    ui: &mut Ui,
+    title: &str,
+    default_open: bool,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) {
+    ui.scope(|ui| {
+        ui.visuals_mut().collapsing_header_frame = false;
+        egui::CollapsingHeader::new(
+            RichText::new(title.to_uppercase())
+                .text_style(header_style())
+                .color(TEXT_WEAK),
+        )
+        .id_salt(title)
+        .default_open(default_open)
+        .show(ui, add_contents);
+    });
 }
