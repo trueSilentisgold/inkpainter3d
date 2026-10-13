@@ -78,6 +78,28 @@ pub struct InkApp {
     about_open: bool,
     /// The window closes at the end of the frame.
     quit_requested: bool,
+    /// The tab shown in the lower half of the right-hand panel.
+    right_tab: RightTab,
+}
+
+/// Tabs of the lower half of the right-hand panel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RightTab {
+    Properties,
+    TextureSet,
+    Display,
+}
+
+impl RightTab {
+    const ALL: [Self; 3] = [Self::Properties, Self::TextureSet, Self::Display];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Properties => "Properties",
+            Self::TextureSet => "Texture set",
+            Self::Display => "Display",
+        }
+    }
 }
 
 impl InkApp {
@@ -138,6 +160,7 @@ impl InkApp {
             export: None,
             about_open: false,
             quit_requested: false,
+            right_tab: RightTab::Properties,
         };
         app.set_model(render_state, Model::from_mesh(Mesh::uv_sphere(1.0, 64, 32)));
         app.mark_saved();
@@ -551,15 +574,14 @@ impl InkApp {
         let title = self
             .selection_properties_title()
             .unwrap_or(match self.paint.tool {
-                ink_core::Tool::Paint => "Properties - Paint",
-                ink_core::Tool::Erase => "Properties - Eraser",
+                ink_core::Tool::Paint => "Paint",
+                ink_core::Tool::Erase => "Eraser",
             });
-        // The title changes with the selection, the open state does not.
-        theme::section(title).id_salt("properties").show(ui, |ui| {
-            if !self.selection_properties(ui) {
-                self.properties_panel(ui);
-            }
-        });
+        ui.label(theme::header(title));
+        ui.add_space(2.0);
+        if !self.selection_properties(ui) {
+            self.properties_panel(ui);
+        }
     }
 
     fn texture_set_settings(&mut self, ui: &mut egui::Ui) {
@@ -790,18 +812,50 @@ impl eframe::App for InkApp {
             .resizable(false)
             .exact_size(44.0)
             .show(ui, |ui| self.tool_strip(ui));
+        // Right: what you pick from (texture sets, layers) above, what you edit (properties,
+        // settings) below, in tabs.
         egui::Panel::right("panels")
             .default_size(340.0)
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.texture_set_list(ui);
-                    ui.add_space(10.0);
-                    self.layers_section(ui);
-                    self.properties_section(ui);
-                    theme::section("Texture set settings")
-                        .show(ui, |ui| self.texture_set_settings(ui));
-                    theme::section("Display settings")
-                        .show(ui, |ui| self.display_settings(ui, &rs));
+                egui::Panel::top("stack")
+                    .resizable(true)
+                    .default_size(320.0)
+                    .size_range(160.0..=ui.available_height() - 120.0)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("stack scroll")
+                            .show(ui, |ui| {
+                                self.texture_set_list(ui);
+                                ui.add_space(8.0);
+                                self.layers_section(ui);
+                            });
+                    });
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let width = (ui.available_width()
+                            - ui.spacing().item_spacing.x * (RightTab::ALL.len() as f32 - 1.0))
+                            / RightTab::ALL.len() as f32;
+                        for tab in RightTab::ALL {
+                            let selected = self.right_tab == tab;
+                            if ui
+                                .add_sized(
+                                    [width, 24.0],
+                                    egui::Button::selectable(selected, tab.label()),
+                                )
+                                .clicked()
+                            {
+                                self.right_tab = tab;
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("tab scroll")
+                        .show(ui, |ui| match self.right_tab {
+                            RightTab::Properties => self.properties_section(ui),
+                            RightTab::TextureSet => self.texture_set_settings(ui),
+                            RightTab::Display => self.display_settings(ui, &rs),
+                        });
                 });
             });
         self.end_stack_edits(ui, stack_before);

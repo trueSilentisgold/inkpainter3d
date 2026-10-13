@@ -1443,12 +1443,10 @@ impl InkApp {
         let selection = self.selection()?;
         let layer = self.stack()?.find(selection.layer)?;
         match selection.target {
-            Target::Content => {
-                matches!(layer.content, Content::Fill(_)).then_some("PROPERTIES - FILL")
-            }
+            Target::Content => matches!(layer.content, Content::Fill(_)).then_some("Fill"),
             Target::Effect(id) => match layer.mask.as_ref()?.effect(id)?.kind {
-                EffectKind::Fill(_) => Some("PROPERTIES - FILL"),
-                EffectKind::Levels(_) => Some("PROPERTIES - LEVELS"),
+                EffectKind::Fill(_) => Some("Fill"),
+                EffectKind::Levels(_) => Some("Levels"),
                 EffectKind::Paint(_) => None,
             },
             Target::Mask => None,
