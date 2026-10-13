@@ -15,6 +15,9 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
   experienceleague.adobe.com) and match it.
 - Never commit the owner's models, textures, screenshots or renders of their assets. Keep
   them in the session scratchpad.
+- Subagents and workflow agents always get an explicit `model` (`haiku` for mechanical work,
+  `sonnet` by default), never the main model for small tasks: see
+  `.claude/skills/model-routing/SKILL.md`.
 - The export has templates for all three Unity render pipelines (Built-in, URP, HDRP), so
   the owner's choice doesn't matter for now.
 
