@@ -2,6 +2,7 @@
 //! the brush settings panels.
 
 use super::InkApp;
+use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Key, PointerButton, RichText, Stroke as Line};
 use glam::{Vec2, Vec3};
 use ink_core::{
@@ -573,14 +574,13 @@ impl InkApp {
                 }
                 _ => format!("Flow {:.0}   Angle {:.0}°", brush.flow * 100.0, brush.angle),
             };
-            painter.text(
+            self.draw_outline(&painter, rect, view, adjust.start);
+            theme::overlay_text(
+                &painter,
                 pos2(adjust.start) + egui::vec2(16.0, -16.0),
                 egui::Align2::LEFT_BOTTOM,
-                text,
-                egui::FontId::proportional(13.0),
-                Color32::WHITE,
+                &text,
             );
-            self.draw_outline(&painter, rect, view, adjust.start);
             return;
         }
         if modifiers.alt && active.is_none() {
@@ -676,71 +676,103 @@ impl InkApp {
 
     // ---- Panels ----
 
-    /// Painter's tool bar on the left: one button per tool.
+    /// Painter's tool bar on the left: one icon button per tool.
     pub(super) fn tool_strip(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
-        for (tool, label, key) in [(Tool::Paint, "Paint", "1"), (Tool::Erase, "Eraser", "2")] {
-            let selected = self.paint.tool == tool;
-            if ui
-                .add_sized([64.0, 28.0], egui::Button::selectable(selected, label))
-                .on_hover_text(format!("{label} ({key})"))
-                .clicked()
-            {
-                self.paint.tool = tool;
+        ui.vertical_centered(|ui| {
+            for (tool, key) in [(Tool::Paint, "1"), (Tool::Erase, "2")] {
+                let (source, name) = tool_look(tool);
+                let icon =
+                    egui::Image::new(source).fit_to_exact_size(egui::Vec2::splat(theme::TOOL_ICON));
+                let button = egui::Button::selectable(self.paint.tool == tool, icon)
+                    .image_tint_follows_text_color(true)
+                    .min_size(egui::vec2(34.0, 34.0));
+                if ui
+                    .add(button)
+                    .on_hover_text(format!("{name} ({key})"))
+                    .clicked()
+                {
+                    self.paint.tool = tool;
+                }
             }
-        }
+        });
     }
 
-    /// Painter's contextual tool bar above the views.
+    /// Painter's contextual tool bar above the views: the tool, then its brush settings.
     pub(super) fn tool_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let tool = match self.paint.tool {
-                Tool::Paint => "Paint",
-                Tool::Erase => "Eraser",
-            };
-            ui.label(RichText::new(tool).strong());
-            ui.separator();
-            let brush = self.paint.brush_mut();
-            ui.label("Size");
-            ui.add(
-                egui::DragValue::new(&mut brush.size)
-                    .range(Brush::SIZE_RANGE)
-                    .speed(0.1)
-                    .max_decimals(2),
-            );
-            pressure_toggle(ui, &mut brush.pressure.size, "Size follows pen pressure");
-            ui.label("Flow");
-            percent(ui, &mut brush.flow, 0.0..=100.0);
-            pressure_toggle(ui, &mut brush.pressure.flow, "Flow follows pen pressure");
-            ui.label("Stroke opacity");
-            percent(ui, &mut brush.opacity, 0.0..=100.0);
-            ui.label("Spacing");
-            percent(ui, &mut brush.spacing, 1.0..=1000.0);
-            ui.separator();
-            ui.checkbox(&mut self.paint.lazy_mouse, "Lazy mouse")
-                .on_hover_text("Trails the brush behind the pointer for smooth strokes (D)");
-            ui.add_enabled(
-                self.paint.lazy_mouse,
-                egui::DragValue::new(&mut self.paint.lazy_distance)
-                    .range(1.0..=50.0)
-                    .speed(0.2)
-                    .prefix("Distance "),
-            );
-            ui.separator();
-            let curve = &mut self.paint.brush_mut().pressure.curve;
-            egui::ComboBox::from_id_salt("pressure curve")
-                .selected_text(curve_label(*curve))
-                .show_ui(ui, |ui| {
-                    for c in [
-                        PressureCurve::Linear,
-                        PressureCurve::EaseIn,
-                        PressureCurve::EaseInOut,
-                    ] {
-                        ui.selectable_value(curve, c, curve_label(c));
-                    }
-                })
-                .response
+        let paint = &mut self.paint;
+        // Which groups start behind a separator.
+        const SEPARATED: [bool; 7] = [false, true, false, false, false, true, true];
+        bar_rows(ui, &SEPARATED, |ui, group| match group {
+            0 => {
+                let (source, name) = tool_look(paint.tool);
+                ui.add(theme::icon(source, theme::ICON, theme::TEXT_STRONG));
+                ui.label(
+                    RichText::new(name)
+                        .font(theme::medium(13.0))
+                        .color(theme::TEXT_STRONG),
+                );
+            }
+            1 => {
+                let brush = paint.brush_mut();
+                bar_label(ui, "Size");
+                ui.add(
+                    egui::DragValue::new(&mut brush.size)
+                        .range(Brush::SIZE_RANGE)
+                        .speed(0.1)
+                        .max_decimals(2),
+                );
+                pressure_toggle(ui, &mut brush.pressure.size, "Size follows pen pressure");
+            }
+            2 => {
+                let brush = paint.brush_mut();
+                bar_label(ui, "Flow");
+                percent(ui, &mut brush.flow, 0.0..=100.0);
+                pressure_toggle(ui, &mut brush.pressure.flow, "Flow follows pen pressure");
+            }
+            3 => {
+                bar_label(ui, "Stroke opacity");
+                percent(ui, &mut paint.brush_mut().opacity, 0.0..=100.0);
+            }
+            4 => {
+                bar_label(ui, "Spacing");
+                percent(ui, &mut paint.brush_mut().spacing, 1.0..=1000.0);
+            }
+            5 => {
+                ui.checkbox(&mut paint.lazy_mouse, "Lazy mouse")
+                    .on_hover_text("Trails the brush behind the pointer for smooth strokes (D)");
+                ui.add_enabled_ui(paint.lazy_mouse, |ui| {
+                    ui.add_space(6.0);
+                    bar_label(ui, "Distance");
+                    ui.add(
+                        egui::DragValue::new(&mut paint.lazy_distance)
+                            .range(1.0..=50.0)
+                            .speed(0.2),
+                    );
+                });
+            }
+            _ => {
+                ui.add(theme::icon(
+                    icons::PEN_PRESSURE,
+                    theme::ICON,
+                    theme::TEXT_WEAK,
+                ))
                 .on_hover_text("Pen pressure curve");
+                let curve = &mut paint.brush_mut().pressure.curve;
+                egui::ComboBox::from_id_salt("pressure curve")
+                    .selected_text(curve_label(*curve))
+                    .show_ui(ui, |ui| {
+                        for c in [
+                            PressureCurve::Linear,
+                            PressureCurve::EaseIn,
+                            PressureCurve::EaseInOut,
+                        ] {
+                            ui.selectable_value(curve, c, curve_label(c));
+                        }
+                    })
+                    .response
+                    .on_hover_text("Pen pressure curve");
+            }
         });
     }
 
@@ -752,11 +784,8 @@ impl InkApp {
         let alphas = self.paint.alphas.clone();
         let brush = self.paint.brush_mut();
 
-        section(ui, "BRUSH");
-        egui::Grid::new("brush")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
+        theme::group(ui, "Brush", true, |ui| {
+            theme::property_grid("brush").show(ui, |ui| {
                 ui.label("Size");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -806,14 +835,13 @@ impl InkApp {
                 ui.add(egui::Slider::new(&mut brush.angle, 0.0..=360.0).suffix("°"));
                 ui.end_row();
                 ui.label("Backface culling");
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut brush.backface_culling, "");
-                    ui.add_enabled(
-                        brush.backface_culling,
-                        egui::Slider::new(&mut brush.backface_angle, 0.0..=180.0).suffix("°"),
-                    );
-                });
+                ui.checkbox(&mut brush.backface_culling, "");
                 ui.end_row();
+                if brush.backface_culling {
+                    ui.label("Angle limit");
+                    ui.add(egui::Slider::new(&mut brush.backface_angle, 0.0..=180.0).suffix("°"));
+                    ui.end_row();
+                }
                 if brush.pressure.size {
                     ui.label("Minimum size");
                     percent_slider(ui, &mut brush.pressure.min_size, 0.0..=100.0);
@@ -825,12 +853,10 @@ impl InkApp {
                     ui.end_row();
                 }
             });
+        });
 
-        section(ui, "ALPHA");
-        egui::Grid::new("alpha")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
+        theme::group(ui, "Alpha", false, |ui| {
+            theme::property_grid("alpha").show(ui, |ui| {
                 ui.label("Shape");
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("alpha")
@@ -845,7 +871,7 @@ impl InkApp {
                                 }
                             }
                         });
-                    load_alpha = ui.small_button("Load…").clicked();
+                    load_alpha = ui.button("Load…").clicked();
                 });
                 ui.end_row();
                 if !matches!(brush.alpha, Alpha::Image(_)) {
@@ -854,33 +880,42 @@ impl InkApp {
                     ui.end_row();
                 }
             });
+        });
 
         let material = &mut brush.material;
         if grayscale {
             // Masks and their paint effects hold one grayscale value; the eraser just
             // takes paint away.
             if tool == Tool::Paint {
-                section(ui, "GRAYSCALE");
-                ui.horizontal(|ui| {
-                    ui.add(egui::Slider::new(&mut material.grayscale, 0.0..=1.0));
-                    if ui
-                        .button("⬌")
-                        .on_hover_text("Invert: paint black instead of white (X)")
-                        .clicked()
-                    {
-                        material.grayscale = 1.0 - material.grayscale;
-                    }
+                theme::group_label(ui, "GRAYSCALE");
+                theme::property_grid("grayscale").show(ui, |ui| {
+                    ui.label("Value");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut material.grayscale, 0.0..=1.0));
+                        // On while the brush paints dark values.
+                        let mut inverted = material.grayscale < 0.5;
+                        if theme::icon_toggle(
+                            ui,
+                            icons::INVERT,
+                            &mut inverted,
+                            "Invert: paint black instead of white (X)",
+                        )
+                        .changed()
+                        {
+                            material.grayscale = 1.0 - material.grayscale;
+                        }
+                    });
+                    ui.end_row();
                 });
             }
         } else {
-            section(
-                ui,
-                match tool {
-                    Tool::Paint => "MATERIAL",
-                    Tool::Erase => "CHANNELS",
-                },
-            );
-            Self::material_grid(ui, tool, material);
+            let title = match tool {
+                Tool::Paint => "Material",
+                Tool::Erase => "Channels",
+            };
+            theme::group(ui, title, true, |ui| {
+                Self::material_grid(ui, tool, material)
+            });
         }
 
         if load_alpha
@@ -894,32 +929,28 @@ impl InkApp {
 
     /// Channel toggles and values of the brush material.
     fn material_grid(ui: &mut egui::Ui, tool: Tool, material: &mut ink_core::BrushMaterial) {
-        egui::Grid::new("material")
-            .num_columns(2)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                for channel in Channel::ALL {
-                    let mut on = material.channels.contains(channel);
-                    if ui
-                        .toggle_value(&mut on, channel.label())
-                        .on_hover_text(match tool {
-                            Tool::Paint => "Paint this channel",
-                            Tool::Erase => "Erase this channel",
-                        })
-                        .changed()
-                    {
-                        material.channels.set(channel, on);
-                    }
-                    if tool == Tool::Paint {
-                        ui.add_enabled_ui(on, |ui| {
-                            super::channel_value_edit(ui, &mut material.values, channel);
-                        });
-                    } else {
-                        ui.label("");
-                    }
-                    ui.end_row();
+        theme::property_grid("material").show(ui, |ui| {
+            for channel in Channel::ALL {
+                let on = material.channels.contains(channel);
+                if theme::chip(ui, on, channel.label())
+                    .on_hover_text(match tool {
+                        Tool::Paint => "Paint this channel",
+                        Tool::Erase => "Erase this channel",
+                    })
+                    .clicked()
+                {
+                    material.channels.set(channel, !on);
                 }
-            });
+                if tool == Tool::Paint {
+                    ui.add_enabled_ui(on, |ui| {
+                        super::channel_value_edit(ui, &mut material.values, channel);
+                    });
+                } else {
+                    ui.label("");
+                }
+                ui.end_row();
+            }
+        });
     }
 
     pub(super) fn load_alpha(&mut self, path: &std::path::Path) {
@@ -938,14 +969,76 @@ impl InkApp {
     }
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(title).small().weak());
+/// The icon and the name of a tool.
+fn tool_look(tool: Tool) -> (egui::ImageSource<'static>, &'static str) {
+    match tool {
+        Tool::Paint => (icons::TOOL_PAINT, "Paint"),
+        Tool::Erase => (icons::TOOL_ERASER, "Eraser"),
+    }
 }
 
 fn pressure_toggle(ui: &mut egui::Ui, on: &mut bool, hint: &str) {
-    ui.toggle_value(on, RichText::new("✒").small())
-        .on_hover_text(hint);
+    theme::icon_toggle(ui, icons::PEN_PRESSURE, on, hint);
+}
+
+/// Space between the groups of the tool bar; inside a group controls sit closer.
+const BAR_GAP: f32 = 12.0;
+
+/// The label of a value in the tool bar.
+fn bar_label(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).color(theme::TEXT_WEAK));
+}
+
+/// Lays out the groups of the tool bar in a row. A group that doesn't fit the width starts
+/// a new row instead of being clipped; `separated` says which groups follow a separator
+/// (not drawn at the start of a row). The widths of the groups are those of the last frame.
+fn bar_rows(ui: &mut egui::Ui, separated: &[bool], mut group: impl FnMut(&mut egui::Ui, usize)) {
+    let id = ui.id().with("tool bar widths");
+    let mut widths: Vec<f32> = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    widths.resize(separated.len(), 0.0);
+    // The space before a group: the gap, twice with a separator in between.
+    let before = |i: usize| {
+        if separated[i] {
+            2.0 * BAR_GAP + 1.0
+        } else {
+            BAR_GAP
+        }
+    };
+    let available = ui.available_width();
+    let mut measured = Vec::with_capacity(widths.len());
+    let mut first = 0;
+    while first < separated.len() {
+        let mut end = first + 1;
+        let mut used = widths[first];
+        while end < separated.len() && used + before(end) + widths[end] <= available {
+            used += before(end) + widths[end];
+            end += 1;
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = BAR_GAP;
+            for (i, &separator) in separated.iter().enumerate().take(end).skip(first) {
+                if i > first && separator {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(1.0, 16.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 0.0, theme::BORDER_STRONG);
+                }
+                let response = ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    group(ui, i);
+                });
+                measured.push(response.response.rect.width());
+            }
+        });
+        first = end;
+    }
+    if measured
+        .iter()
+        .zip(&widths)
+        .any(|(a, b)| (a - b).abs() > 0.5)
+    {
+        ui.data_mut(|d| d.insert_temp(id, measured));
+        ui.ctx().request_repaint();
+    }
 }
 
 /// Drag value for a fraction shown in percent.

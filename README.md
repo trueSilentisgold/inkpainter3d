@@ -6,7 +6,7 @@ inkpainter3d lets you paint directly onto 3D models with a layer-based, non-dest
 and export the result as texture maps for game engines and renderers. It runs natively on
 **Windows and Linux** and will always be **free**.
 
-> **Status:** early development. Phases 1 to 5 (viewport, texture sets, HDRI lighting, brush engine, layer stack, project files and export) are done: a game asset can be textured and exported end to end. Baking is next.
+> **Status:** early development. Phases 1 to 5 (viewport, texture sets, HDRI lighting, brush engine, layer stack, project files and export) are done: a game asset can be textured and exported end to end. The interface (INKRABBIT design, dockable panels) is in progress; baking comes after it.
 
 ---
 
@@ -115,11 +115,12 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 3 | **Brush engine** — paint and erase, strokes stored as data, pen pressure, alphas, lazy mouse, straight lines, undo, 2D view | ✅ done |
 | 4 | **Layer stack** — paint, fill and group layers, per-channel blend modes and opacity, masks, UV and tri-planar projection, channel view | ✅ done |
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
-| 6 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ⏳ next |
-| 7 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
-| 8 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
-| 9 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
-| 10 | **Polish** — UDIM, smudge and clone, path tools, post effects, Python API, installers (AppImage / Flatpak, Windows) | |
+| 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts, German and English UI | ⏳ in progress |
+| 7 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
+| 8 | **Generators and library** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, shelf, starter content | |
+| 9 | **Remaining tools** — projection, polygon fill, symmetry, stencil, color selection, geometry mask, anchor points | |
+| 10 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
+| 11 | **Polish** — UDIM, smudge and clone, path tools, post effects, Python API, installers (AppImage / Flatpak, Windows) | |
 
 ## Building
 
@@ -212,6 +213,16 @@ CI builds, lints and tests every push on Windows and Linux.
 
 The built-in environment is [Studio Small 09](https://polyhaven.com/a/studio_small_09) by
 Poly Haven, released under CC0.
+
+The interface uses [Space Grotesk](https://github.com/floriankarsten/space-grotesk)
+(© 2020 The Space Grotesk Project Authors) and
+[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (© 2020 The JetBrains Mono
+Project Authors), both under the SIL Open Font License 1.1; the license texts are next to
+the fonts in `assets/fonts`.
+
+inkpainter3d is made by [INKRABBIT](https://inkrabbit.de). The INKRABBIT name and the rabbit
+logo (`assets/branding`, `assets/icons/inkrabbit.svg`) are the studio's marks and are not
+covered by the GPL; the other icons are drawn for inkpainter3d and are GPL like the code.
 
 ## License
 

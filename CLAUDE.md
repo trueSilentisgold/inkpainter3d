@@ -15,6 +15,9 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
   experienceleague.adobe.com) and match it.
 - Never commit the owner's models, textures, screenshots or renders of their assets. Keep
   them in the session scratchpad.
+- Subagents and workflow agents always get an explicit `model` (`haiku` for mechanical work,
+  `sonnet` by default), never the main model for small tasks: see
+  `.claude/skills/model-routing/SKILL.md`.
 - The export has templates for all three Unity render pipelines (Built-in, URP, HDRP), so
   the owner's choice doesn't matter for now.
 
@@ -38,7 +41,8 @@ work, on Linux first and Windows equally. Rust, wgpu, egui. GPL-3.0-or-later.
   the implemented ones in the README's "Controls". Plain LMB is reserved for painting.
 - Do not copy Adobe's name, logo, icons, shipped materials or brushes. `.sbsar` cannot be
   supported (proprietary engine); generators and filters are our own WGSL shaders.
-- Content we ship must be self-made or CC0 (Poly Haven, ambientCG) and credited in the README.
+- Content we ship must be self-made or CC0 (Poly Haven, ambientCG) and credited in the README;
+  fonts may also be under the SIL Open Font License (their `OFL.txt` ships next to them).
 
 ## Architecture
 
@@ -48,7 +52,9 @@ reads or writes files; `ink_render` does everything wgpu and depends only on `in
 (`app.rs` with `app/views.rs` for the 3D and 2D views, `app/painting.rs` for the brush,
 `app/layers.rs` for the layer stack panel and the properties of fills and effects,
 `app/project.rs` for the File menu's project commands and `app/export.rs` for the export
-window)
+window), `theme.rs` (the INKRABBIT look: color tokens, fonts, the SVG icons in `assets/icons`
+and helpers for recurring widgets such as section headers, icon buttons, rows and property
+grids; use them instead of styling widgets ad hoc)
 plus `pen.rs`, pen input on Linux: a Wayland tablet client and an XInput2 pressure reader
 (Linux-only dependencies).
 

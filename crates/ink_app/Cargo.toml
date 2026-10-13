@@ -13,6 +13,7 @@ ink_core.workspace = true
 ink_io.workspace = true
 ink_render.workspace = true
 eframe.workspace = true
+egui_extras.workspace = true
 glam.workspace = true
 rfd.workspace = true
 log.workspace = true

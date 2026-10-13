@@ -1,5 +1,6 @@
 mod app;
 mod pen;
+mod theme;
 
 use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
 use ink_render::wgpu;
@@ -14,6 +15,12 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("inkpainter3d")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!(
+                    "../../../assets/branding/inkrabbit-logo-256.png"
+                ))
+                .expect("the app icon is a valid PNG"),
+            )
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([800.0, 500.0])
             .with_drag_and_drop(true),

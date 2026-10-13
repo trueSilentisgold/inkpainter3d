@@ -4,7 +4,8 @@
 //! Saving and opening run on a thread of their own; the model is cloned for saving, which
 //! is cheap (strokes and images are shared).
 
-use super::{InkApp, RESOLUTIONS};
+use super::{InkApp, RESOLUTIONS, dialog};
+use crate::theme;
 use eframe::egui::{self, Key, RichText};
 use eframe::egui_wgpu::RenderState;
 use ink_core::export::ExportSettings;
@@ -787,7 +788,7 @@ impl InkApp {
                 Some((path, _)) => format!("Opening {}…", path.display()),
                 None => format!("Saving {}…", self.project_name()),
             };
-            egui::Modal::new(egui::Id::new("project waiting")).show(ui.ctx(), |ui| {
+            dialog(ui, "project waiting").show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(text);
@@ -802,50 +803,43 @@ impl InkApp {
         };
         let mut create = false;
         let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::new("new project")).show(ui.ctx(), |ui| {
+        let modal = dialog(ui, "new project").show(ui.ctx(), |ui| {
             ui.set_width(460.0);
             ui.heading("New project");
             ui.add_space(8.0);
-            egui::Grid::new("new project grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("File");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut settings.file)
-                                .desired_width(300.0)
-                                .hint_text("Mesh file (FBX, glTF, OBJ)"),
-                        );
-                        if ui.button("Select…").clicked()
-                            && let Some(path) =
-                                Self::pick_file("3D models", ink_io::SUPPORTED_EXTENSIONS)
-                        {
-                            settings.file = path.display().to_string();
+            theme::property_grid("new project grid").show(ui, |ui| {
+                ui.label("File");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut settings.file)
+                            .desired_width(300.0)
+                            .hint_text("Mesh file (FBX, glTF, OBJ)"),
+                    );
+                    if ui.button("Select…").clicked()
+                        && let Some(path) =
+                            Self::pick_file("3D models", ink_io::SUPPORTED_EXTENSIONS)
+                    {
+                        settings.file = path.display().to_string();
+                    }
+                });
+                ui.end_row();
+                ui.label("Resolution");
+                egui::ComboBox::from_id_salt("new project resolution")
+                    .selected_text(format!("{0} × {0}", settings.resolution))
+                    .show_ui(ui, |ui| {
+                        for r in RESOLUTIONS {
+                            ui.selectable_value(&mut settings.resolution, r, format!("{r} × {r}"));
                         }
                     });
-                    ui.end_row();
-                    ui.label("Resolution");
-                    egui::ComboBox::from_id_salt("new project resolution")
-                        .selected_text(format!("{0} × {0}", settings.resolution))
-                        .show_ui(ui, |ui| {
-                            for r in RESOLUTIONS {
-                                ui.selectable_value(
-                                    &mut settings.resolution,
-                                    r,
-                                    format!("{r} × {r}"),
-                                );
-                            }
-                        });
-                    ui.end_row();
-                    ui.label("Normal map format");
-                    normal_format_combo(ui, "new project normals", &mut settings.normal_format);
-                    ui.end_row();
-                });
+                ui.end_row();
+                ui.label("Normal map format");
+                normal_format_combo(ui, "new project normals", &mut settings.normal_format);
+                ui.end_row();
+            });
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 let valid = !settings.file.trim().is_empty();
-                create = ui.add_enabled(valid, egui::Button::new("OK")).clicked()
+                create = ui.add_enabled(valid, theme::primary_button("OK")).clicked()
                     || (valid && ui.input(|i| i.key_pressed(Key::Enter)));
                 cancel = ui.button("Cancel").clicked();
             });
@@ -865,21 +859,18 @@ impl InkApp {
         };
         let mut apply = false;
         let mut cancel = false;
-        let modal = egui::Modal::new(egui::Id::new("project configuration")).show(ui.ctx(), |ui| {
+        let modal = dialog(ui, "project configuration").show(ui.ctx(), |ui| {
             ui.set_width(420.0);
             ui.heading("Project configuration");
             ui.add_space(8.0);
-            egui::Grid::new("project configuration grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Mesh");
-                    ui.label(self.project.source.as_deref().unwrap_or("—"));
-                    ui.end_row();
-                    ui.label("Normal map format");
-                    normal_format_combo(ui, "project normals", &mut format);
-                    ui.end_row();
-                });
+            theme::property_grid("project configuration grid").show(ui, |ui| {
+                ui.label("Mesh");
+                ui.label(self.project.source.as_deref().unwrap_or("—"));
+                ui.end_row();
+                ui.label("Normal map format");
+                normal_format_combo(ui, "project normals", &mut format);
+                ui.end_row();
+            });
             ui.label(
                 RichText::new(
                     "The format of the document channels' normal map in exports. Normal maps \
@@ -890,7 +881,7 @@ impl InkApp {
             );
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                apply = ui.button("OK").clicked();
+                apply = ui.add(theme::primary_button("OK")).clicked();
                 cancel = ui.button("Cancel").clicked();
             });
         });
@@ -911,14 +902,14 @@ impl InkApp {
         }
         let name = self.project_name();
         let mut answer = None;
-        let modal = egui::Modal::new(egui::Id::new("unsaved changes")).show(ui.ctx(), |ui| {
+        let modal = dialog(ui, "unsaved changes").show(ui.ctx(), |ui| {
             ui.set_width(380.0);
             ui.heading("Unsaved changes");
             ui.add_space(6.0);
             ui.label(format!("Save the changes to “{name}” first?"));
             ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if ui.add(theme::primary_button("Save")).clicked() {
                     answer = Some(true);
                 }
                 if ui.button("Don't save").clicked() {
