@@ -8,11 +8,12 @@ use anyhow::{Context, Result, bail, ensure};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
-    Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BlendMode, Blending, BrushMaterial, Channel,
-    ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect, EffectKind, Fill, FillTarget,
-    Folder, GrayFill, Ids, Layer, LayerStack, Levels, Mask, Mesh, MeshObject, Model, NormalFormat,
-    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil,
-    Texels, TextureImage, TextureSet, Tool,
+    Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending,
+    BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect,
+    EffectKind, Fill, FillTarget, Folder, GrayFill, IdSource, Ids, Layer, LayerStack, Levels, Mask,
+    Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model, NormalFormat, PaintLayer, Part,
+    Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil, Texels,
+    TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -48,6 +49,8 @@ pub struct Project {
     pub view: Option<ViewState>,
     /// The export window's settings.
     pub export: Option<ExportSettings>,
+    /// The baking window's settings.
+    pub bake: Option<BakeSettings>,
 }
 
 /// Camera and display settings of the views.
@@ -303,6 +306,8 @@ struct FileProject {
     view: Option<ViewState>,
     #[serde(default, deserialize_with = "lenient")]
     export: Option<FileExport>,
+    #[serde(default, deserialize_with = "lenient")]
+    bake: Option<FileBake>,
 }
 
 fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -350,6 +355,9 @@ struct FileTextureSet {
     #[serde(default)]
     alpha_mode: FileAlphaMode,
     layers: Vec<FileLayer>,
+    /// Baked mesh maps.
+    #[serde(default)]
+    mesh_maps: Vec<FileMeshMap>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy)]
@@ -605,6 +613,33 @@ struct FileAlpha {
 }
 
 #[derive(Serialize, Deserialize)]
+struct FileBake {
+    maps: Vec<String>,
+    subsampling: u32,
+    dilation: u32,
+    front_distance: f32,
+    rear_distance: f32,
+    average_normals: bool,
+    ignore_backfaces: bool,
+    matching: String,
+    id_source: String,
+    ao_rays: u32,
+    ao_distance: f32,
+    ao_self_occlusion: bool,
+    thickness_rays: u32,
+    thickness_distance: f32,
+    curvature_radius: f32,
+    high_poly: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileMeshMap {
+    map: String,
+    /// Index into the top-level `images`.
+    image: usize,
+}
+
+#[derive(Serialize, Deserialize)]
 struct FileExport {
     directory: String,
     template: String,
@@ -642,6 +677,15 @@ impl Saver {
                     AlphaMode::Blend => FileAlphaMode::Blend,
                 },
                 layers: set.stack.layers.iter().map(|l| self.layer(l)).collect(),
+                mesh_maps: set
+                    .mesh_maps
+                    .maps
+                    .iter()
+                    .map(|(map, image)| FileMeshMap {
+                        map: map.key().to_owned(),
+                        image: self.texture(image),
+                    })
+                    .collect(),
             })
             .collect();
         let images = self
@@ -708,6 +752,7 @@ impl Saver {
             images,
             alphas,
             view: project.view.as_ref().map(finite_view),
+            bake: project.bake.as_ref().map(file_bake),
             export: project.export.as_ref().map(|e| FileExport {
                 directory: e.directory.clone(),
                 template: e.template.key.to_owned(),
@@ -1222,8 +1267,14 @@ impl Loader<'_> {
                 set.resolution
             );
             let layers = self.layers(set.layers)?;
+            let mut mesh_maps = MeshMaps::default();
+            for entry in set.mesh_maps {
+                if let Some(map) = MeshMap::from_key(&entry.map) {
+                    mesh_maps.insert(map, self.texture(entry.image)?);
+                }
+            }
             texture_sets.push(TextureSet {
-                mesh_maps: Default::default(),
+                mesh_maps,
                 name: set.name,
                 visible: set.visible,
                 resolution: set.resolution,
@@ -1304,6 +1355,7 @@ impl Loader<'_> {
             source: file.source,
             view: file.view,
             export,
+            bake: file.bake.map(bake_from_file),
         })
     }
 
@@ -1552,6 +1604,53 @@ pub(crate) fn channel_values(v: FileValues) -> ChannelValues {
     }
 }
 
+fn file_bake(b: &BakeSettings) -> FileBake {
+    FileBake {
+        maps: b.maps.iter().map(|m| m.key().to_owned()).collect(),
+        subsampling: b.subsampling,
+        dilation: b.dilation,
+        front_distance: finite(b.front_distance),
+        rear_distance: finite(b.rear_distance),
+        average_normals: b.average_normals,
+        ignore_backfaces: b.ignore_backfaces,
+        matching: b.matching.key().to_owned(),
+        id_source: b.id_source.key().to_owned(),
+        ao_rays: b.ao_rays,
+        ao_distance: finite(b.ao_distance),
+        ao_self_occlusion: b.ao_self_occlusion,
+        thickness_rays: b.thickness_rays,
+        thickness_distance: finite(b.thickness_distance),
+        curvature_radius: finite(b.curvature_radius),
+        high_poly: b
+            .high_poly
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+    }
+}
+
+fn bake_from_file(b: FileBake) -> BakeSettings {
+    let defaults = BakeSettings::default();
+    BakeSettings {
+        maps: b.maps.iter().filter_map(|k| MeshMap::from_key(k)).collect(),
+        subsampling: b.subsampling.clamp(1, 4),
+        dilation: b.dilation.min(256),
+        front_distance: b.front_distance.clamp(0.0, 1.0),
+        rear_distance: b.rear_distance.clamp(0.0, 1.0),
+        average_normals: b.average_normals,
+        ignore_backfaces: b.ignore_backfaces,
+        matching: Matching::from_key(&b.matching).unwrap_or(defaults.matching),
+        id_source: IdSource::from_key(&b.id_source).unwrap_or(defaults.id_source),
+        ao_rays: b.ao_rays.clamp(1, 4096),
+        ao_distance: b.ao_distance.clamp(0.0, 10.0),
+        ao_self_occlusion: b.ao_self_occlusion,
+        thickness_rays: b.thickness_rays.clamp(1, 4096),
+        thickness_distance: b.thickness_distance.clamp(0.0, 10.0),
+        curvature_radius: b.curvature_radius.clamp(0.0, 1.0),
+        high_poly: b.high_poly.into_iter().map(PathBuf::from).collect(),
+    }
+}
+
 fn projection_from(p: FileProjection) -> Projection {
     Projection {
         mode: match p.mode {
@@ -1679,6 +1778,15 @@ mod tests {
         let s2 = stroke(&mut model, Alpha::Square, false);
         let s3 = stroke(&mut model, Alpha::Image(alpha), false);
         let ids = &mut model.ids;
+        model.texture_sets[1].mesh_maps.insert(
+            MeshMap::Curvature,
+            Arc::new(TextureImage::new(
+                "Curvature".into(),
+                2,
+                2,
+                Texels::Rgba16((0..16).map(|i| i * 4000).collect()),
+            )),
+        );
         let stack = &mut model.texture_sets[0].stack;
         if let Content::Paint(paint) = &mut stack.layers[0].content {
             paint.strokes = vec![s1, s2];
@@ -1759,6 +1867,12 @@ mod tests {
                 outline_color: [0.1, 0.2, 0.3],
                 outline_width: 1.5,
             }),
+            bake: Some(BakeSettings {
+                maps: vec![MeshMap::Curvature, MeshMap::Height],
+                subsampling: 2,
+                high_poly: vec![PathBuf::from("/models/cat_high.fbx")],
+                ..BakeSettings::default()
+            }),
             export: Some(ExportSettings {
                 directory: "/tmp/out".into(),
                 template: Template::from_key("godot_orm").unwrap(),
@@ -1809,6 +1923,17 @@ mod tests {
         assert_eq!(b.ids.last(), a.ids.last());
         assert_eq!(loaded.view, original.view);
         assert_eq!(loaded.export, original.export);
+        assert_eq!(loaded.bake, original.bake);
+        let curvature = |m: &Model| match &m.texture_sets[1]
+            .mesh_maps
+            .get(MeshMap::Curvature)
+            .unwrap()
+            .texels
+        {
+            Texels::Rgba16(v) => v.clone(),
+            _ => panic!("stored as 16 bit"),
+        };
+        assert_eq!(curvature(&loaded.model), curvature(&original.model));
         assert_eq!(loaded.source, original.source);
         assert!(!b.objects[1].visible);
         assert_eq!(b.texture_sets[1].resolution, 512);
@@ -1861,7 +1986,7 @@ mod tests {
         let project = project();
         let mut cache = ImageCache::default();
         write(Cursor::new(Vec::new()), &project, &mut cache).unwrap();
-        assert_eq!(cache.textures.len(), 3);
+        assert_eq!(cache.textures.len(), 4);
         assert_eq!(cache.alphas.len(), 1);
         let before = cache.textures.values().next().unwrap().bytes.clone();
         write(Cursor::new(Vec::new()), &project, &mut cache).unwrap();
@@ -1874,6 +1999,10 @@ mod tests {
         // Images the project no longer uses are forgotten.
         let mut bare = project.clone();
         bare.model.texture_sets[0].stack.layers.truncate(1);
+        write(Cursor::new(Vec::new()), &bare, &mut cache).unwrap();
+        // Only the baked map is left.
+        assert_eq!(cache.textures.len(), 1);
+        bare.model.texture_sets[1].mesh_maps = Default::default();
         write(Cursor::new(Vec::new()), &bare, &mut cache).unwrap();
         assert!(cache.textures.is_empty());
     }

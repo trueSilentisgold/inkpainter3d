@@ -341,6 +341,7 @@ fn main() -> Result<()> {
             source: None,
             view: None,
             export: None,
+            bake: None,
         };
         ink_io::project::save(Path::new(path), &project, &mut Default::default())?;
         eprintln!("Saved {path}");

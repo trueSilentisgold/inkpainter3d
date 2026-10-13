@@ -474,31 +474,40 @@ Taste in Klammern = Painter-Shortcut.
 
 ## 10. Baking (Mesh Maps)
 
-- [ ] `P1` **Baking-Fenster** (Strg+Shift+B, Baking-Modus F8)
+- [x] `P1` **Baking-Fenster** (Strg+Shift+B, auch im Datei-Menü). Ein frei verschiebbares Fenster, der Bake
+      läuft in einem Hintergrund-Thread mit Fortschritt und Abbrechen. Der Baking-Modus (F8)
+      fehlt.
 
 **Maps**
 
 | Prio | Maps | Hinweis |
 |---|---|---|
-| `P1` | Ambient Occlusion, Curvature, World Space Normal, Position, Thickness | vom Low-Poly-Mesh selbst. Die Generatoren brauchen sie. |
-| `P1` | Normal (Tangent Space), Height, ID | von High-Poly auf Low-Poly; ID aus Vertex-Farbe, Material-Farbe oder Mesh-ID |
+| `P1` ✅ | Ambient Occlusion, Curvature, World Space Normal, Position, Thickness | vom Low-Poly-Mesh selbst. Die Generatoren brauchen sie. |
+| `P1` ✅ | Normal (Tangent Space), Height, ID | von High-Poly auf Low-Poly; ID aus Material oder Mesh-Objekt des High-Poly |
 | `P2` | Bent Normals, Opacity | |
+
+Die Maps liegen im Texture Set (16 Bit, in der Größe des Texture Sets) und im Projekt. Das
+Fenster zeigt Vorschaubilder; *Add as layer* legt eine Map als Fill Layer an, zum Ansehen.
 
 **Einstellungen**
 
-- [ ] `P1` Ausgabegröße, Dilation, Antialiasing (Subsampling)
-- [ ] `P1` High-Poly-Dateien (mehrere)
-- [ ] `P1` Zuordnung *Immer* oder *nach Mesh-Name* (Suffix `_low` / `_high`)
-- [ ] `P1` Max. Frontal- und Rear-Distanz (auch relativ zur Bounding Box), Cage-Datei,
-      gemittelte Normalen, Backfaces ignorieren
-- [ ] `P1` Auswahl, welche Texture Sets gebacken werden
-- [ ] `P1` Einstellungen pro Map, z. B. AO-Strahlenzahl und Verteilung, Self-Occlusion,
-      Ground Plane
+- [x] `P1` Ausgabegröße (die des Texture Sets), Dilation, Antialiasing (1×1, 2×2, 4×4)
+- [x] `P1` High-Poly-Dateien (mehrere, werden beim Bake geladen und zusammengefasst)
+- [x] `P1` Zuordnung *Always* oder *By mesh name* (`name_low` sieht nur `name_high`; Meshes
+      ohne Suffix sehen alles)
+- [x] `P1` Max. Frontal- und Rear-Distanz (relativ zur Diagonale der Bounding Box), gemittelte
+      Normalen, Backfaces ignorieren. Eine Cage-Datei fehlt noch.
+- [x] `P1` Auswahl, welche Texture Sets gebacken werden
+- [x] `P1` Einstellungen pro Map: AO-Strahlen, -Distanz und Self-Occlusion, Thickness-Strahlen und
+      -Distanz, Curvature-Radius, ID-Quelle. Eine Ground Plane gibt es nicht.
 
 **Technik**
 
-- [ ] `P1` GPU-Raytracing über eine eigene BVH im Compute-Shader. Das läuft auf jeder
-      Vulkan-GPU und braucht keine RT-Kerne.
+- [x] `P1` GPU-Raytracing über eine eigene BVH im Compute-Shader (`bake.wgsl`). Das läuft auf
+      jeder Vulkan-GPU und braucht keine RT-Kerne. Das Texture Set wird in Kacheln zu 256 × 256
+      gebacken: Ein Raster-Pass zeichnet pro Kachel die Dreiecks-ID jedes Texels, der Compute-Shader
+      schießt von dort Strahlen. Die Curvature kommt aus einem Ring von Strahlen um den Punkt (wie
+      weit liegt die Fläche über oder unter der Tangentialebene), so sieht sie auch harte Kanten.
 - [ ] `P2` Automatisch neu backen, wenn sich das Mesh ändert
 
 ---
@@ -779,7 +788,7 @@ texturieren und exportieren.**
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
 | 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
-| 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
+| 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ✅ fertig |
 | 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
 | 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |

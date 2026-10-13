@@ -39,7 +39,8 @@ All binary numbers are little-endian; floats are IEEE 754 single precision.
   "images": [{ "file": "images/0.png", "name": "rust", "width": 2048, "height": 2048, "texels": "rgba8" }],
   "alphas": [{ "file": "alphas/0.png", "name": "dots", "width": 256, "height": 256 }],
   "view": { … },
-  "export": { … }
+  "export": { … },
+  "bake": { … }
 }
 ```
 
@@ -57,17 +58,21 @@ All binary numbers are little-endian; floats are IEEE 754 single precision.
 - `parts` cut the mesh's index list into contiguous ranges, in order, grouped by texture
   set: each range belongs to one object and one texture set. Together they cover the whole
   index list.
-- `view` (camera and display settings) and `export` (the export window's settings) are
-  optional; readers drop them if they don't understand them.
+- `view` (camera and display settings), `export` (the export window's settings) and `bake`
+  (the baking window's settings: the maps, subsampling, dilation, distances, ray counts and
+  the high-poly file paths) are optional; readers drop them if they don't understand them.
 
 ### Texture sets
 
 ```json
-{ "name": "Skin", "visible": true, "resolution": 2048, "alpha_mode": "opaque", "layers": [ … ] }
+{ "name": "Skin", "visible": true, "resolution": 2048, "alpha_mode": "opaque", "layers": [ … ],
+  "mesh_maps": [{ "map": "curvature", "image": 3 }] }
 ```
 
 `resolution` is a power of two; `alpha_mode` is `"opaque"`, `"test"` or `"blend"`. `layers`
-lists the layer stack **bottom to top**.
+lists the layer stack **bottom to top**. `mesh_maps` are the baked maps (`ambient_occlusion`,
+`curvature`, `world_normal`, `position`, `thickness`, `normal`, `height`, `id`) as indices into
+`images`; they are 16 bit images the size of the texture set.
 
 ### Layers
 

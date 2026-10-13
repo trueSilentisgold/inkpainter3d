@@ -108,6 +108,11 @@ inkpainter3d aims to be a capable alternative that:
     the 3D and the 2D view
   - **stencil**: load an image, place it over the view (S + drag) and paint through it; N
     ignores it
+- **Baking** (Ctrl+Shift+B): mesh maps of a texture set on the GPU, from any Vulkan card
+  - ambient occlusion, curvature, world normal, position and thickness from the model, and
+    tangent space normal, height and ID from one or more high-poly meshes
+  - antialiasing, dilation, ray counts, distances, matching by `_low` / `_high` names; the
+    maps are saved in the project
 - **Shelf** (a dockable panel under the viewport)
   - brushes, alphas, textures and materials with thumbnails, a filter, and your own library
     on disk; right click an alpha to use it as brush tip or stencil
@@ -175,7 +180,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 5 | **Project and export** — project file, export templates for Blender, Unity, Godot, glTF | ✅ done |
 | 6 | **Interface** — INKRABBIT design (colors, fonts, own icons, app icon), dockable panels and a Painter-like default layout, saved layouts; the interface stays English for now | ✅ done |
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | ✅ done |
-| 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
+| 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ✅ done |
 | 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
 | 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |

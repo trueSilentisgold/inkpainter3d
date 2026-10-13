@@ -1,4 +1,5 @@
 mod about;
+mod baking;
 mod docking;
 mod export;
 mod layers;
@@ -56,6 +57,7 @@ pub struct InkApp {
     /// Brush presets, shipped and the user's.
     presets: Vec<presets::Preset>,
     shelf: shelf::ShelfState,
+    baking: baking::BakingState,
     /// What the preset box shows: the last preset applied.
     preset_name: String,
     /// The name being typed for a new preset.
@@ -133,6 +135,7 @@ impl InkApp {
             paint: PaintState::default(),
             presets: presets::load_all(),
             shelf: Default::default(),
+            baking: Default::default(),
             preset_name: "Custom".to_owned(),
             preset_draft: String::new(),
             layers: LayersState::default(),
@@ -176,6 +179,7 @@ impl InkApp {
     fn set_model(&mut self, rs: &RenderState, model: Model) {
         // An export of the old model stops; what it is writing is finished.
         self.export = None;
+        self.baking.reset();
         self.renderer.set_model(&rs.device, &rs.queue, &model);
         self.uv_view.set_model(&rs.device, &model);
         self.paint.reset();
@@ -301,6 +305,15 @@ impl InkApp {
                     .clicked()
                 {
                     self.open_export_window();
+                }
+                if ui
+                    .add_enabled(
+                        !self.model.texture_sets.is_empty(),
+                        egui::Button::new("Bake mesh maps…").shortcut_text("Ctrl+Shift+B"),
+                    )
+                    .clicked()
+                {
+                    self.baking.open = true;
                 }
                 ui.separator();
                 if ui.button("Load environment…").clicked()
@@ -779,6 +792,7 @@ impl eframe::App for InkApp {
             self.paint_shortcuts(ui);
             self.project_shortcuts(ui, &rs);
             self.export_shortcut(ui);
+            self.baking_shortcut(ui);
         }
         self.reset_hover();
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &rs));
@@ -811,6 +825,7 @@ impl eframe::App for InkApp {
         self.validate_selection();
         self.project_dialogs(ui, &rs);
         self.export_window(ui, &rs);
+        self.baking_window(ui, &rs);
         self.about_dialog(ui);
         self.update_title(ui);
         if std::mem::take(&mut self.quit_requested) {
