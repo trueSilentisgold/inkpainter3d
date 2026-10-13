@@ -1223,6 +1223,7 @@ impl Loader<'_> {
             );
             let layers = self.layers(set.layers)?;
             texture_sets.push(TextureSet {
+                mesh_maps: Default::default(),
                 name: set.name,
                 visible: set.visible,
                 resolution: set.resolution,

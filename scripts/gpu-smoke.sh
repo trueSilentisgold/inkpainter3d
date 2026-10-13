@@ -163,6 +163,53 @@ check export-exr "$data/uv_island.obj" "$island export=pbr_metallic_roughness fo
 check export-png16 "$data/uv_island.obj" "$island export=pbr_metallic_roughness depth=16" \
     "BaseColor,256,256:r == 51 && b == 229"
 
+# Baking: mesh maps from the model and from a high-poly. Specs are "map,x,y:CONDITION".
+check_bake() {
+    local name=$1 model=$2 options=$3
+    shift 3
+    local probes=() conditions=() spec output
+    for spec in "$@"; do
+        probes+=("bprobe=${spec%%:*}")
+        conditions+=("${spec#*:}")
+    done
+    # shellcheck disable=SC2086
+    if ! output=$("$snapshot" "$model" "$out/$name.png" $options "${probes[@]}" 2>&1); then
+        echo "FAIL $name: the snapshot failed"
+        echo "$output" | tail -n 15
+        failures=$((failures + 1))
+        return
+    fi
+    local failed=0 i line x y r g b map
+    for i in "${!probes[@]}"; do
+        # The snapshot prints the probes map by map, not in the order they were asked for.
+        IFS=, read -r map x y <<<"${probes[$i]#bprobe=}"
+        line=$(grep "^bprobe $map $x $y " <<<"$output" | head -n 1)
+        if [ -z "$line" ]; then
+            echo "FAIL $name: no probe $map $x $y"
+            failed=1
+            continue
+        fi
+        read -r _ _ _ _ r g b <<<"$line"
+        if ! awk -v r="$r" -v g="$g" -v b="$b" "BEGIN { exit !(${conditions[$i]}) }"; then
+            echo "FAIL $name: $map texel $x,$y is $r $g $b, expected ${conditions[$i]}"
+            failed=1
+        fi
+    done
+    if [ "$failed" -eq 0 ]; then
+        echo "ok   $name"
+    else
+        failures=$((failures + 1))
+    fi
+}
+
+# A floor meeting a wall: occlusion falls towards the crease (the bottom of the islands), and
+# the crease is concave while the border of an island is flat.
+check_bake bake-corner "$data/bake_corner.obj" "bake=ambient_occlusion,curvature,position,world_normal res=128 rays=64"     "ambient_occlusion,32,5:r > 240" "ambient_occlusion,32,126:r < 190"     "curvature,32,64:r > 118 && r < 138" "curvature,32,127:r < 100"     "position,32,64:b > 0" "world_normal,32,64:g > 250 && r > 120 && r < 135"
+# The edge of a cube is convex.
+check_bake bake-cube cube "bake=curvature res=512" "curvature,0,100:r > 240" "curvature,100,100:r > 118 && r < 138"
+# A flat quad against a bumpy copy: the bump's slopes tilt the normal, its top is high.
+check_bake bake-high "$data/bake_low.obj" "bake=normal,height,id res=128 bakehigh=$data/bake_high.obj front=0.15 rear=0.05"     "normal,5,5:r > 120 && r < 135 && b > 250" "normal,64,100:g < 110" "normal,64,28:g > 150"     "height,64,64:r > 180" "height,5,5:r < 90" "id,64,64:r > 200"
+
 if [ "$failures" -gt 0 ]; then
     echo "$failures check(s) failed; the renders are in $out"
     exit 1

@@ -1,6 +1,7 @@
 //! Core data model of inkpainter3d: meshes, texture sets, their layer stacks and brush
 //! strokes.
 
+pub mod bake;
 pub mod brush;
 pub mod bvh;
 pub mod export;
@@ -13,6 +14,7 @@ pub mod stencil;
 pub mod stroke;
 pub mod texture;
 
+pub use bake::{BakeSettings, HighPoly, IdSource, Matching, MeshMap, MeshMaps};
 pub use brush::{
     Alignment, Alpha, AlphaImage, Brush, BrushMaterial, Channel, ChannelKind, ChannelSet, Jitter,
     PressureCurve, PressureMapping, Rng, SizeSpace, Tool,

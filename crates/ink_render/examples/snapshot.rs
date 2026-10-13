@@ -38,6 +38,11 @@
 //! `stencil=half` paints the strokes through a stencil whose left half is white and whose
 //! right half is black, centered in the view.
 //!
+//! Baking: `bake=ao,curvature,...` (keys of `MeshMap::key`, or `all`) bakes mesh maps of the
+//! texture set (`set=Name`, else the first) and writes them as PNGs into `<out>.bake/`;
+//! `bakehigh=file.obj` is the high-poly, `rays=16`, `sub=2`, `dilation=8`, `front=0.1` and `rear=0.1` tune it, and
+//! `bprobe=map,x,y` prints a texel as `bprobe map x y r g b` (8 bits).
+//!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
 //!
@@ -112,6 +117,9 @@ fn main() -> Result<()> {
         for set in &mut model.texture_sets {
             set.resolution = res;
         }
+    }
+    if let Some(spec) = option("bake") {
+        bake_maps(&device, &queue, &mut model, &args[3..], spec, out_path)?;
     }
     renderer.set_model(&device, &queue, &model);
 
@@ -522,6 +530,110 @@ fn main() -> Result<()> {
 
 /// Builds the texture set's layer stack from the options. Returns the paint layer the
 /// strokes go into.
+fn bake_maps(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    model: &mut Model,
+    args: &[String],
+    spec: &str,
+    out_path: &str,
+) -> Result<()> {
+    use ink_core::{BakeSettings, HighPoly, MeshMap, Texels};
+    let option = |key: &str| {
+        args.iter()
+            .find_map(|a| a.strip_prefix(key)?.strip_prefix('='))
+    };
+    let mut settings = BakeSettings::default();
+    if spec != "all" {
+        settings.maps = spec.split(',').filter_map(MeshMap::from_key).collect();
+    }
+    if let Some(rays) = option("rays") {
+        settings.ao_rays = rays.parse()?;
+        settings.thickness_rays = settings.ao_rays;
+    }
+    if let Some(sub) = option("sub") {
+        settings.subsampling = sub.parse()?;
+    }
+    if let Some(dilation) = option("dilation") {
+        settings.dilation = dilation.parse()?;
+    }
+    if let Some(front) = option("front") {
+        settings.front_distance = front.parse()?;
+    }
+    if let Some(rear) = option("rear") {
+        settings.rear_distance = rear.parse()?;
+    }
+    let high = option("bakehigh")
+        .map(|path| ink_io::load_model(Path::new(path)).map(|m| HighPoly::from_model(&m)))
+        .transpose()?;
+    let set = match option("set") {
+        Some(name) => model
+            .texture_sets
+            .iter()
+            .position(|s| s.name.starts_with(name))
+            .with_context(|| format!("no texture set {name}"))?,
+        None => 0,
+    };
+    let baker = ink_render::bake::Baker::new(device);
+    let started = std::time::Instant::now();
+    let maps = baker
+        .bake(
+            device,
+            queue,
+            &ink_render::bake::BakeJob {
+                model,
+                set,
+                settings: &settings,
+                high: high.as_ref(),
+            },
+            &mut |_| true,
+        )
+        .map_err(anyhow::Error::msg)?;
+    eprintln!("Baked {} maps in {:.2?}", maps.len(), started.elapsed());
+    let dir = format!("{out_path}.bake");
+    std::fs::create_dir_all(&dir)?;
+    let probes: Vec<(String, u32, u32)> = args
+        .iter()
+        .filter_map(|a| {
+            let v = a.strip_prefix("bprobe=")?.to_owned();
+            let mut parts = v.split(',');
+            Some((
+                parts.next()?.to_owned(),
+                parts.next()?.parse().ok()?,
+                parts.next()?.parse().ok()?,
+            ))
+        })
+        .collect();
+    for (map, image) in maps {
+        let Texels::Rgba16(texels) = &image.texels else {
+            continue;
+        };
+        let rgba8: Vec<u8> = texels.iter().map(|&v| (v >> 8) as u8).collect();
+        image::save_buffer(
+            format!("{dir}/{}.png", map.key()),
+            &rgba8,
+            image.width,
+            image.height,
+            image::ExtendedColorType::Rgba8,
+        )?;
+        for (name, x, y) in &probes {
+            if name == map.key() {
+                let i = ((y * image.width + x) * 4) as usize;
+                println!(
+                    "bprobe {name} {x} {y} {} {} {}",
+                    rgba8[i],
+                    rgba8[i + 1],
+                    rgba8[i + 2]
+                );
+            }
+        }
+        model.texture_sets[set]
+            .mesh_maps
+            .insert(map, Arc::new(image));
+    }
+    Ok(())
+}
+
 fn build_stack<'a>(
     model: &mut Model,
     set: usize,

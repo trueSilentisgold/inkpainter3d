@@ -105,6 +105,32 @@ impl Bvh {
         self.split(left + 1, bounds, centers);
     }
 
+    /// The tree as a GPU can walk it: eight words per node, `[min.xyz, first, max.xyz, count]`
+    /// with `first` and `count` as integers in the float bits. A leaf's `first` is its first
+    /// entry in [`Self::order`]; an inner node's is its left child, the right one follows.
+    pub fn gpu_nodes(&self) -> Vec<[f32; 8]> {
+        self.nodes
+            .iter()
+            .map(|n| {
+                [
+                    n.bounds.min.x,
+                    n.bounds.min.y,
+                    n.bounds.min.z,
+                    f32::from_bits(n.start),
+                    n.bounds.max.x,
+                    n.bounds.max.y,
+                    n.bounds.max.z,
+                    f32::from_bits(n.count),
+                ]
+            })
+            .collect()
+    }
+
+    /// Triangle indices in the order the leaves reference them.
+    pub fn order(&self) -> &[u32] {
+        &self.triangles
+    }
+
     /// The closest triangle hit by the ray among those `accept` lets through. Triangles are
     /// hit from both sides.
     pub fn raycast(
