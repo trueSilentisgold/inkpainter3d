@@ -364,8 +364,10 @@ Taste in Klammern = Painter-Shortcut.
 - [x] `P0` **Eraser (2)**
 - [ ] `P1` **Projection (3):** malt mit einer projizierten Textur, die sich mit W / E / R
       verschieben, drehen und skalieren lässt
-- [ ] `P1` **Polygon Fill (4):** füllt nach Dreieck, Polygon, Mesh oder UV-Insel. Ideal für
-      Masken. Kommt in Phase 7, direkt nach den Pinsel-Presets.
+- [x] `P1` **Polygon Fill (4):** füllt nach Dreieck, Polygon, Mesh oder UV-Insel, im 3D- und im
+      2D-Fenster. Ideal für Masken. Das Polygon ist eine Näherung: Das Mesh ist trianguliert,
+      darum gilt ein Dreieck samt seiner Nachbarhälfte (gleiche Ebene, gleiche längste Kante)
+      als Viereck. Ein Fill ist ein Strich ohne Tupfer und speichert seine Dreiecke.
 - [ ] `P1` **Pick Material (P):** übernimmt alle Kanalwerte vom Modell
 - [ ] `P2` **Smudge (5)**
 - [ ] `P2` **Clone (6 relativ, Strg+6 absolut):** Quelle mit V+Klick setzen
@@ -378,7 +380,7 @@ Taste in Klammern = Painter-Shortcut.
       Mauszeiger; Abstand in Prozent der Ansichtshöhe, Standard 8.
 - [ ] `P1` **Symmetrie (L):** Spiegeln an X / Y / Z, lokal oder Welt; radiale Symmetrie
 - [ ] `P1` **Vorherigen Strich fortsetzen (A)**
-- [ ] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
+- [x] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
       S+Rechts zoomen, N ignoriert die Stencil-Maske
 - [x] `P1` **Graustufen invertieren (X)**
 
@@ -432,7 +434,9 @@ Taste in Klammern = Painter-Shortcut.
 
 - [x] `P0` **Alpha:** Pinselform aus einem Graustufenbild (PNG, JPEG; Bilder mit Transparenz
       nutzen den Alphakanal). Dazu runde und eckige Spitzen mit Härte.
-- [ ] `P1` **Stencil**
+- [x] `P1` **Stencil:** Bild laden (Eigenschaften), Größe, Drehung, Overlay; der Strich merkt sich die
+      Abbildung vom Bild auf den Bildschirm (3D) oder die UV-Fläche (2D) und wirkt je Tupfer, damit
+      Live-Strich und Neuzeichnen gleich aussehen.
 - [x] `P0` **Material des Pinsels:** Wert oder Farbe pro Kanal; Kanäle einzeln ein- und
       ausschaltbar. Der Eraser hat eigene Kanal-Schalter.
 - [ ] `P1` Material des Pinsels aus Textur oder Material aus dem Shelf
@@ -763,9 +767,9 @@ texturieren und exportieren.**
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
-| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
+| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill ✅; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
 | 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
-| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
+| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |

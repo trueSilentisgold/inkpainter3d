@@ -32,6 +32,12 @@
 //! `align=wrap|planar|camera` (the brush's alignment), `follow` (Follow Path), `jitter=0.5`
 //! (all four jitter amounts) and `angle=30` apply to those strokes.
 //!
+//! `polyfill=triangle|polygon|mesh|island` fills what the middle of the view shows with a
+//! Polygon Fill stroke (blue), after the other strokes.
+//!
+//! `stencil=half` paints the strokes through a stencil whose left half is white and whose
+//! right half is black, centered in the view.
+//!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
 //!
@@ -243,6 +249,26 @@ fn main() -> Result<()> {
             dabs.len()
         );
         let stroke_id = model.next_id();
+        let stencil =
+            (option("stencil") == Some("half") && space == StrokeSpace::Surface).then(|| {
+                let image = Arc::new(ink_core::AlphaImage::new(
+                    "half".into(),
+                    64,
+                    32,
+                    (0..64 * 32)
+                        .map(|i| if i % 64 < 32 { 255 } else { 0 })
+                        .collect(),
+                ));
+                let stencil = ink_core::Stencil {
+                    image: Some(image.clone()),
+                    size: 1.2,
+                    ..Default::default()
+                };
+                ink_core::StrokeStencil {
+                    image,
+                    affine: stencil.view_affine().unwrap(),
+                }
+            });
         shape_dabs(&brush, space, stroke_id, 0, None, &mut dabs);
         let stroke = Stroke {
             id: stroke_id,
@@ -258,6 +284,8 @@ fn main() -> Result<()> {
                 .then(|| camera.stroke_camera(view.x / view.y)),
             hidden_objects: Vec::new(),
             hidden_sets: Vec::new(),
+            fill: None,
+            stencil,
             dabs: Vec::new(),
         };
         let paint = target;
@@ -268,6 +296,36 @@ fn main() -> Result<()> {
             layer.extend_stroke(stroke_id, chunk.iter().copied());
             renderer.sync_texture_sets(&device, &queue, &model, true);
         }
+    }
+    if let (Some(shape), Some(hit)) = (option("polyfill"), &center) {
+        let shape = match shape {
+            "triangle" => ink_core::FillShape::Triangle,
+            "mesh" => ink_core::FillShape::Mesh,
+            "island" => ink_core::FillShape::UvIsland,
+            _ => ink_core::FillShape::Polygon,
+        };
+        let mut material = BrushMaterial::default();
+        material.values.base_color = [0.1, 0.3, 1.0];
+        let stroke = Stroke {
+            id: model.next_id(),
+            tool: Tool::Paint,
+            space: StrokeSpace::Surface,
+            alpha: Alpha::Round,
+            hardness: 1.0,
+            alignment: Alignment::TangentWrap,
+            opacity: 1.0,
+            backface_cos: -1.0,
+            material,
+            camera: None,
+            hidden_objects: Vec::new(),
+            hidden_sets: Vec::new(),
+            fill: Some(model.fill_target(shape, hit.triangle as u32)),
+            stencil: None,
+            dabs: Vec::new(),
+        };
+        let layer = model.texture_sets[set].stack.paint_mut(target).unwrap();
+        layer.strokes.push(std::sync::Arc::new(stroke));
+        renderer.sync_texture_sets(&device, &queue, &model, true);
     }
     if let Some(path) = option("save") {
         let project = ink_io::project::Project {

@@ -9,10 +9,10 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
     Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BlendMode, Blending, BrushMaterial, Channel,
-    ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect, EffectKind, Fill, Folder,
-    GrayFill, Ids, Layer, LayerStack, Levels, Mask, Mesh, MeshObject, Model, NormalFormat,
-    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, Texels,
-    TextureImage, TextureSet, Tool,
+    ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect, EffectKind, Fill, FillTarget,
+    Folder, GrayFill, Ids, Layer, LayerStack, Levels, Mask, Mesh, MeshObject, Model, NormalFormat,
+    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil,
+    Texels, TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -512,9 +512,29 @@ struct FileStroke {
     hidden_objects: Vec<usize>,
     #[serde(default)]
     hidden_sets: Vec<usize>,
+    /// What a Polygon Fill stroke covers; such strokes have no dabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fill: Option<FileStrokeFill>,
+    /// The stencil the stroke was painted through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stencil: Option<FileStencil>,
     /// First dab and dab count in `dabs.bin`.
     first_dab: u64,
     dab_count: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileStencil {
+    /// Index into the brush alphas.
+    alpha: usize,
+    affine: [f32; 6],
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FileStrokeFill {
+    Triangles(Vec<u32>),
+    Object(usize),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -820,6 +840,14 @@ impl Saver {
             }),
             hidden_objects: stroke.hidden_objects.clone(),
             hidden_sets: stroke.hidden_sets.clone(),
+            fill: stroke.fill.as_ref().map(|f| match f {
+                FillTarget::Triangles(list) => FileStrokeFill::Triangles(list.to_vec()),
+                FillTarget::Object(o) => FileStrokeFill::Object(*o),
+            }),
+            stencil: stroke.stencil.as_ref().map(|s| FileStencil {
+                alpha: self.alpha(&s.image),
+                affine: finite_n(s.affine),
+            }),
             first_dab,
             dab_count: stroke.dabs.len() as u64,
         }
@@ -1470,6 +1498,23 @@ impl Loader<'_> {
             }),
             hidden_objects: stroke.hidden_objects,
             hidden_sets: stroke.hidden_sets,
+            fill: stroke.fill.map(|f| match f {
+                FileStrokeFill::Triangles(list) => FillTarget::Triangles(Arc::new(list)),
+                FileStrokeFill::Object(o) => FillTarget::Object(o),
+            }),
+            stencil: stroke
+                .stencil
+                .map(|s| -> Result<StrokeStencil> {
+                    Ok(StrokeStencil {
+                        image: self
+                            .alphas
+                            .get(s.alpha)
+                            .cloned()
+                            .context("A stroke's stencil image is missing")?,
+                        affine: s.affine,
+                    })
+                })
+                .transpose()?,
             dabs,
         })
     }
@@ -1588,6 +1633,13 @@ mod tests {
         let alpha = Arc::new(AlphaImage::new("dots".into(), 2, 2, vec![0, 64, 128, 255]));
 
         let stroke = |model: &mut Model, alpha: Alpha, camera: bool| {
+            let stencil = match &alpha {
+                Alpha::Image(image) if camera => Some(StrokeStencil {
+                    image: image.clone(),
+                    affine: [1.0, 0.0, 0.5, 0.0, -2.0, 0.25],
+                }),
+                _ => None,
+            };
             let dab = |x: f32| Dab {
                 position: Vec3::new(x, 0.25, -1.5),
                 normal: Vec3::Z,
@@ -1616,6 +1668,8 @@ mod tests {
                 }),
                 hidden_objects: vec![1],
                 hidden_sets: vec![],
+                fill: camera.then(|| FillTarget::Triangles(Arc::new(vec![0, 2, 1]))),
+                stencil,
                 dabs: vec![dab(0.0), dab(0.125), dab(1e-7)],
             })
         };
@@ -1771,6 +1825,11 @@ mod tests {
             assert_eq!(pa.strokes.len(), pb.strokes.len());
             for (sa, sb) in pa.strokes.iter().zip(&pb.strokes) {
                 assert_eq!(sa.dabs, sb.dabs);
+                assert_eq!(sa.fill, sb.fill);
+                assert_eq!(
+                    sa.stencil.as_ref().map(|s| (&s.image.pixels, s.affine)),
+                    sb.stencil.as_ref().map(|s| (&s.image.pixels, s.affine))
+                );
                 assert_eq!(sa.camera, sb.camera);
                 assert!(sa.alpha.same(&sa.alpha));
                 if let (Alpha::Image(ia), Alpha::Image(ib)) = (&sa.alpha, &sb.alpha) {

@@ -203,6 +203,8 @@ mod tests {
             alpha: Alpha::Round,
             hardness: 1.0,
             alignment: Default::default(),
+            fill: None,
+            stencil: None,
             opacity: 1.0,
             backface_cos: 0.0,
             material: BrushMaterial::default(),

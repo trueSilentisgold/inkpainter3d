@@ -259,6 +259,7 @@ pub mod icons {
         INKRABBIT = "inkrabbit",
         TOOL_PAINT = "tool-paint",
         TOOL_ERASER = "tool-eraser",
+        TOOL_POLYGON_FILL = "tool-polygon-fill",
         VISIBLE = "visible",
         HIDDEN = "hidden",
         CHEVRON_RIGHT = "chevron-right",

@@ -181,6 +181,7 @@ impl InkApp {
             &mut self.settings.display,
             &mut self.settings.wireframe,
         );
+        self.draw_stencil(ui, rect);
         self.draw_brush_cursor(ui, rect, View::Model);
         hint(
             ui,
@@ -308,6 +309,7 @@ impl InkApp {
                 );
             }
         }
+        self.draw_stencil(ui, rect);
         self.draw_brush_cursor(ui, rect, View::Uv);
         hint(
             ui,

@@ -101,6 +101,13 @@ inkpainter3d aims to be a capable alternative that:
     channel switchable
   - size (relative to the model or the view), flow, stroke opacity, spacing, angle,
     hardness, backface culling; round and square tips or any grayscale image as alpha
+  - **jitter** (size, flow, angle, position), **follow path**, and three alignments: tangent
+    wrap, tangent planar and camera
+  - **brush presets**: seven ship with the app, and you can save your own as `.inkbrush` files
+  - **Polygon Fill** (4): fill a triangle, polygon, mesh or UV island with one click, in
+    the 3D and the 2D view
+  - **stencil**: load an image, place it over the view (S + drag) and paint through it; N
+    ignores it
   - **pen pressure** on size and flow with minimums and a pressure curve: Windows Ink on
     Windows, the tablet protocol on Wayland (GNOME, KDE), XInput2 on X11; on Wayland the
     pen's eraser end erases
@@ -163,7 +170,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | |
 | 9 | **Generators** — mask builder, edge wear, dirt, filters, noises, smart materials and masks, starter content | |
-| 10 | **Remaining tools** — projection, symmetry, stencil, color selection, geometry mask, anchor points | |
+| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 12 | **Polish** — translations, UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 
@@ -204,7 +211,9 @@ The same as in Substance 3D Painter.
 |---|---|
 | New / open / save / close project | Ctrl + N / Ctrl + O / Ctrl + S / Ctrl + F4 |
 | Export textures | Ctrl + Shift + E |
-| Paint / Eraser | 1 / 2, then left mouse |
+| Paint / Eraser / Polygon Fill | 1 / 2 / 4, then left mouse |
+| Stencil: rotate / move / scale | S + left / middle / right mouse drag |
+| Paint ignoring the stencil | hold N |
 | Straight line from the last stroke | Shift + click (Ctrl + Shift snaps to 15°) |
 | Brush size | [ and ], or Ctrl + right mouse drag sideways |
 | Hardness | Ctrl + right mouse drag up and down |

@@ -83,6 +83,9 @@ check paint-uv sphere "paint uv 2d" "640,400:b > 190 && r < 140" "400,650:r > 16
 check paint-planar sphere "paint align=planar display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-camera sphere "paint align=camera display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-follow sphere "paint follow jitter=0.2 display=basecolor" "640,400:$red" "640,250:$grey"
+check polyfill-mesh sphere "polyfill=mesh display=basecolor" "640,400:b > 200 && r < 60" "500,330:b > 200 && r < 60"
+check polyfill-triangle sphere "polyfill=triangle display=basecolor" "500,330:$grey"
+check stencil sphere "paint stencil=half size=20 display=basecolor" "500,400:$red" "700,400:$grey"
 check paint-height sphere "paint height display=height" "500,400:r > 240" "640,250:r < 10"
 
 # Occlusion: the front quad hides the middle of the back one from the stroke.

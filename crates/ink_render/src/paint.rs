@@ -66,6 +66,9 @@ impl PoolKind {
     }
 }
 
+/// `ALIGN_FILL` in paint_dabs.wgsl: the stroke is a Polygon Fill and covers its triangles.
+const FILL_CODE: f32 = 3.0;
+
 /// Must match `Dab` in paint_dabs.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -85,6 +88,8 @@ struct StrokeParams {
     view_proj: [[f32; 4]; 4],
     eye: [f32; 4],
     forward: [f32; 4],
+    stencil_x: [f32; 4],
+    stencil_y: [f32; 4],
 }
 
 /// Must match `DepthCamera` in paint_depth.wgsl.
@@ -378,6 +383,7 @@ impl PaintCaches {
                     count: None,
                 },
                 texture(4, float(false), d2),
+                texture(5, float(true), d2),
             ],
         );
         let depth_layout = layout(
@@ -1273,6 +1279,10 @@ impl PaintCaches {
             let t = alpha.texture();
             t.width().max(t.height()) as f32
         };
+        let stencil = match &stroke.stencil {
+            Some(s) => self.alpha_view(device, queue, &Alpha::Image(s.image.clone())),
+            None => self.white_alpha.clone(),
+        };
         let camera = stroke
             .camera
             .filter(|_| stroke.space == StrokeSpace::Surface);
@@ -1304,8 +1314,34 @@ impl PaintCaches {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(&depth),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&stencil),
+                },
             ],
         });
+        // The stencil's map and image size (0: none) and the view's aspect for the
+        // surface strokes' view coordinates.
+        let (stencil_x, stencil_y) = match &stroke.stencil {
+            Some(s) => {
+                let t = stencil.texture();
+                (
+                    [
+                        s.affine[0],
+                        s.affine[1],
+                        s.affine[2],
+                        t.width().max(t.height()) as f32,
+                    ],
+                    [
+                        s.affine[3],
+                        s.affine[4],
+                        s.affine[5],
+                        stroke.camera.map_or(1.0, |c| c.aspect),
+                    ],
+                )
+            }
+            None => ([0.0; 4], [0.0; 4]),
+        };
         let (view_proj, eye, forward) = match &camera {
             Some(c) => (
                 c.view_proj.to_cols_array_2d(),
@@ -1318,8 +1354,20 @@ impl PaintCaches {
         let mut changed = Region::default();
         let mut indices: Vec<u32> = Vec::new();
         let mut nearby: Vec<u32> = Vec::new();
-        for chunk in dabs.chunks(MAX_DABS_PER_DRAW) {
+        // A fill covers whole triangles and needs no dabs: one draw without any.
+        let fill = stroke.fill.is_some() && stroke.space == StrokeSpace::Surface;
+        let chunks: Vec<&[Dab]> = if fill {
+            vec![&[]]
+        } else {
+            dabs.chunks(MAX_DABS_PER_DRAW).collect()
+        };
+        for chunk in chunks {
             let (region, count) = match stroke.space {
+                StrokeSpace::Surface if fill => {
+                    indices.clear();
+                    let region = self.select_fill_triangles(model, set, stroke, size, &mut indices);
+                    (region, indices.len() as u32)
+                }
                 StrokeSpace::Surface => {
                     indices.clear();
                     let region = self.select_triangles(
@@ -1370,14 +1418,22 @@ impl PaintCaches {
                     size as f32,
                     alpha_size,
                     camera.is_some() as u32 as f32,
-                    stroke.alignment.code() as f32,
+                    if fill {
+                        FILL_CODE
+                    } else {
+                        stroke.alignment.code() as f32
+                    },
                 ],
                 view_proj,
                 eye,
                 forward,
+                stencil_x,
+                stencil_y,
             };
             queue.write_buffer(&self.stroke_buffer, 0, bytemuck::bytes_of(&params));
-            queue.write_buffer(&self.dab_buffer, 0, bytemuck::cast_slice(&gpu_dabs));
+            if !gpu_dabs.is_empty() {
+                queue.write_buffer(&self.dab_buffer, 0, bytemuck::cast_slice(&gpu_dabs));
+            }
             if stroke.space == StrokeSpace::Surface {
                 let bytes = (indices.len() * 4) as u64;
                 if bytes > self.index_buffer.size() {
@@ -1560,6 +1616,37 @@ impl PaintCaches {
             last_used: self.depth_uses,
         });
         view
+    }
+
+    /// Collects the vertex indices of the triangles a Polygon Fill covers. Returns the
+    /// texels they cover.
+    fn select_fill_triangles(
+        &mut self,
+        model: &Model,
+        set: usize,
+        stroke: &Stroke,
+        size: u32,
+        indices: &mut Vec<u32>,
+    ) -> Region {
+        let mut region = Region::default();
+        let Some(target) = &stroke.fill else {
+            return region;
+        };
+        for t in model.fill_triangles(target, set) {
+            if !stroke.paints(&model.parts[model.part_of_triangle(t)]) {
+                continue;
+            }
+            let mut min = [f32::MAX; 2];
+            let mut max = [f32::MIN; 2];
+            for v in model.triangle_vertices(t) {
+                indices.push(v as u32);
+                let uv = model.mesh.uvs[v];
+                min = [min[0].min(uv.x), min[1].min(uv.y)];
+                max = [max[0].max(uv.x), max[1].max(uv.y)];
+            }
+            region.add(TexelRect::from_uv(min, max, size, 1));
+        }
+        region
     }
 
     /// Collects the vertex indices of the triangles the dabs can touch. Returns the texels
@@ -1823,7 +1910,7 @@ mod tests {
     #[test]
     fn layouts_match_shaders() {
         assert_eq!(size_of::<GpuDab>(), 64);
-        assert_eq!(size_of::<StrokeParams>(), 128);
+        assert_eq!(size_of::<StrokeParams>(), 160);
         assert_eq!(size_of::<DepthCamera>(), 96);
         assert_eq!(size_of::<TileDraw>(), 32);
         assert!(size_of::<ApplyParams>() as u64 <= APPLY_STRIDE);

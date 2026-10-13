@@ -5,6 +5,7 @@ mod layers;
 mod painting;
 mod presets;
 mod project;
+mod stencil;
 mod views;
 
 use crate::pen::{PenInput, PenNotice};

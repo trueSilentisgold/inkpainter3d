@@ -88,6 +88,10 @@ pub struct Stroke {
     pub hidden_objects: Vec<usize>,
     /// Texture sets that were hidden while painting: they get no paint and hide nothing.
     pub hidden_sets: Vec<usize>,
+    /// A Polygon Fill stroke covers these triangles completely and has no dabs.
+    pub fill: Option<crate::FillTarget>,
+    /// The stencil the stroke was painted through.
+    pub stencil: Option<crate::StrokeStencil>,
     pub dabs: Vec<Dab>,
 }
 

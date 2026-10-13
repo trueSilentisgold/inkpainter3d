@@ -4,10 +4,12 @@
 pub mod brush;
 pub mod bvh;
 pub mod export;
+pub mod fill;
 pub mod history;
 pub mod layer;
 pub mod mesh;
 pub mod model;
+pub mod stencil;
 pub mod stroke;
 pub mod texture;
 
@@ -16,6 +18,7 @@ pub use brush::{
     PressureCurve, PressureMapping, Rng, SizeSpace, Tool,
 };
 pub use bvh::{Bvh, RayHit};
+pub use fill::{FillShape, FillTarget};
 pub use history::{Command, History};
 pub use layer::{
     BlendMode, Blending, ChannelBlend, Content, Effect, EffectKind, Fill, Folder, GrayFill, Layer,
@@ -26,6 +29,7 @@ pub use model::{
     AlphaMode, ChannelValues, DEFAULT_MATERIAL, FLAT_NORMAL, Hit, Ids, MeshObject, Model,
     ModelBuilder, NormalFormat, Part, TextureSet,
 };
+pub use stencil::{Stencil, StrokeStencil};
 pub use stroke::{
     Dab, DabSpacer, LazyMouse, PaintLayer, Stroke, StrokeCamera, StrokePath, StrokeSpace,
     shape_dabs, snap_direction, surface_dab, uv_dab,
