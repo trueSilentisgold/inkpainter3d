@@ -6,8 +6,8 @@ use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Key, PointerButton, RichText, Stroke as Line};
 use glam::{Vec2, Vec3};
 use ink_core::{
-    Alpha, AlphaImage, Brush, Channel, Command, Dab, PressureCurve, SizeSpace, Stroke, StrokePath,
-    StrokeSpace, Tool, snap_direction, surface_dab, uv_dab,
+    Alignment, Alpha, AlphaImage, Brush, Channel, Command, Dab, PressureCurve, SizeSpace, Stroke,
+    StrokePath, StrokeSpace, Tool, shape_dabs, snap_direction, surface_dab, uv_dab,
 };
 use std::sync::Arc;
 
@@ -156,6 +156,7 @@ impl InkApp {
                         * size_factor;
                     Some(surface_dab(
                         &hit,
+                        brush.alignment,
                         dir,
                         self.camera.up(),
                         brush.angle,
@@ -341,6 +342,7 @@ impl InkApp {
             },
             alpha: brush.alpha.clone(),
             hardness: brush.hardness,
+            alignment: brush.alignment,
             opacity: brush.opacity,
             backface_cos: brush.backface_cos(),
             material: brush.material,
@@ -365,8 +367,19 @@ impl InkApp {
         Some((set, paint, id))
     }
 
-    fn push_dabs(&mut self, set: usize, paint: u64, id: u64, dabs: Vec<Dab>) {
+    /// Adds dabs to the stroke after Follow Path and Jitter shaped them.
+    fn push_dabs(&mut self, set: usize, paint: u64, id: u64, brush: &Brush, mut dabs: Vec<Dab>) {
         if let Some(layer) = self.model.texture_sets[set].stack.paint_mut(paint) {
+            if let Some(stroke) = layer.strokes.last().filter(|s| s.id == id) {
+                shape_dabs(
+                    brush,
+                    stroke.space,
+                    id,
+                    stroke.dabs.len(),
+                    stroke.dabs.last().copied(),
+                    &mut dabs,
+                );
+            }
             layer.extend_stroke(id, dabs);
         }
     }
@@ -389,7 +402,7 @@ impl InkApp {
                 &mut dabs,
             )
         };
-        self.push_dabs(set, paint, id, dabs);
+        self.push_dabs(set, paint, id, &brush, dabs);
         self.paint.stroke = Some(ActiveStroke {
             view,
             set,
@@ -411,7 +424,8 @@ impl InkApp {
                 .path
                 .move_to(p, self.paint.pressure, &project, &mut dabs);
         }
-        self.push_dabs(active.set, active.paint, active.id, dabs);
+        let brush = active.brush.clone();
+        self.push_dabs(active.set, active.paint, active.id, &brush, dabs);
         self.paint.stroke = Some(active);
     }
 
@@ -459,7 +473,7 @@ impl InkApp {
                 StrokePath::start(from, pressure, brush.spacing, 0.0, &project, &mut dabs);
             path.line_to(to, pressure, &project, &mut dabs);
         }
-        self.push_dabs(set, paint, id, dabs);
+        self.push_dabs(set, paint, id, &brush, dabs);
         self.finish_stroke(set, paint, id);
     }
 
@@ -636,7 +650,15 @@ impl InkApp {
                 let radius = brush
                     .world_radius(self.model_size(), self.camera.view_height_at(hit.position))
                     * size_factor;
-                let dab = surface_dab(&hit, dir, self.camera.up(), brush.angle, radius, 1.0);
+                let dab = surface_dab(
+                    &hit,
+                    brush.alignment,
+                    dir,
+                    self.camera.up(),
+                    brush.angle,
+                    radius,
+                    1.0,
+                );
                 let right = dab.up.cross(dab.normal);
                 (0..=64)
                     .filter_map(|i| {
@@ -778,6 +800,7 @@ impl InkApp {
 
     /// The Properties panel for the current tool: brush, alpha and material.
     pub(super) fn properties_panel(&mut self, ui: &mut egui::Ui) {
+        self.preset_group(ui);
         let tool = self.paint.tool;
         let grayscale = self.paints_grayscale();
         let mut load_alpha = false;
@@ -834,6 +857,21 @@ impl InkApp {
                 ui.label("Angle");
                 ui.add(egui::Slider::new(&mut brush.angle, 0.0..=360.0).suffix("°"));
                 ui.end_row();
+                ui.label("Follow path");
+                ui.checkbox(&mut brush.follow_path, "")
+                    .on_hover_text("Turn the alpha towards the direction of the stroke");
+                ui.end_row();
+                ui.label("Alignment");
+                egui::ComboBox::from_id_salt("alignment")
+                    .selected_text(brush.alignment.label())
+                    .show_ui(ui, |ui| {
+                        for alignment in Alignment::ALL {
+                            ui.selectable_value(&mut brush.alignment, alignment, alignment.label());
+                        }
+                    })
+                    .response
+                    .on_hover_text("How the tip is projected onto the model (3D view)");
+                ui.end_row();
                 ui.label("Backface culling");
                 ui.checkbox(&mut brush.backface_culling, "");
                 ui.end_row();
@@ -850,6 +888,21 @@ impl InkApp {
                 if brush.pressure.flow {
                     ui.label("Minimum flow");
                     percent_slider(ui, &mut brush.pressure.min_flow, 0.0..=100.0);
+                    ui.end_row();
+                }
+            });
+        });
+
+        theme::group(ui, "Jitter", false, |ui| {
+            theme::property_grid("jitter").show(ui, |ui| {
+                for (label, value) in [
+                    ("Size", &mut brush.jitter.size),
+                    ("Flow", &mut brush.jitter.flow),
+                    ("Angle", &mut brush.jitter.angle),
+                    ("Position", &mut brush.jitter.position),
+                ] {
+                    ui.label(label);
+                    percent_slider(ui, value, 0.0..=100.0);
                     ui.end_row();
                 }
             });

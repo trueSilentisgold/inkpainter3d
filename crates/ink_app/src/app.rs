@@ -3,6 +3,7 @@ mod docking;
 mod export;
 mod layers;
 mod painting;
+mod presets;
 mod project;
 mod views;
 
@@ -50,6 +51,12 @@ pub struct InkApp {
     snap_angles: Option<(f32, f32)>,
     status: String,
     paint: PaintState,
+    /// Brush presets, shipped and the user's.
+    presets: Vec<presets::Preset>,
+    /// What the preset box shows: the last preset applied.
+    preset_name: String,
+    /// The name being typed for a new preset.
+    preset_draft: String,
     layers: LayersState,
     /// Whether the pointer was over the layer stack last frame; Ctrl+C / X / V and Delete
     /// act on layers only there, as in Painter.
@@ -121,6 +128,9 @@ impl InkApp {
             snap_angles: None,
             status: format!("GPU: {} ({:?})", info.name, info.backend),
             paint: PaintState::default(),
+            presets: presets::load_all(),
+            preset_name: "Custom".to_owned(),
+            preset_draft: String::new(),
             layers: LayersState::default(),
             layers_hovered: false,
             history: History::default(),

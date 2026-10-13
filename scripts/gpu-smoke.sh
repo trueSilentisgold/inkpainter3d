@@ -80,6 +80,9 @@ check undo sphere "paint undo display=basecolor" "640,400:$grey" "500,400:$grey"
 check undo-live sphere "paint live=10 undo display=basecolor" "500,400:$grey"
 check paint-4k sphere "res=4096 size=60 paint display=basecolor" "640,400:$red"
 check paint-uv sphere "paint uv 2d" "640,400:b > 190 && r < 140" "400,650:r > 160 && b < 200"
+check paint-planar sphere "paint align=planar display=basecolor" "640,400:$red" "640,250:$grey"
+check paint-camera sphere "paint align=camera display=basecolor" "640,400:$red" "640,250:$grey"
+check paint-follow sphere "paint follow jitter=0.2 display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-height sphere "paint height display=height" "500,400:r > 240" "640,250:r < 10"
 
 # Occlusion: the front quad hides the middle of the back one from the stroke.

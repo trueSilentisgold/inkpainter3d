@@ -29,6 +29,9 @@
 //! `only=Name` (shows only this texture set after painting). `2d` renders the 2D (UV) view
 //! of the painted texture set instead.
 //!
+//! `align=wrap|planar|camera` (the brush's alignment), `follow` (Follow Path), `jitter=0.5`
+//! (all four jitter amounts) and `angle=30` apply to those strokes.
+//!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
 //!
@@ -44,9 +47,9 @@ use anyhow::{Context, Result};
 use glam::Vec2;
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, MapImage, Padding, Template};
 use ink_core::{
-    Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect, EffectKind,
-    Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath, StrokeSpace,
-    Tool, surface_dab, uv_dab,
+    Alignment, Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect,
+    EffectKind, Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath,
+    StrokeSpace, Tool, shape_dabs, surface_dab, uv_dab,
 };
 use ink_render::{
     DisplayMode, Highlight, OrbitCamera, ShadingMode, UvCamera, UvView, ViewportRenderer,
@@ -116,6 +119,22 @@ fn main() -> Result<()> {
         size: float("size")?.unwrap_or(8.0),
         hardness: float("hardness")?.unwrap_or(0.8),
         backface_culling: !flag("nocull"),
+        angle: float("angle")?.unwrap_or(0.0),
+        follow_path: flag("follow"),
+        jitter: {
+            let j = float("jitter")?.unwrap_or(0.0);
+            ink_core::Jitter {
+                size: j,
+                flow: j,
+                angle: j,
+                position: j,
+            }
+        },
+        alignment: match option("align") {
+            Some("planar") => Alignment::TangentPlanar,
+            Some("camera") => Alignment::Camera,
+            _ => Alignment::TangentWrap,
+        },
         alpha: match option("tip") {
             Some("square") => Alpha::Square,
             _ => Alpha::Round,
@@ -202,6 +221,7 @@ fn main() -> Result<()> {
                 let radius = brush.world_radius(model_radius, camera.view_height_at(hit.position));
                 Some(surface_dab(
                     &hit,
+                    brush.alignment,
                     dir,
                     camera.up(),
                     brush.angle,
@@ -222,12 +242,15 @@ fn main() -> Result<()> {
             model.texture_sets[set].name,
             dabs.len()
         );
+        let stroke_id = model.next_id();
+        shape_dabs(&brush, space, stroke_id, 0, None, &mut dabs);
         let stroke = Stroke {
-            id: model.next_id(),
+            id: stroke_id,
             tool,
             space,
             alpha: brush.alpha.clone(),
             hardness: brush.hardness,
+            alignment: brush.alignment,
             opacity: brush.opacity,
             backface_cos: brush.backface_cos(),
             material,
@@ -237,7 +260,7 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             dabs: Vec::new(),
         };
-        let (stroke_id, paint) = (stroke.id, target);
+        let paint = target;
         let layer = model.texture_sets[set].stack.paint_mut(paint).unwrap();
         layer.strokes.push(std::sync::Arc::new(stroke));
         for chunk in dabs.chunks(live) {

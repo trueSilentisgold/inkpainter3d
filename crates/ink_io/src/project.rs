@@ -8,11 +8,11 @@ use anyhow::{Context, Result, bail, ensure};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
-    Aabb, Alpha, AlphaImage, AlphaMode, BlendMode, Blending, BrushMaterial, Channel, ChannelBlend,
-    ChannelSet, ChannelValues, Content, Dab, Effect, EffectKind, Fill, Folder, GrayFill, Ids,
-    Layer, LayerStack, Levels, Mask, Mesh, MeshObject, Model, NormalFormat, PaintLayer, Part,
-    Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, Texels, TextureImage,
-    TextureSet, Tool,
+    Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BlendMode, Blending, BrushMaterial, Channel,
+    ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect, EffectKind, Fill, Folder,
+    GrayFill, Ids, Layer, LayerStack, Levels, Mask, Mesh, MeshObject, Model, NormalFormat,
+    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, Texels,
+    TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -81,8 +81,8 @@ pub struct ImageCache {
 }
 
 #[derive(Clone, Debug)]
-struct Encoded {
-    bytes: Arc<Vec<u8>>,
+pub(crate) struct Encoded {
+    pub(crate) bytes: Arc<Vec<u8>>,
 }
 
 /// Writes the project to `path`. The file is replaced only once the new one is complete,
@@ -416,7 +416,7 @@ struct FileFill {
 }
 
 #[derive(Serialize, Deserialize)]
-struct FileValues {
+pub(crate) struct FileValues {
     base_color: [f32; 3],
     height: f32,
     roughness: f32,
@@ -500,6 +500,9 @@ struct FileStroke {
     space: FileSpace,
     alpha: FileAlphaShape,
     hardness: f32,
+    /// `Alignment::key`; absent in older files (tangent wrap).
+    #[serde(default)]
+    alignment: Option<String>,
     opacity: f32,
     backface_cos: f32,
     material: FileBrushMaterial,
@@ -538,7 +541,7 @@ enum FileAlphaShape {
 }
 
 #[derive(Serialize, Deserialize)]
-struct FileBrushMaterial {
+pub(crate) struct FileBrushMaterial {
     channels: Vec<String>,
     values: FileValues,
     grayscale: f32,
@@ -799,6 +802,7 @@ impl Saver {
                 Alpha::Image(image) => FileAlphaShape::Image(self.alpha(image)),
             },
             hardness: finite(stroke.hardness),
+            alignment: Some(stroke.alignment.key().to_owned()),
             opacity: finite(stroke.opacity),
             backface_cos: finite(stroke.backface_cos),
             material: FileBrushMaterial {
@@ -836,13 +840,29 @@ impl Saver {
     }
 }
 
-fn channel_keys(set: ChannelSet) -> Vec<String> {
+pub(crate) fn material_to_file(m: &BrushMaterial) -> FileBrushMaterial {
+    FileBrushMaterial {
+        channels: channel_keys(m.channels),
+        values: values(&m.values),
+        grayscale: finite(m.grayscale),
+    }
+}
+
+pub(crate) fn material_from_file(m: FileBrushMaterial) -> BrushMaterial {
+    BrushMaterial {
+        channels: channel_set(&m.channels),
+        values: channel_values(m.values),
+        grayscale: m.grayscale,
+    }
+}
+
+pub(crate) fn channel_keys(set: ChannelSet) -> Vec<String> {
     set.iter().map(|c| c.key().to_owned()).collect()
 }
 
 /// JSON has no NaN or infinity: serde_json writes them as null, which no reader accepts.
 /// Such values are saved as 0 and the largest finite values.
-fn finite(v: f32) -> f32 {
+pub(crate) fn finite(v: f32) -> f32 {
     if v.is_nan() {
         0.0
     } else {
@@ -854,7 +874,7 @@ fn finite_n<const N: usize>(v: [f32; N]) -> [f32; N] {
     v.map(finite)
 }
 
-fn values(v: &ChannelValues) -> FileValues {
+pub(crate) fn values(v: &ChannelValues) -> FileValues {
     FileValues {
         base_color: finite_n(v.base_color),
         height: finite(v.height),
@@ -952,7 +972,7 @@ fn encode_texture(image: &TextureImage) -> Result<Encoded> {
     })
 }
 
-fn encode_alpha(alpha: &AlphaImage) -> Result<Encoded> {
+pub(crate) fn encode_alpha(alpha: &AlphaImage) -> Result<Encoded> {
     use image::ImageEncoder;
     let mut bytes = Vec::new();
     png_encoder(&mut bytes).write_image(
@@ -1043,7 +1063,7 @@ fn check_size(width: u32, height: u32, max: u32) -> Result<()> {
 
 /// Decodes an image whose size is already checked, without the image crate's default
 /// memory limit, which large HDR fills exceed.
-fn decode(bytes: &[u8], format: image::ImageFormat) -> Result<image::DynamicImage> {
+pub(crate) fn decode(bytes: &[u8], format: image::ImageFormat) -> Result<image::DynamicImage> {
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     reader.no_limits();
     Ok(reader.decode()?)
@@ -1428,6 +1448,11 @@ impl Loader<'_> {
                 ),
             },
             hardness: stroke.hardness,
+            alignment: stroke
+                .alignment
+                .as_deref()
+                .and_then(Alignment::from_key)
+                .unwrap_or_default(),
             opacity: stroke.opacity,
             backface_cos: stroke.backface_cos,
             material: BrushMaterial {
@@ -1461,7 +1486,7 @@ fn blend_mode(key: &str) -> Result<BlendMode> {
     BlendMode::from_key(key).with_context(|| format!("Unknown blend mode {key}"))
 }
 
-fn channel_set(keys: &[String]) -> ChannelSet {
+pub(crate) fn channel_set(keys: &[String]) -> ChannelSet {
     let mut set = ChannelSet::NONE;
     for channel in keys.iter().filter_map(|k| Channel::from_key(k)) {
         set.set(channel, true);
@@ -1469,7 +1494,7 @@ fn channel_set(keys: &[String]) -> ChannelSet {
     set
 }
 
-fn channel_values(v: FileValues) -> ChannelValues {
+pub(crate) fn channel_values(v: FileValues) -> ChannelValues {
     ChannelValues {
         base_color: v.base_color,
         height: v.height,
@@ -1577,6 +1602,7 @@ mod tests {
                 space: StrokeSpace::Surface,
                 alpha,
                 hardness: 0.3,
+                alignment: Alignment::Camera,
                 opacity: 0.9,
                 backface_cos: 0.1,
                 material: BrushMaterial::default(),

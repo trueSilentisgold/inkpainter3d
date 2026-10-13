@@ -1366,7 +1366,12 @@ impl PaintCaches {
                     stroke.backface_cos,
                     chunk.len() as f32,
                 ],
-                sizes: [size as f32, alpha_size, camera.is_some() as u32 as f32, 0.0],
+                sizes: [
+                    size as f32,
+                    alpha_size,
+                    camera.is_some() as u32 as f32,
+                    stroke.alignment.code() as f32,
+                ],
                 view_proj,
                 eye,
                 forward,

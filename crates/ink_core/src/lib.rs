@@ -12,8 +12,8 @@ pub mod stroke;
 pub mod texture;
 
 pub use brush::{
-    Alpha, AlphaImage, Brush, BrushMaterial, Channel, ChannelKind, ChannelSet, PressureCurve,
-    PressureMapping, SizeSpace, Tool,
+    Alignment, Alpha, AlphaImage, Brush, BrushMaterial, Channel, ChannelKind, ChannelSet, Jitter,
+    PressureCurve, PressureMapping, Rng, SizeSpace, Tool,
 };
 pub use bvh::{Bvh, RayHit};
 pub use history::{Command, History};
@@ -28,6 +28,6 @@ pub use model::{
 };
 pub use stroke::{
     Dab, DabSpacer, LazyMouse, PaintLayer, Stroke, StrokeCamera, StrokePath, StrokeSpace,
-    snap_direction, surface_dab, uv_dab,
+    shape_dabs, snap_direction, surface_dab, uv_dab,
 };
 pub use texture::{Texels, TextureImage};

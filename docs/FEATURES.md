@@ -407,15 +407,15 @@ Taste in Klammern = Painter-Shortcut.
 - [x] `P0` **Flow:** Strg+Links horizontal ziehen
 - [x] `P0` **Stroke Opacity**
 - [x] `P0` **Spacing**
-- [ ] `P1` **Angle:** Strg+Links vertikal ziehen (umgesetzt). Option „Follow Path“ fehlt noch.
-- [ ] `P1` **Jitter:** Size, Flow, Angle, Position
+- [x] `P1` **Angle:** Strg+Links vertikal ziehen, dazu **Follow Path** (das Alpha dreht sich in Strichrichtung)
+- [x] `P1` **Jitter:** Size, Flow, Angle, Position. Die Zufallswerte hängen an Strich-ID und Tupfer-Nummer, ein Strich sieht beim erneuten Zeichnen identisch aus.
 
 **Projektion**
 
 - [x] `P0` **Backface Culling** mit Winkel, gemessen zur Normale des Stempels wie in Painter
 - [x] `P0` **Verdeckte Flächen bleiben frei:** Jeder Strich merkt sich seine Kamera; was von dort
       hinter anderen Flächen liegt, bekommt keine Farbe.
-- [ ] `P1` **Alignment:** Tangent Wrap (umgesetzt, Standard), Tangent Planar, Camera, UV
+- [x] `P1` **Alignment:** Tangent Wrap (Standard), Tangent Planar, Camera. *UV* (Alpha folgt der UV-Richtung) fehlt noch.
 
 **Tablet**
 
@@ -439,7 +439,7 @@ Taste in Klammern = Painter-Shortcut.
 
 **Presets**
 
-- [ ] `P1` **Pinsel-Presets** speichern und laden
+- [x] `P1` **Pinsel-Presets** speichern und laden: sieben mitgelieferte Presets (Soft round, Hard round, Airbrush, Marker, Chalk, Scatter dots, Decal stamp) und eigene als `.inkbrush`-Datei (ZIP aus `brush.json` und `alpha.png`) im Bibliotheksordner. Das Material (Kanäle, Werte) bleibt beim Laden erhalten.
 
 ---
 

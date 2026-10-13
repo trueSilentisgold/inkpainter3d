@@ -1,6 +1,7 @@
 //! Model and environment import, project files and texture export.
 
 pub mod export;
+pub mod preset;
 pub mod project;
 
 use anyhow::{Context, Result, bail};

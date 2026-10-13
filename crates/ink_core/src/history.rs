@@ -202,6 +202,7 @@ mod tests {
             space: StrokeSpace::Surface,
             alpha: Alpha::Round,
             hardness: 1.0,
+            alignment: Default::default(),
             opacity: 1.0,
             backface_cos: 0.0,
             material: BrushMaterial::default(),

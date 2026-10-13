@@ -4,7 +4,7 @@
 
 struct StrokeParams {
     shape: vec4<f32>,      // x: hardness, y: tip (0 round, 1 square, 2 image), z: backface cosine (-1: off), w: dab count
-    sizes: vec4<f32>,      // x: texture size in texels, y: alpha image size in pixels, z: 1 to test occlusion
+    sizes: vec4<f32>,      // x: texture size in texels, y: alpha image size in pixels, z: 1 to test occlusion, w: alignment (ALIGN_*)
     view_proj: mat4x4<f32>, // the stroke's camera
     eye: vec4<f32>,        // xyz: camera position, w: view height (see StrokeCamera::height)
     forward: vec4<f32>,    // xyz: view direction, w: 1 for orthographic cameras
@@ -24,6 +24,11 @@ struct Dab {
 @group(0) @binding(3) var alpha_sampler: sampler;
 // Distance along the view direction to the nearest surface (paint_depth.wgsl).
 @group(0) @binding(4) var depth_map: texture_2d<f32>;
+
+// Must match Alignment::code.
+const ALIGN_WRAP: u32 = 0u;
+const ALIGN_PLANAR: u32 = 1u;
+const ALIGN_CAMERA: u32 = 2u;
 
 const TIP_ROUND: u32 = 0u;
 const TIP_SQUARE: u32 = 1u;
@@ -115,6 +120,7 @@ fn fs_surface(in: SurfaceOut) -> @location(0) vec4<f32> {
     }
     let count = u32(stroke.shape.w);
     let cull = stroke.shape.z > -0.999;
+    let alignment = u32(stroke.sizes.w + 0.5);
     var keep = 1.0;
     for (var i = 0u; i < count; i++) {
         let dab = dabs[i];
@@ -123,12 +129,23 @@ fn fs_surface(in: SurfaceOut) -> @location(0) vec4<f32> {
         let radius = max(dab.position.w, 0.7 * texel);
         let flow = dab.normal.w * min(dab.position.w * dab.position.w / (radius * radius), 1.0);
         let offset = in.world - dab.position.xyz;
-        let dist = length(offset);
+        let axis = dab.normal.xyz;
+        let planar = offset - axis * dot(offset, axis);
+        let planar_length = length(planar);
+        // Wrap measures the distance in 3D; the planar modes project along the axis, so
+        // only the distance in the tip's plane counts. Tangent planar reaches a few radii
+        // along the axis; camera projection reaches as far as occlusion allows.
+        var dist = length(offset);
+        if alignment != ALIGN_WRAP {
+            dist = planar_length;
+            if alignment == ALIGN_PLANAR && abs(dot(offset, axis)) > 4.0 * radius {
+                continue;
+            }
+        }
         if dist > radius + texel {
             continue;
         }
         // Backface culling against the stamp, like Painter, with a soft edge.
-        let axis = dab.normal.xyz;
         var facing = 1.0;
         if cull {
             facing = smoothstep(stroke.shape.z - 0.05, stroke.shape.z + 0.05, dot(n, axis));
@@ -140,8 +157,6 @@ fn fs_surface(in: SurfaceOut) -> @location(0) vec4<f32> {
         // so the tip wraps around curved surfaces and edges instead of stretching.
         let up = dab.up.xyz;
         let right = cross(up, axis);
-        let planar = offset - axis * dot(offset, axis);
-        let planar_length = length(planar);
         var local = vec2<f32>(0.0);
         if planar_length > radius * 1e-6 {
             local = vec2<f32>(dot(planar, right), dot(planar, up)) * (dist / (planar_length * radius));
