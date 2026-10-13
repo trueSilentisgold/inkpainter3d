@@ -174,7 +174,13 @@ impl InkApp {
         );
         show(ui, self.viewport_texture, rect);
 
-        display_combo(ui, rect, "display mode", &mut self.settings.display);
+        display_combo(
+            ui,
+            rect,
+            "display mode",
+            &mut self.settings.display,
+            &mut self.settings.wireframe,
+        );
         self.draw_brush_cursor(ui, rect, View::Model);
         hint(
             ui,
@@ -274,7 +280,13 @@ impl InkApp {
         );
         show(ui, self.uv_texture, rect);
 
-        display_combo(ui, rect, "uv display mode", &mut self.uv_display);
+        display_combo(
+            ui,
+            rect,
+            "uv display mode",
+            &mut self.uv_display,
+            &mut self.uv_wireframe,
+        );
         if let Some(set) = self.model.texture_sets.get(self.selected_set) {
             let label = format!("2D  ·  {}", set.name);
             let painter = ui.painter_at(rect);
@@ -287,7 +299,7 @@ impl InkApp {
                 .size()
                 .x;
             // Left out where it would run into the display mode combo (160 px wide at 10 px).
-            if rect.width() > 10.0 + 160.0 + 8.0 + width + 2.0 * 6.0 + 16.0 {
+            if rect.width() > 10.0 + 190.0 + 8.0 + width + 2.0 * 6.0 + 16.0 {
                 theme::overlay_text(
                     &painter,
                     rect.right_top() + egui::vec2(-16.0, 13.0),
@@ -352,18 +364,32 @@ fn show(ui: &egui::Ui, id: Option<egui::TextureId>, rect: egui::Rect) {
 }
 
 /// Display mode dropdown, like Painter's at the top of each view.
-fn display_combo(ui: &mut egui::Ui, rect: egui::Rect, id: &str, display: &mut DisplayMode) {
+fn display_combo(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    id: &str,
+    display: &mut DisplayMode,
+    wireframe: &mut bool,
+) {
     let combo_rect =
-        egui::Rect::from_min_size(rect.min + egui::vec2(10.0, 8.0), egui::vec2(180.0, 24.0));
+        egui::Rect::from_min_size(rect.min + egui::vec2(10.0, 8.0), egui::vec2(220.0, 24.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(combo_rect), |ui| {
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(display.label())
-            .width(160.0)
-            .show_ui(ui, |ui| {
-                for mode in DisplayMode::ALL {
-                    ui.selectable_value(display, mode, mode.label());
-                }
-            });
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(display.label())
+                .width(160.0)
+                .show_ui(ui, |ui| {
+                    for mode in DisplayMode::ALL {
+                        ui.selectable_value(display, mode, mode.label());
+                    }
+                });
+            theme::icon_toggle(
+                ui,
+                theme::icons::WIREFRAME,
+                wireframe,
+                "Show the edges of the mesh",
+            );
+        });
     });
 }
 

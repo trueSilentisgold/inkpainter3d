@@ -278,6 +278,7 @@ pub mod icons {
         INVERT = "invert",
         LINK = "link",
         UNLINK = "unlink",
+        WIREFRAME = "wireframe",
         IMAGE = "image",
         MENU = "menu",
         FOCUS = "focus",
@@ -396,13 +397,6 @@ pub fn header(title: &str) -> WidgetText {
     job.into()
 }
 
-/// A collapsible panel section with a [`header`] title.
-pub fn section(title: &str) -> egui::CollapsingHeader {
-    egui::CollapsingHeader::new(header(title))
-        .id_salt(title)
-        .default_open(true)
-}
-
 /// A group label inside a panel (BRUSH, ALPHA, MATERIAL …).
 pub fn group_label(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
@@ -427,18 +421,26 @@ pub fn property_grid(id: impl egui::AsIdSalt) -> egui::Grid {
 /// A toggle chip, such as the channels a brush or fill layer sets (color, height, rough …):
 /// outlined in olive while on, as Painter outlines enabled channels.
 pub fn chip(ui: &mut Ui, on: bool, text: &str) -> Response {
-    let (fill, stroke, color) = if on {
-        (OLIVE_ROW, Stroke::new(1.0, OLIVE), TEXT_STRONG)
-    } else {
-        (WIDGET, Stroke::new(1.0, WIDGET), TEXT_WEAK)
+    // Painted by hand at a fixed size: a button grows and shrinks a pixel or two with its
+    // hover state, which makes a column of chips jump under the pointer.
+    let (rect, response) = ui.allocate_exact_size(vec2(LABEL_WIDTH, 24.0), egui::Sense::click());
+    let hovered = response.hovered();
+    let (fill, stroke, color) = match (on, hovered) {
+        (true, false) => (OLIVE_ROW, Stroke::new(1.0, OLIVE), TEXT_STRONG),
+        (true, true) => (OLIVE_FILL, Stroke::new(1.0, OLIVE), TEXT_STRONG),
+        (false, false) => (WIDGET, Stroke::new(1.0, WIDGET), TEXT_WEAK),
+        (false, true) => (WIDGET_HOVER, Stroke::new(1.0, BORDER_STRONG), TEXT),
     };
-    ui.add_sized(
-        [LABEL_WIDTH, 22.0],
-        egui::Button::new(RichText::new(text).color(color))
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(2.0),
-    )
+    let painter = ui.painter();
+    painter.rect(rect, 2.0, fill, stroke, egui::StrokeKind::Inside);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        TextStyle::Button.resolve(ui.style()),
+        color,
+    );
+    response
 }
 
 /// The confirming button of a dialog.
@@ -493,22 +495,6 @@ pub fn overlay_text(
     rect
 }
 
-/// The title bar of a panel that is not collapsible: the title on the left, `right` (icon
-/// buttons) on the right, on the same bar as [`section`] headers.
-pub fn title_bar(ui: &mut Ui, title: &str, right: impl FnOnce(&mut Ui)) {
-    egui::Frame::new()
-        .fill(RAISED)
-        .corner_radius(2.0)
-        .inner_margin(Margin::symmetric(4, 2))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(header(title));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
-            });
-        });
-}
-
 /// A collapsible group inside a panel (BRUSH, ALPHA, MATERIAL …): a small title with an
 /// arrow, lighter than a panel [`section`].
 pub fn group<R>(
@@ -528,4 +514,120 @@ pub fn group<R>(
         .default_open(default_open)
         .show(ui, add_contents);
     });
+}
+
+/// A row of icon buttons at the right edge of a panel, below the tab bar.
+pub fn toolbar_right(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 22.0),
+        egui::Layout::right_to_left(egui::Align::Center),
+        add_contents,
+    );
+}
+
+/// `#RRGGBB`, the way colors are typed and shown.
+pub fn hex_string(rgb: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
+}
+
+/// Reads `#RRGGBB`, `RRGGBB`, `#RGB` or `RGB`.
+pub fn parse_hex(text: &str) -> Option<[u8; 3]> {
+    let digits = text.trim().trim_start_matches('#');
+    if !digits.is_ascii() || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |s: &str| u8::from_str_radix(s, 16).ok();
+    match digits.len() {
+        6 => Some([
+            byte(&digits[0..2])?,
+            byte(&digits[2..4])?,
+            byte(&digits[4..6])?,
+        ]),
+        3 => {
+            let d = |i: usize| byte(&digits[i..=i]).map(|v| v * 17);
+            Some([d(0)?, d(1)?, d(2)?])
+        }
+        _ => None,
+    }
+}
+
+/// A color swatch that opens a color picker with a field for the hex code, so that colors
+/// can be typed or pasted (`#B87333`). Returns a response that is `changed()` when the
+/// color was.
+pub fn color_button(ui: &mut Ui, rgb: &mut [u8; 3]) -> Response {
+    let size = vec2(
+        ui.spacing().interact_size.x.max(44.0),
+        ui.spacing().interact_size.y,
+    );
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let outline = if response.hovered() {
+        BORDER_STRONG
+    } else {
+        BORDER
+    };
+    ui.painter().rect(
+        rect,
+        2.0,
+        Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+        Stroke::new(1.0, outline),
+        egui::StrokeKind::Inside,
+    );
+    let mut changed = false;
+    egui::Popup::from_toggle_button_response(&response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.spacing_mut().slider_width = 200.0;
+            let mut color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut color,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                *rgb = [color.r(), color.g(), color.b()];
+                changed = true;
+            }
+            ui.horizontal(|ui| {
+                ui.label("Hex");
+                let id = response.id.with("hex");
+                // The text is kept while it is being typed, even when it isn't a color yet;
+                // a color changed elsewhere (the picker) replaces it.
+                let mut text = match ui.data(|d| d.get_temp::<(String, [u8; 3])>(id)) {
+                    Some((text, shown)) if shown == *rgb => text,
+                    _ => hex_string(*rgb),
+                };
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut text)
+                        .desired_width(84.0)
+                        .font(TextStyle::Monospace)
+                        .hint_text("#RRGGBB"),
+                );
+                if edit.changed()
+                    && let Some(parsed) = parse_hex(&text)
+                {
+                    *rgb = parsed;
+                    changed = true;
+                }
+                ui.data_mut(|d| d.insert_temp(id, (text, *rgb)));
+            });
+        });
+    if changed {
+        response.mark_changed();
+    }
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_codes_are_read_and_written() {
+        assert_eq!(parse_hex("#B87333"), Some([0xB8, 0x73, 0x33]));
+        assert_eq!(parse_hex("  b87333 "), Some([0xB8, 0x73, 0x33]));
+        assert_eq!(parse_hex("#fa0"), Some([0xFF, 0xAA, 0x00]));
+        assert_eq!(parse_hex("#12345"), None);
+        assert_eq!(parse_hex("#GG0000"), None);
+        assert_eq!(parse_hex(""), None);
+        assert_eq!(hex_string([0xB8, 0x73, 0x33]), "#B87333");
+    }
 }

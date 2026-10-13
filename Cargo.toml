@@ -15,6 +15,7 @@ ink_render = { path = "crates/ink_render" }
 
 eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
 egui-wgpu = "0.36"
+egui_dock = { version = "0.21", features = ["serde"] }
 egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 glam = { version = "0.34", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }

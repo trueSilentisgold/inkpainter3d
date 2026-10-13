@@ -206,7 +206,7 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 - [x] `P0` **Kanal (C / Shift+C):** einzelnen Kanal durchschalten, z. B. nur Roughness
 - [ ] `P1` **Mesh Map (B / Shift+B):** gebackene Maps durchschalten
 - [ ] `P1` Maske eines Layers anzeigen (Alt+Klick auf die Maske)
-- [ ] `P1` ＋ Wireframe und UV-Nähte als Overlay
+- [x] `P1` ＋ Wireframe des Meshes als Overlay, einzeln ein- und ausschaltbar in der 3D- und in der 2D-Ansicht (Schalter neben dem Anzeige-Modus, standardmäßig aus). UV-Nähte folgen.
 
 **Bildnachbearbeitung**
 
@@ -365,7 +365,7 @@ Taste in Klammern = Painter-Shortcut.
 - [ ] `P1` **Projection (3):** malt mit einer projizierten Textur, die sich mit W / E / R
       verschieben, drehen und skalieren lässt
 - [ ] `P1` **Polygon Fill (4):** füllt nach Dreieck, Polygon, Mesh oder UV-Insel. Ideal für
-      Masken.
+      Masken. Kommt in Phase 7, direkt nach den Pinsel-Presets.
 - [ ] `P1` **Pick Material (P):** übernimmt alle Kanalwerte vom Modell
 - [ ] `P2` **Smudge (5)**
 - [ ] `P2` **Clone (6 relativ, Strg+6 absolut):** Quelle mit V+Klick setzen
@@ -648,13 +648,15 @@ Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) 
 
 ## 15. Oberfläche
 
-- [ ] `P1` **Andockbare Fenster:** Layer Stack, Texture-Set-Liste, Texture Set Settings,
-      Properties (zeigt je nach Auswahl Werkzeug, Layer oder Effekt), Shelf, Display Settings,
-      Shader Settings, Viewer Settings, History, Log
-- [ ] `P1` Fenster-Layouts speichern und wiederherstellen; Standard-Layout ähnlich wie in
-      Painter
+- [x] `P1` **Andockbare Fenster:** Viewport, Texture-Set-Liste, Layers, Properties (zeigt je
+      nach Auswahl Werkzeug, Layer oder Effekt), Texture Set Settings und Display Settings
+      lassen sich verschieben, teilen, stapeln und als eigene Fenster abziehen; Menü Window.
+      Shelf, Shader Settings, History und Log folgen mit ihren Funktionen.
+- [x] `P1` Fenster-Layouts speichern und wiederherstellen; Standard-Layout ähnlich wie in
+      Painter. Das Layout merkt sich das Programm beim Beenden; Window → Save layout und
+      Load layout schreiben und lesen Dateien, Reset layout stellt das Standard-Layout her.
 - [ ] `P1` Dunkles Design, skalierbar für HiDPI
-- [ ] `P1` Deutsche und englische Oberfläche
+- [ ] `P2` Deutsche Oberfläche (mit den Begriffen der deutschen Painter-Oberfläche). Die Oberfläche ist bewusst englisch, damit möglichst viele Menschen das Programm nutzen können; weitere Sprachen folgen im Feinschliff.
 
 ---
 
@@ -760,9 +762,10 @@ texturieren und exportieren.**
 | 3 | **Brush-Engine:** Paint und Eraser, Strokes als Daten, Stiftdruck, Alphas, Lazy Mouse, gerade Linien, Undo, 2D-Ansicht | ✅ fertig |
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
-| 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts, deutsche und englische Oberfläche | ⏳ in Arbeit |
-| 7 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
-| 8 | **Generatoren und Bibliothek:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Shelf, Starter-Inhalte | |
-| 9 | **Restliche Werkzeuge:** Projection, Polygon Fill, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
-| 10 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
-| 11 | **Feinschliff:** UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Python-API, Installer (AppImage / Flatpak, Windows) | |
+| 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
+| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
+| 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
+| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
+| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
+| 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
+| 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |
