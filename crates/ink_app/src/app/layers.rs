@@ -1617,7 +1617,7 @@ fn copy_name(stack: &LayerStack, name: &str) -> String {
 }
 
 fn projection_ui(ui: &mut egui::Ui, projection: &mut Projection) {
-    theme::property_grid("projection").show(ui, |ui| {
+    theme::property_grid(ui, "projection").show(ui, |ui| {
         ui.label("Projection");
         egui::ComboBox::from_id_salt("projection mode")
             .selected_text(match projection.mode {
@@ -1773,7 +1773,7 @@ fn fill_properties(
         }
     });
     ui.add_space(4.0);
-    theme::property_grid("fill material").show(ui, |ui| {
+    theme::property_grid(ui, "fill material").show(ui, |ui| {
         for channel in Channel::ALL
             .into_iter()
             .filter(|&c| fill.channels.contains(c))
@@ -1824,7 +1824,7 @@ fn gray_fill_properties(
     theme::group_label(ui, "FILL");
     projection_ui(ui, &mut fill.projection);
     theme::group_label(ui, "GRAYSCALE");
-    theme::property_grid("gray fill").show(ui, |ui| {
+    theme::property_grid(ui, "gray fill").show(ui, |ui| {
         ui.label("Value");
         ui.horizontal(|ui| {
             ui.spacing_mut().slider_width = SLOT_SLIDER_WIDTH;
@@ -1853,7 +1853,7 @@ fn generator_properties(ui: &mut egui::Ui, generator: &mut Generator) {
             .color(theme::TEXT_WEAK),
         );
     }
-    theme::property_grid("generator").show(ui, |ui| {
+    theme::property_grid(ui, "generator").show(ui, |ui| {
         for (i, param) in kind.params().iter().enumerate() {
             ui.label(param.label);
             let value = &mut generator.values[i];
@@ -1892,7 +1892,7 @@ fn generator_properties(ui: &mut egui::Ui, generator: &mut Generator) {
 
 fn levels_properties(ui: &mut egui::Ui, levels: &mut Levels) {
     theme::group_label(ui, "LEVELS");
-    theme::property_grid("levels").show(ui, |ui| {
+    theme::property_grid(ui, "levels").show(ui, |ui| {
         ui.label("Input");
         ui.horizontal(|ui| {
             ui.add(

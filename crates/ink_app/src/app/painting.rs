@@ -910,7 +910,7 @@ impl InkApp {
         let grayscale = self.paints_grayscale();
         if self.paint.fill_tool {
             theme::group(ui, "Polygon fill", true, |ui| {
-                theme::property_grid("polygon fill").show(ui, |ui| {
+                theme::property_grid(ui, "polygon fill").show(ui, |ui| {
                     ui.label("Fill");
                     fill_shape_combo(ui, &mut self.paint.fill_shape);
                     ui.end_row();
@@ -934,7 +934,7 @@ impl InkApp {
         let brush = self.paint.brush_mut();
 
         theme::group(ui, "Brush", true, |ui| {
-            theme::property_grid("brush").show(ui, |ui| {
+            theme::property_grid(ui, "brush").show(ui, |ui| {
                 ui.label("Size");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -1020,7 +1020,7 @@ impl InkApp {
         });
 
         theme::group(ui, "Jitter", false, |ui| {
-            theme::property_grid("jitter").show(ui, |ui| {
+            theme::property_grid(ui, "jitter").show(ui, |ui| {
                 for (label, value) in [
                     ("Size", &mut brush.jitter.size),
                     ("Flow", &mut brush.jitter.flow),
@@ -1035,7 +1035,7 @@ impl InkApp {
         });
 
         theme::group(ui, "Alpha", false, |ui| {
-            theme::property_grid("alpha").show(ui, |ui| {
+            theme::property_grid(ui, "alpha").show(ui, |ui| {
                 ui.label("Shape");
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("alpha")
@@ -1085,7 +1085,7 @@ impl InkApp {
             // takes paint away.
             if tool == Tool::Paint {
                 theme::group_label(ui, "GRAYSCALE");
-                theme::property_grid("grayscale").show(ui, |ui| {
+                theme::property_grid(ui, "grayscale").show(ui, |ui| {
                     ui.label("Value");
                     ui.horizontal(|ui| {
                         ui.add(egui::Slider::new(&mut material.grayscale, 0.0..=1.0));
@@ -1118,7 +1118,7 @@ impl InkApp {
 
     /// Channel toggles and values of the brush material.
     fn material_grid(ui: &mut egui::Ui, tool: Tool, material: &mut ink_core::BrushMaterial) {
-        theme::property_grid("material").show(ui, |ui| {
+        theme::property_grid(ui, "material").show(ui, |ui| {
             for channel in Channel::ALL {
                 let on = material.channels.contains(channel);
                 if theme::chip(ui, on, channel.label())
@@ -1169,7 +1169,7 @@ fn tool_look(tool: Tool) -> (egui::ImageSource<'static>, &'static str) {
 fn fill_shape_combo(ui: &mut egui::Ui, shape: &mut FillShape) {
     egui::ComboBox::from_id_salt("fill shape")
         .selected_text(shape.label())
-        .width(110.0)
+        .width(theme::fit_width(ui, 110.0, 8.0))
         .show_ui(ui, |ui| {
             for choice in FillShape::ALL {
                 ui.selectable_value(shape, choice, choice.label());

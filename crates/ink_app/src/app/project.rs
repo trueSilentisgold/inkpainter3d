@@ -832,7 +832,7 @@ impl InkApp {
             ui.set_width(460.0);
             ui.heading("New project");
             ui.add_space(8.0);
-            theme::property_grid("new project grid").show(ui, |ui| {
+            theme::property_grid(ui, "new project grid").show(ui, |ui| {
                 ui.label("File");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -888,7 +888,7 @@ impl InkApp {
             ui.set_width(420.0);
             ui.heading("Project configuration");
             ui.add_space(8.0);
-            theme::property_grid("project configuration grid").show(ui, |ui| {
+            theme::property_grid(ui, "project configuration grid").show(ui, |ui| {
                 ui.label("Mesh");
                 ui.label(self.project.source.as_deref().unwrap_or("—"));
                 ui.end_row();

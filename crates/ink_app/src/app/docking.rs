@@ -152,13 +152,14 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn scroll_bars(&self, tab: &Tab) -> [bool; 2] {
-        // The viewport paints its own area; the panels scroll vertically.
+        // The viewport paints its own area; the panels scroll vertically. Not sideways: their
+        // content adapts to the width it gets.
         [false, *tab != Tab::Viewport]
     }
 }
 
 /// The smallest width or height, in points, a panel can be dragged to.
-const MIN_PANEL_SIZE: f32 = 190.0;
+const MIN_PANEL_SIZE: f32 = 240.0;
 
 impl InkApp {
     /// Shows the dock in the space left by the menu, tool bars and status bar.

@@ -412,12 +412,32 @@ pub fn group_label(ui: &mut Ui, text: &str) {
 /// Width of the label column of property grids, so that controls line up across sections.
 pub const LABEL_WIDTH: f32 = 108.0;
 
-/// A two-column grid of labels and controls.
-pub fn property_grid(id: impl egui::AsIdSalt) -> egui::Grid {
+/// The label column's width in a panel `available` points wide: the full `LABEL_WIDTH`, less in
+/// a narrow panel so that the controls beside the labels keep some room.
+pub fn label_width(available: f32) -> f32 {
+    LABEL_WIDTH.min(available * 0.42).max(72.0)
+}
+
+/// A width of up to `wanted` for a combo box or text field that has to share its row with
+/// `reserve` points of other widgets in a narrow panel.
+pub fn fit_width(ui: &Ui, wanted: f32, reserve: f32) -> f32 {
+    wanted.min(ui.available_width() - reserve).max(48.0)
+}
+
+/// A two-column grid of labels and controls. In a narrow panel the label column and the
+/// sliders shrink (the sliders for the rest of that `ui`) instead of the grid growing past it.
+pub fn property_grid(ui: &mut Ui, id: impl egui::AsIdSalt) -> egui::Grid {
+    let available = ui.available_width();
+    let label = label_width(available);
+    // The value box beside a slider and the grid's spacing.
+    let control = available - label.max(104.0) - 10.0;
+    let slider = (control - 96.0).clamp(20.0, 100.0);
+    ui.spacing_mut().slider_width = slider;
+    ui.spacing_mut().combo_width = (control - 12.0).clamp(60.0, 120.0);
     egui::Grid::new(id)
         .num_columns(2)
         .spacing([10.0, 6.0])
-        .min_col_width(LABEL_WIDTH)
+        .min_col_width(label)
 }
 
 /// A toggle chip, such as the channels a brush or fill layer sets (color, height, rough …):
@@ -425,7 +445,8 @@ pub fn property_grid(id: impl egui::AsIdSalt) -> egui::Grid {
 pub fn chip(ui: &mut Ui, on: bool, text: &str) -> Response {
     // Painted by hand at a fixed size: a button grows and shrinks a pixel or two with its
     // hover state, which makes a column of chips jump under the pointer.
-    let (rect, response) = ui.allocate_exact_size(vec2(LABEL_WIDTH, 24.0), egui::Sense::click());
+    let width = label_width(ui.max_rect().width());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 24.0), egui::Sense::click());
     let hovered = response.hovered();
     let (fill, stroke, color) = match (on, hovered) {
         (true, false) => (OLIVE_ROW, Stroke::new(1.0, OLIVE), TEXT_STRONG),

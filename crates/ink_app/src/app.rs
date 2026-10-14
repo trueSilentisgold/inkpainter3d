@@ -590,7 +590,7 @@ impl InkApp {
         let Some(set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
         };
-        theme::property_grid("texture set settings").show(ui, |ui| {
+        theme::property_grid(ui, "texture set settings").show(ui, |ui| {
             ui.label("Name");
             ui.label(RichText::new(&set.name).strong());
             ui.end_row();
@@ -630,7 +630,7 @@ impl InkApp {
             }
         });
         ui.add_space(6.0);
-        theme::property_grid("display").show(ui, |ui| {
+        theme::property_grid(ui, "display").show(ui, |ui| {
             ui.label("Environment");
             ui.horizontal(|ui| {
                 ui.label(&self.environment_name);

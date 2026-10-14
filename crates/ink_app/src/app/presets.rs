@@ -182,12 +182,12 @@ impl InkApp {
         let mut save = false;
         let mut delete = None;
         theme::group(ui, "Preset", true, |ui| {
-            theme::property_grid("preset").show(ui, |ui| {
+            theme::property_grid(ui, "preset").show(ui, |ui| {
                 ui.label("Brush");
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("brush preset")
                         .selected_text(self.preset_name.clone())
-                        .width(120.0)
+                        .width(theme::fit_width(ui, 120.0, 34.0))
                         .show_ui(ui, |ui| {
                             for (i, preset) in self.presets.iter().enumerate() {
                                 if ui.selectable_label(false, &preset.name).clicked() {
@@ -210,7 +210,7 @@ impl InkApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.preset_draft)
                             .hint_text("Name")
-                            .desired_width(120.0),
+                            .desired_width(theme::fit_width(ui, 120.0, 54.0)),
                     );
                     let ready = !self.preset_draft.trim().is_empty();
                     save = ui.add_enabled(ready, egui::Button::new("Save")).clicked();

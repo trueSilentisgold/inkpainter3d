@@ -348,7 +348,7 @@ impl InkApp {
         }
 
         theme::group_label(ui, "Settings");
-        theme::property_grid("bake settings").show(ui, |ui| {
+        theme::property_grid(ui, "bake settings").show(ui, |ui| {
             ui.label("Antialiasing");
             egui::ComboBox::from_id_salt("bake subsampling")
                 .selected_text(format!("{0} × {0}", settings.subsampling))

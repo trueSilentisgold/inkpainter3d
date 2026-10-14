@@ -228,7 +228,7 @@ impl InkApp {
     fn export_settings_tab(&mut self, ui: &mut egui::Ui, window: &mut ExportWindow) {
         let settings = &mut window.settings;
         ui.label(theme::header("Global settings"));
-        theme::property_grid("export settings").show(ui, |ui| {
+        theme::property_grid(ui, "export settings").show(ui, |ui| {
             ui.label("Output directory");
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut settings.directory).desired_width(440.0));

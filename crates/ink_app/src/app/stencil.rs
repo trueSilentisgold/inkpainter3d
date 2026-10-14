@@ -189,7 +189,7 @@ impl InkApp {
         let mut load = false;
         let state = &mut self.paint.stencil;
         theme::group(ui, "Stencil", false, |ui| {
-            theme::property_grid("stencil").show(ui, |ui| {
+            theme::property_grid(ui, "stencil").show(ui, |ui| {
                 ui.label("Image");
                 ui.horizontal(|ui| {
                     let name = state
