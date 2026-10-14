@@ -288,7 +288,7 @@ impl InkApp {
         ui.add(
             egui::TextEdit::singleline(&mut self.shelf.smart.name)
                 .hint_text(hint)
-                .desired_width(190.0),
+                .desired_width(super::field_width(ui, 190.0)),
         );
         let ready = !self.shelf.smart.name.trim().is_empty();
         let label = match kind {

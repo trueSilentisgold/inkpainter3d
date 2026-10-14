@@ -685,86 +685,100 @@ impl InkApp {
         }
     }
 
+    /// Narrower than this, the toolbar's buttons get a row of their own.
+    const TOOLBAR_ONE_ROW: f32 = 290.0;
+
     fn layer_toolbar(&mut self, ui: &mut egui::Ui) {
         let selected = self.selection().map(|s| s.layer);
-        ui.horizontal(|ui| {
+        let narrow = ui.available_width() < Self::TOOLBAR_ONE_ROW;
+        let combo = |app: &mut Self, ui: &mut egui::Ui| {
             egui::ComboBox::from_id_salt("stack channel")
-                .selected_text(self.layers.channel.label())
-                .width(110.0)
+                .selected_text(app.layers.channel.label())
+                .width(110.0f32.min(ui.available_width() - 40.0).max(60.0))
                 .show_ui(ui, |ui| {
                     for channel in Channel::ALL {
-                        ui.selectable_value(&mut self.layers.channel, channel, channel.label());
+                        ui.selectable_value(&mut app.layers.channel, channel, channel.label());
                     }
                 })
                 .response
                 .on_hover_text("The channel whose blending mode and opacity the layers show");
-            // Painter's order, left to right: effect, mask, paint layer, fill layer, folder,
-            // delete. The layout runs right to left, so the buttons are added the other way.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                let enabled = selected.is_some();
-                if ui
-                    .add_enabled_ui(enabled, |ui| {
-                        theme::icon_button(
-                            ui,
-                            icons::DELETE,
-                            "Delete the selected layer or effect (Delete)",
-                        )
-                    })
-                    .inner
-                    .clicked()
-                {
-                    self.delete_selected();
-                }
-                if theme::icon_button(
-                    ui,
-                    icons::ADD_FOLDER,
-                    "Add a folder above the selected layer",
-                )
-                .clicked()
-                {
-                    self.add_layer(LayerKind::Folder);
-                }
-                if theme::icon_button(
-                    ui,
-                    icons::ADD_FILL_LAYER,
-                    "Add a fill layer above the selected layer",
-                )
-                .clicked()
-                {
-                    self.add_layer(LayerKind::Fill);
-                }
-                if theme::icon_button(
-                    ui,
-                    icons::ADD_PAINT_LAYER,
-                    "Add a paint layer above the selected layer",
-                )
-                .clicked()
-                {
-                    self.add_layer(LayerKind::Paint);
-                }
-                ui.add_enabled_ui(enabled, |ui| {
-                    theme::icon_menu(
+        };
+        if narrow {
+            combo(self, ui);
+            ui.horizontal(|ui| self.layer_toolbar_buttons(ui, selected));
+        } else {
+            ui.horizontal(|ui| {
+                combo(self, ui);
+                self.layer_toolbar_buttons(ui, selected);
+            });
+        }
+    }
+
+    fn layer_toolbar_buttons(&mut self, ui: &mut egui::Ui, selected: Option<u64>) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let enabled = selected.is_some();
+            if ui
+                .add_enabled_ui(enabled, |ui| {
+                    theme::icon_button(
                         ui,
-                        icons::ADD_MASK,
-                        "Add a mask to the selected layer",
-                        |ui| {
-                            if let Some(layer) = selected {
-                                self.mask_menu(ui, layer);
-                            }
-                        },
-                    );
-                    theme::icon_menu(
-                        ui,
-                        icons::ADD_EFFECT,
-                        "Add an effect to the selected layer's mask",
-                        |ui| {
-                            if let Some(layer) = selected {
-                                self.effect_menu(ui, layer);
-                            }
-                        },
-                    );
-                });
+                        icons::DELETE,
+                        "Delete the selected layer or effect (Delete)",
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                self.delete_selected();
+            }
+            if theme::icon_button(
+                ui,
+                icons::ADD_FOLDER,
+                "Add a folder above the selected layer",
+            )
+            .clicked()
+            {
+                self.add_layer(LayerKind::Folder);
+            }
+            if theme::icon_button(
+                ui,
+                icons::ADD_FILL_LAYER,
+                "Add a fill layer above the selected layer",
+            )
+            .clicked()
+            {
+                self.add_layer(LayerKind::Fill);
+            }
+            if theme::icon_button(
+                ui,
+                icons::ADD_PAINT_LAYER,
+                "Add a paint layer above the selected layer",
+            )
+            .clicked()
+            {
+                self.add_layer(LayerKind::Paint);
+            }
+            ui.add_enabled_ui(enabled, |ui| {
+                theme::icon_menu(
+                    ui,
+                    icons::ADD_MASK,
+                    "Add a mask to the selected layer",
+                    |ui| {
+                        if let Some(layer) = selected {
+                            self.mask_menu(ui, layer);
+                        }
+                    },
+                );
+                theme::icon_menu(
+                    ui,
+                    icons::ADD_EFFECT,
+                    "Add an effect to the selected layer's mask",
+                    |ui| {
+                        if let Some(layer) = selected {
+                            self.effect_menu(ui, layer);
+                        }
+                    },
+                );
             });
         });
     }

@@ -22,7 +22,7 @@ fn main() -> eframe::Result {
                 .expect("the app icon is a valid PNG"),
             )
             .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([800.0, 500.0])
+            .with_min_inner_size([960.0, 600.0])
             .with_drag_and_drop(true),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: wgpu_options(),

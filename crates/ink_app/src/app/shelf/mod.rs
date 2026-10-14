@@ -231,8 +231,28 @@ impl Default for ShelfState {
 
 /// Size of a cell of the grid.
 const CELL: egui::Vec2 = egui::vec2(104.0, 86.0);
-/// Space the picture of a cell takes.
-const PICTURE: egui::Vec2 = egui::vec2(96.0, 56.0);
+/// Height the picture of a cell takes.
+const PICTURE_HEIGHT: f32 = 56.0;
+/// The narrowest a cell gets when the panel is narrower than one cell.
+const MIN_CELL_WIDTH: f32 = 64.0;
+/// The narrowest the shelf's text fields get.
+const MIN_FIELD_WIDTH: f32 = 60.0;
+
+/// Width for a text field that wants `wanted` but gives way in a narrow panel.
+fn field_width(ui: &egui::Ui, wanted: f32) -> f32 {
+    wanted.min(panel_width(ui) - 8.0).max(MIN_FIELD_WIDTH)
+}
+
+fn panel_width_id() -> egui::Id {
+    egui::Id::new("shelf panel width")
+}
+
+/// The width of the whole shelf panel, noted at the top of each frame: inside a wrapping row
+/// `available_width` only tells what is left of the current row.
+fn panel_width(ui: &egui::Ui) -> f32 {
+    ui.data(|d| d.get_temp::<f32>(panel_width_id()))
+        .unwrap_or(f32::INFINITY)
+}
 /// Items per online page.
 const PAGE: usize = 36;
 
@@ -801,6 +821,7 @@ impl InkApp {
         }
 
         let mut actions: Vec<Action> = Vec::new();
+        ui.data_mut(|d| d.insert_temp(panel_width_id(), ui.available_width()));
         // The categories as a row of tabs above everything, so the panel can stay low.
         ui.horizontal_wrapped(|ui| {
             for category in Category::ALL {
@@ -827,7 +848,7 @@ impl InkApp {
 
     fn shelf_toolbar(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         let category = self.shelf.category;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if category == Category::Online {
                 let online = &mut self.shelf.online;
                 egui::ComboBox::from_id_salt("online source")
@@ -846,7 +867,7 @@ impl InkApp {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut online.query)
                         .hint_text("Search materials")
-                        .desired_width(180.0),
+                        .desired_width(field_width(ui, 180.0)),
                 );
                 let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if ui.button("Search").clicked() || enter || !online.started {
@@ -874,13 +895,13 @@ impl InkApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.shelf.search)
                         .hint_text("Filter")
-                        .desired_width(160.0),
+                        .desired_width(field_width(ui, 160.0)),
                 );
                 if category == Category::Brushes {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.shelf.brush_name)
                             .hint_text("Name for the current brush")
-                            .desired_width(160.0),
+                            .desired_width(field_width(ui, 160.0)),
                     );
                     let ready = !self.shelf.brush_name.trim().is_empty();
                     if ui
@@ -1179,7 +1200,13 @@ fn cell(
     selected: bool,
     square: bool,
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(CELL, Sense::click_and_drag());
+    // One cell per row when the panel is narrower than a cell.
+    let cell_size = egui::vec2(
+        CELL.x.min(panel_width(ui) - 14.0).max(MIN_CELL_WIDTH),
+        CELL.y,
+    );
+    let picture_size = egui::vec2(cell_size.x - 8.0, PICTURE_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(cell_size, Sense::click_and_drag());
     let hovered = response.hovered();
     let painter = ui.painter_at(rect);
     let fill = if hovered {
@@ -1189,13 +1216,13 @@ fn cell(
     };
     painter.rect_filled(rect, 2.0, fill);
     let picture = egui::Rect::from_center_size(
-        rect.center_top() + egui::vec2(0.0, 4.0 + PICTURE.y * 0.5),
-        PICTURE,
+        rect.center_top() + egui::vec2(0.0, 4.0 + picture_size.y * 0.5),
+        picture_size,
     );
     match texture {
         Some(texture) => {
             let size = texture.size_vec2();
-            let scale = (PICTURE.x / size.x).min(PICTURE.y / size.y);
+            let scale = (picture_size.x / size.x).min(picture_size.y / size.y);
             let shown = if square {
                 // Pictures are square and drawn as large as the box allows.
                 egui::Rect::from_center_size(picture.center(), size * scale)
@@ -1213,7 +1240,7 @@ fn cell(
             painter.rect_filled(picture, 2.0, theme::BG_DEEP);
         }
     }
-    let label = fit_text(ui, name, CELL.x - 8.0);
+    let label = fit_text(ui, name, cell_size.x - 8.0);
     painter.text(
         egui::pos2(rect.center().x, rect.bottom() - 6.0),
         egui::Align2::CENTER_BOTTOM,

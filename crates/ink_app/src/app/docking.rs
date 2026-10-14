@@ -157,6 +157,9 @@ impl TabViewer for Viewer<'_> {
     }
 }
 
+/// The smallest width or height, in points, a panel can be dragged to.
+const MIN_PANEL_SIZE: f32 = 190.0;
+
 impl InkApp {
     /// Shows the dock in the space left by the menu, tool bars and status bar.
     pub(super) fn dock(&mut self, ui: &mut egui::Ui, rs: &RenderState) {
@@ -171,6 +174,8 @@ impl InkApp {
         style.tab.tab_body.stroke = egui::Stroke::NONE;
         style.tab.tab_body.bg_fill = theme::PANEL;
         style.tab.tab_body.corner_radius = egui::CornerRadius::ZERO;
+        // Panels can't be dragged narrower or lower than this; their content wraps below it.
+        style.separator.extra = MIN_PANEL_SIZE;
         style.separator.color_idle = theme::BORDER;
         style.separator.color_hovered = theme::OLIVE;
         style.separator.color_dragged = theme::OLIVE;
