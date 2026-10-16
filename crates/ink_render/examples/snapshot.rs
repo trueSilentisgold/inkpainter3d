@@ -15,7 +15,8 @@
 //! `heightmap=file.png` (its height image), `triplanar`, `scale=4` and `rotate=30` (its
 //! projection);
 //! `mask` (the fill gets a black mask and the strokes paint into it), `levels` (an inverting
-//! levels effect in that mask); `blend=multiply` and `opacity=0.5` (blending of the top
+//! levels effect in that mask), `blur=0.3` (a blur with this intensity on top of that mask,
+//! blended with Replace); `blend=multiply` and `opacity=0.5` (blending of the top
 //! layer's color, roughness and metallic), `nblend=` and `nopacity=` (of its normal);
 //! `folder` (puts the top layer in a folder), `passthrough` (that folder passes through);
 //! `height` (strokes paint only height 1).
@@ -62,7 +63,7 @@ use anyhow::{Context, Result};
 use glam::Vec2;
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, MapImage, Padding, Template};
 use ink_core::{
-    Alignment, Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect,
+    Alignment, Alpha, BlendMode, Blur, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect,
     EffectKind, Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath,
     StrokeSpace, Tool, shape_dabs, surface_dab, uv_dab,
 };
@@ -752,6 +753,17 @@ fn build_stack<'a>(
                 };
                 mask.effects
                     .push(Effect::new(ids.next(), EffectKind::Levels(levels)));
+            }
+            if let Some(intensity) = floats("blur")? {
+                // Replace, as in the reference project.
+                let mut blur = Effect::new(
+                    ids.next(),
+                    EffectKind::Blur(Blur {
+                        intensity: intensity[0],
+                    }),
+                );
+                blur.blend = BlendMode::Replace;
+                mask.effects.push(blur);
             }
             layer.mask = Some(mask);
         }

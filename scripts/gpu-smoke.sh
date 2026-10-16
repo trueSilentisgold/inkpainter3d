@@ -98,6 +98,9 @@ check no-depth "$data/two_planes.obj" "paint nodepth set=Back only=Back yaw=0 di
 check mask sphere "fill=0.2,0.5,0.9 mask paint display=basecolor" "500,400:$blue" "640,250:$grey"
 check mask-levels sphere "fill=0.2,0.5,0.9 mask levels paint display=basecolor" \
     "500,400:$grey" "640,250:$blue"
+# A blur softens the stroke's edge in the mask: half blue just beside it, grey farther out.
+check mask-blur sphere "fill=0.2,0.5,0.9 mask paint blur=1 display=basecolor" \
+    "500,400:$blue" "500,380:r > 140 && r < 180 && b > 192" "500,340:$grey"
 
 # Blending and folders.
 check multiply sphere "color=1,1,1 fill=0.9,0.2,0.2 folder blend=multiply display=basecolor" \

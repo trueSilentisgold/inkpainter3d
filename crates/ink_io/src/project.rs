@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail, ensure};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
-    Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending,
+    Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending, Blur,
     BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect,
     EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GrayFill, IdSource, Ids, Layer,
     LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model, NormalFormat,
@@ -487,6 +487,12 @@ enum FileEffectKind {
     Fill(FileGrayFill),
     Levels(FileLevels),
     Generator(FileGenerator),
+    Blur(FileBlur),
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileBlur {
+    intensity: f32,
 }
 
 /// A generator by the keys of its kind and parameters, so the order of the parameters in the
@@ -835,6 +841,9 @@ impl Saver {
                                 input: finite_n(levels.input),
                                 gamma: finite(levels.gamma),
                                 output: finite_n(levels.output),
+                            }),
+                            EffectKind::Blur(blur) => FileEffectKind::Blur(FileBlur {
+                                intensity: finite(blur.intensity),
                             }),
                             EffectKind::Generator(g) => FileEffectKind::Generator(FileGenerator {
                                 kind: g.kind.key().to_owned(),
@@ -1447,6 +1456,9 @@ impl Loader<'_> {
                             gamma: levels.gamma,
                             output: levels.output,
                         }),
+                        FileEffectKind::Blur(blur) => EffectKind::Blur(Blur {
+                            intensity: blur.intensity.clamp(0.0, 1.0),
+                        }),
                         FileEffectKind::Generator(g) => {
                             let kind = GeneratorKind::from_key(&g.kind)
                                 .with_context(|| format!("Unknown generator {:?}", g.kind))?;
@@ -1863,6 +1875,9 @@ mod tests {
         );
         levels.visible = false;
         mask.effects.push(levels);
+        let mut blur = Effect::new(ids.next(), EffectKind::Blur(Blur { intensity: 0.35 }));
+        blur.blend = BlendMode::Replace;
+        mask.effects.push(blur);
         let mut wear = Generator::new(GeneratorKind::EdgeWear);
         wear.set("noise_scale", 33.0);
         wear.set("invert", 1.0);

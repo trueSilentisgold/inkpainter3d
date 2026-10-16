@@ -345,7 +345,8 @@ Deckkraft; Effekte im Layer-Inhalt folgen mit den Filtern.
 - [x] `P0` **Paint**
 - [x] `P0` **Fill**
 - [x] `P1` **Levels**
-- [ ] `P1` **Filter** (siehe Kapitel 11); Blur schon `P0`
+- [ ] `P1` **Filter** (siehe Kapitel 11). Blur gibt es in Masken; im Layer-Inhalt fehlen
+      Filter noch.
 - [x] `P1` **Generator** (siehe Kapitel 11), bisher nur in Masken
 - [ ] `P2` **Compare Mask**
 - [ ] `P2` **Anchor Point:** Zwischenergebnis des Stacks, das spätere Generatoren und Filter
@@ -536,11 +537,14 @@ sonst im UV-Raum.
 
 **Filter**
 
-Bisher gibt es *Levels* (Masken-Effekt). Filter, die Nachbartexel brauchen (Blur, Sharpen),
-fehlen noch: Der Compositor rechnet in Kacheln mit einem Texel Rand, dafür braucht es
-einen größeren Rand pro Effekt.
+Filter sind Masken-Effekte wie *Levels*. Wer Nachbartexel liest, braucht einen Rand um jede
+Kachel des Compositors: Er wächst mit der Reichweite der Filter einer Maske, und beim Malen
+unter einem Filter wird um diese Reichweite mehr neu berechnet.
 
-- [ ] `P0` Blur
+- [x] `P0` **Blur** (Masken-Effekt, Menü *Filters*): Gauß-Blur im Texturraum, mit Blend Mode
+      und Deckkraft wie jeder Effekt. *Intensity* 0 bis 1 hängt nicht von der Auflösung ab;
+      volle Stärke reicht 3 % der Texturbreite weit, höchstens 128 Texel. Wie in Painter
+      blurt er über UV-Nähte hinweg in den Rand der Inseln. Im Layer-Inhalt fehlt er noch.
 - [ ] `P1` Sharpen, HSL / Farbkorrektur, Gradient Map, Height-zu-Normal
 - [ ] `P2` Directional Blur, Slope Blur, Warp, Baked Lighting
 - [ ] `P2` ＋ Stylized-Filter: Posterize, Hand-Painted-Look, Pixel Art
@@ -803,7 +807,7 @@ texturieren und exportieren.**
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
 | 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ✅ fertig |
-| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Filter mit Nachbartexeln fehlen noch) |
+| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Blur in Masken; weitere Filter folgen) |
 | 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |

@@ -4,7 +4,7 @@
 
 // Must match ResolveUniforms in compositor.rs.
 struct Resolve {
-    area: vec4<i32>,       // xy: texture set texel at chunk texel (0, 0), z: resolution
+    area: vec4<i32>,       // xy: texture set texel at chunk texel (0, 0), z: resolution, w: apron
     params: vec4<f32>,     // x: height factor (Painter's HEIGHT_FACTOR)
     base_color: vec4<f32>, // default base color, linear
     surface: vec4<f32>,    // defaults: roughness, metallic, opacity, height
@@ -138,8 +138,6 @@ struct ExportOutputs {
     @location(3) emissive: vec4<f32>,
 }
 
-// The compositor's APRON: the chunk's texel (0, 0) in the channels.
-const APRON: i32 = 1;
 const NO_SEED: u32 = 0xffffffffu;
 // Largest 16-bit float.
 const FAR: f32 = 65504.0;
@@ -147,7 +145,8 @@ const FAR: f32 = 65504.0;
 // Renders a chunk at the export targets' origin.
 @fragment
 fn fs_export(@builtin(position) frag: vec4<f32>) -> ExportOutputs {
-    let local = vec2<i32>(frag.xy) + vec2<i32>(APRON);
+    // The chunk's texel (0, 0) lies behind the apron.
+    let local = vec2<i32>(frag.xy) + vec2<i32>(resolve.area.w);
     let t = resolved(local);
     let texel = local + resolve.area.xy;
     let seed = textureLoad(seeds, texel, 0).r;

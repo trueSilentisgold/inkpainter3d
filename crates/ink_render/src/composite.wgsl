@@ -68,7 +68,7 @@ struct Pass {
     info: vec4<u32>,      // x: blend mode, y: channel kind, z: flags, w: tiles per side of the paint
     area: vec4<i32>,      // xy: texture set texel at chunk texel (0, 0), z: resolution, w: first slot of the channel
     value: vec4<f32>,     // fill value: linear color, encoded normal or scalar in x
-    params: vec4<f32>,    // x: opacity, y: image size in texels, z: tri-planar hardness
+    params: vec4<f32>,    // x: opacity, y: image size in texels (blur: radius in texels), z: tri-planar hardness
     transform: vec4<f32>, // projection: xy scale, z: rotation in radians
     offset: vec4<f32>,    // projection: xy offset (tri-planar: xyz)
     levels: vec4<f32>,    // levels: input low, input high, gamma, output low
@@ -598,6 +598,44 @@ fn fs_mask_effect(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> 
     }
     let m = textureLoad(below, local, 0).r;
     let out = blend_premultiplied(vec4<f32>(m, 0.0, 0.0, 1.0), top, pass_.params.x, pass_.info.x, KIND_SCALAR, true);
+    return vec4<f32>(out.x, 0.0, 0.0, 1.0);
+}
+
+// ---- Blur: a separable Gaussian over the mask below ----
+//
+// The radius (params.y, in texels) spans three standard deviations. The compositor widens
+// the chunk's apron by the radius, so every texel read here was evaluated; reads past the
+// temp texture are clamped to its edge, which only touches texels outside the chunk.
+
+fn blur_line(source: texture_2d<f32>, local: vec2<i32>, step: vec2<i32>) -> f32 {
+    let radius = pass_.params.y;
+    let taps = i32(ceil(radius));
+    let last = vec2<i32>(textureDimensions(source)) - 1;
+    let sigma = max(radius / 3.0, 1e-3);
+    var sum = 0.0;
+    var weights = 0.0;
+    for (var i = -taps; i <= taps; i++) {
+        let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
+        sum += w * textureLoad(source, clamp(local + step * i, vec2<i32>(0), last), 0).r;
+        weights += w;
+    }
+    return sum / weights;
+}
+
+// Along x, into a temp texture of its own.
+@fragment
+fn fs_mask_blur_x(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(blur_line(below, chunk_texel(frag), vec2<i32>(1, 0)), 0.0, 0.0, 1.0);
+}
+
+// Along y over the first pass (`other`), blended onto the mask below with the effect's
+// mode and opacity.
+@fragment
+fn fs_mask_blur_y(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    let local = chunk_texel(frag);
+    let blurred = blur_line(other, local, vec2<i32>(0, 1));
+    let m = textureLoad(below, local, 0).r;
+    let out = blend_premultiplied(vec4<f32>(m, 0.0, 0.0, 1.0), vec4<f32>(blurred, 0.0, 0.0, 1.0), pass_.params.x, pass_.info.x, KIND_SCALAR, true);
     return vec4<f32>(out.x, 0.0, 0.0, 1.0);
 }
 
