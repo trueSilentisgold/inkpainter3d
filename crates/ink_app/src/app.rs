@@ -1,9 +1,13 @@
 mod about;
+mod baking;
 mod docking;
 mod export;
 mod layers;
 mod painting;
+mod presets;
 mod project;
+mod shelf;
+mod stencil;
 mod views;
 
 use crate::pen::{PenInput, PenNotice};
@@ -50,6 +54,14 @@ pub struct InkApp {
     snap_angles: Option<(f32, f32)>,
     status: String,
     paint: PaintState,
+    /// Brush presets, shipped and the user's.
+    presets: Vec<presets::Preset>,
+    shelf: shelf::ShelfState,
+    baking: baking::BakingState,
+    /// What the preset box shows: the last preset applied.
+    preset_name: String,
+    /// The name being typed for a new preset.
+    preset_draft: String,
     layers: LayersState,
     /// Whether the pointer was over the layer stack last frame; Ctrl+C / X / V and Delete
     /// act on layers only there, as in Painter.
@@ -121,6 +133,11 @@ impl InkApp {
             snap_angles: None,
             status: format!("GPU: {} ({:?})", info.name, info.backend),
             paint: PaintState::default(),
+            presets: presets::load_all(),
+            shelf: Default::default(),
+            baking: Default::default(),
+            preset_name: "Custom".to_owned(),
+            preset_draft: String::new(),
             layers: LayersState::default(),
             layers_hovered: false,
             history: History::default(),
@@ -162,6 +179,7 @@ impl InkApp {
     fn set_model(&mut self, rs: &RenderState, model: Model) {
         // An export of the old model stops; what it is writing is finished.
         self.export = None;
+        self.baking.reset();
         self.renderer.set_model(&rs.device, &rs.queue, &model);
         self.uv_view.set_model(&rs.device, &model);
         self.paint.reset();
@@ -287,6 +305,15 @@ impl InkApp {
                     .clicked()
                 {
                     self.open_export_window();
+                }
+                if ui
+                    .add_enabled(
+                        !self.model.texture_sets.is_empty(),
+                        egui::Button::new("Bake mesh maps…").shortcut_text("Ctrl+Shift+B"),
+                    )
+                    .clicked()
+                {
+                    self.baking.open = true;
                 }
                 ui.separator();
                 if ui.button("Load environment…").clicked()
@@ -563,7 +590,7 @@ impl InkApp {
         let Some(set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
         };
-        theme::property_grid("texture set settings").show(ui, |ui| {
+        theme::property_grid(ui, "texture set settings").show(ui, |ui| {
             ui.label("Name");
             ui.label(RichText::new(&set.name).strong());
             ui.end_row();
@@ -603,7 +630,7 @@ impl InkApp {
             }
         });
         ui.add_space(6.0);
-        theme::property_grid("display").show(ui, |ui| {
+        theme::property_grid(ui, "display").show(ui, |ui| {
             ui.label("Environment");
             ui.horizontal(|ui| {
                 ui.label(&self.environment_name);
@@ -765,6 +792,7 @@ impl eframe::App for InkApp {
             self.paint_shortcuts(ui);
             self.project_shortcuts(ui, &rs);
             self.export_shortcut(ui);
+            self.baking_shortcut(ui);
         }
         self.reset_hover();
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui, &rs));
@@ -797,6 +825,7 @@ impl eframe::App for InkApp {
         self.validate_selection();
         self.project_dialogs(ui, &rs);
         self.export_window(ui, &rs);
+        self.baking_window(ui, &rs);
         self.about_dialog(ui);
         self.update_title(ui);
         if std::mem::take(&mut self.quit_requested) {

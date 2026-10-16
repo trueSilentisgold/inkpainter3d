@@ -103,6 +103,10 @@ pub(super) struct ProjectState {
     pub recent: Vec<PathBuf>,
     /// The export window's settings, saved with the project.
     pub export: ExportSettings,
+    /// The baking window's settings, saved with the project.
+    pub bake: ink_core::BakeSettings,
+    /// Counts bakes, which are no undo steps but change what a save writes.
+    pub bakes: u64,
     title: String,
 }
 
@@ -124,6 +128,8 @@ impl Default for ProjectState {
             configuration: None,
             recent: load_recent(),
             export: ExportSettings::default(),
+            bake: Default::default(),
+            bakes: 0,
             title: String::new(),
         }
     }
@@ -191,6 +197,22 @@ impl InkApp {
             export.bit_depth,
             export.padding,
             export.dilation,
+        )
+            .hash(&mut hasher);
+        let bake = &self.project.bake;
+        (
+            &bake.maps.iter().map(|m| m.key()).collect::<Vec<_>>(),
+            bake.subsampling,
+            bake.dilation,
+            bake.front_distance.to_bits(),
+            bake.rear_distance.to_bits(),
+            bake.ao_rays,
+            bake.ao_distance.to_bits(),
+            bake.thickness_rays,
+            bake.thickness_distance.to_bits(),
+            bake.curvature_radius.to_bits(),
+            &bake.high_poly,
+            self.project.bakes,
         )
             .hash(&mut hasher);
         (self.history.state(), hasher.finish())
@@ -334,6 +356,7 @@ impl InkApp {
                     source,
                     view,
                     export,
+                    bake,
                 } = project;
                 self.status = format!(
                     "Opened {} ({} texture sets)",
@@ -345,6 +368,7 @@ impl InkApp {
                     self.apply_view_state(rs, &view);
                 }
                 self.project.export = export.unwrap_or_default();
+                self.project.bake = bake.unwrap_or_default();
                 self.project.path = Some(path.clone());
                 self.project.source = source;
                 self.project.images = images;
@@ -429,6 +453,7 @@ impl InkApp {
             source: self.project.source.clone(),
             view: Some(self.view_state()),
             export: Some(self.project.export.clone()),
+            bake: Some(self.project.bake.clone()),
         };
         let mut images = std::mem::take(&mut self.project.images);
         let file = path.clone();
@@ -807,7 +832,7 @@ impl InkApp {
             ui.set_width(460.0);
             ui.heading("New project");
             ui.add_space(8.0);
-            theme::property_grid("new project grid").show(ui, |ui| {
+            theme::property_grid(ui, "new project grid").show(ui, |ui| {
                 ui.label("File");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -863,7 +888,7 @@ impl InkApp {
             ui.set_width(420.0);
             ui.heading("Project configuration");
             ui.add_space(8.0);
-            theme::property_grid("project configuration grid").show(ui, |ui| {
+            theme::property_grid(ui, "project configuration grid").show(ui, |ui| {
                 ui.label("Mesh");
                 ui.label(self.project.source.as_deref().unwrap_or("—"));
                 ui.end_row();
@@ -1032,7 +1057,7 @@ pub(super) fn config_dir() -> Option<PathBuf> {
 
 /// Where data goes: `~/.local/share/inkpainter3d` on Linux, `%LOCALAPPDATA%\inkpainter3d`
 /// on Windows.
-fn data_dir() -> Option<PathBuf> {
+pub(super) fn data_dir() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else {

@@ -19,8 +19,8 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use ink_core::export::{ExportBlock, ExportTexel};
 use ink_core::{
-    BlendMode, Channel, ChannelKind, Content, EffectKind, Layer, LayerStack, Mask, Model,
-    Projection, ProjectionMode, Texels, TextureImage,
+    BlendMode, Channel, ChannelKind, Content, EffectKind, Layer, LayerStack, Mask, MeshMap,
+    MeshMaps, Model, Projection, ProjectionMode, Texels, TextureImage,
 };
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -134,6 +134,20 @@ struct GeometryUniforms {
     bounds: [f32; 4],
 }
 
+/// The mesh maps generators can read, in the order of their bindings (5 and up).
+const MAP_SLOTS: [MeshMap; 5] = [
+    MeshMap::AmbientOcclusion,
+    MeshMap::Curvature,
+    MeshMap::WorldNormal,
+    MeshMap::Position,
+    MeshMap::Thickness,
+];
+
+/// The mesh maps of a texture set that generators read.
+fn map_slots(maps: &MeshMaps) -> [Option<Arc<TextureImage>>; MAP_SLOTS.len()] {
+    MAP_SLOTS.map(|m| maps.get(m).cloned())
+}
+
 /// A texture the compositor works with, by role.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tex {
@@ -156,6 +170,7 @@ enum Pipe {
     MaskPaint,
     MaskEffect,
     MaskLevels,
+    MaskGenerator,
 }
 
 /// One step of compositing a chunk.
@@ -188,6 +203,8 @@ struct Program {
     saves: usize,
     masks: usize,
     triplanar: bool,
+    /// The mesh maps generators read, by [`MAP_SLOTS`].
+    maps: [Option<Arc<TextureImage>>; MAP_SLOTS.len()],
 }
 
 /// Builds a [`Program`] from a layer stack.
@@ -199,10 +216,12 @@ struct Builder<'a> {
     current: Vec<usize>,
     mask_slots: HashMap<u64, usize>,
     save_level: usize,
+    maps: [Option<Arc<TextureImage>>; MAP_SLOTS.len()],
 }
 
 impl Builder<'_> {
     fn build(mut self, stack: &LayerStack) -> Program {
+        self.program.maps = self.maps.clone();
         self.collect_masks(&stack.layers);
         for channel in Channel::ALL {
             self.current = vec![0];
@@ -315,6 +334,21 @@ impl Builder<'_> {
                         None,
                         image.map(|i| (i, false)),
                     );
+                }
+                EffectKind::Generator(generator) => {
+                    // Which mesh maps exist, so the shader can fall back where one is missing.
+                    let present = self
+                        .maps
+                        .iter()
+                        .enumerate()
+                        .fold(0u32, |bits, (i, m)| bits | (u32::from(m.is_some()) << i));
+                    uniforms.info[3] = generator.kind.code() | (present << 8);
+                    let v = &generator.values;
+                    uniforms.value = [v[0], v[1], v[2], v[3]];
+                    uniforms.transform = [v[4], v[5], v[6], v[7]];
+                    uniforms.offset = [v[8], v[9], v[10], v[11]];
+                    uniforms.levels = [v[12], v[13], v[14], v[15]];
+                    push(self, Pipe::MaskGenerator, uniforms, None, None);
                 }
                 EffectKind::Levels(levels) => {
                     uniforms.levels = [
@@ -787,6 +821,7 @@ enum PipeMask {
     Paint,
     Effect,
     Levels,
+    Generator,
 }
 
 impl Pipe {
@@ -799,6 +834,7 @@ impl Pipe {
             Self::MaskPaint => PipeKey::Mask(PipeMask::Paint),
             Self::MaskEffect => PipeKey::Mask(PipeMask::Effect),
             Self::MaskLevels => PipeKey::Mask(PipeMask::Levels),
+            Self::MaskGenerator => PipeKey::Mask(PipeMask::Generator),
         }
     }
 }
@@ -811,7 +847,14 @@ impl Compositor {
                 source: wgpu::ShaderSource::Wgsl(source.into()),
             })
         };
-        let composite = module("composite", include_str!("composite.wgsl"));
+        let composite = module(
+            "composite",
+            &format!(
+                "{}\n{}",
+                include_str!("composite.wgsl"),
+                include_str!("generators.wgsl")
+            ),
+        );
         let resolve_shader = module("composite resolve", include_str!("composite_resolve.wgsl"));
         let geometry_shader = module(
             "composite geometry",
@@ -868,6 +911,12 @@ impl Compositor {
                 texture(2, float, d2, fragment),
                 texture(3, float, d2, fragment),
                 texture(4, float, d2, fragment),
+                // The mesh maps generators read.
+                texture(5, filterable, d2, fragment),
+                texture(6, filterable, d2, fragment),
+                texture(7, filterable, d2, fragment),
+                texture(8, filterable, d2, fragment),
+                texture(9, filterable, d2, fragment),
             ],
         );
         let pass_layout = layout(
@@ -982,6 +1031,7 @@ impl Compositor {
             (PipeMask::Paint, "fs_mask_paint"),
             (PipeMask::Effect, "fs_mask_effect"),
             (PipeMask::Levels, "fs_mask_levels"),
+            (PipeMask::Generator, "fs_mask_generator"),
         ] {
             let p = pipeline(
                 "composite mask",
@@ -1208,7 +1258,7 @@ impl Compositor {
     ) {
         let texture_set = &model.texture_sets[set];
         let size = state.resolution;
-        let signature = signature(&texture_set.stack);
+        let signature = signature(&texture_set.stack, &texture_set.mesh_maps);
         if state.signature != Some(signature) {
             state.signature = Some(signature);
             state.pending.fill(true);
@@ -1257,6 +1307,7 @@ impl Compositor {
             current: Vec::new(),
             mask_slots: HashMap::new(),
             save_level: 0,
+            maps: map_slots(&texture_set.mesh_maps),
         }
         .build(&texture_set.stack);
         if program.triplanar && state.triangles.is_none() {
@@ -1313,6 +1364,7 @@ impl Compositor {
             current: Vec::new(),
             mask_slots: HashMap::new(),
             save_level: 0,
+            maps: map_slots(&model.texture_sets[set].mesh_maps),
         }
         .build(&model.texture_sets[set].stack);
         if program.triplanar && state.triangles.is_none() {
@@ -1414,6 +1466,13 @@ impl Compositor {
         program: &Program,
     ) {
         let mut used = HashSet::new();
+        for image in program.maps.iter().flatten() {
+            let key = (image.id, false);
+            used.insert(key);
+            self.images
+                .entry(key)
+                .or_insert_with(|| upload_image(device, queue, image, false));
+        }
         for step in &program.steps {
             let Step::Pass(pass) = step else {
                 continue;
@@ -1499,31 +1558,41 @@ impl Compositor {
         } else {
             &self.dummy_geometry
         };
+        let mut static_entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&state.seeds),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&geometry[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&geometry[1]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&geometry[2]),
+            },
+        ];
+        for (i, map) in program.maps.iter().enumerate() {
+            static_entries.push(wgpu::BindGroupEntry {
+                binding: 5 + i as u32,
+                resource: wgpu::BindingResource::TextureView(match map {
+                    Some(image) => &self.images[&(image.id, false)],
+                    None => &self.dummy_image,
+                }),
+            });
+        }
         let static_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("composite static"),
             layout: &self.static_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&state.seeds),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.image_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&geometry[0]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&geometry[1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&geometry[2]),
-                },
-            ],
+            entries: &static_entries,
         });
         let pass_groups: Vec<wgpu::BindGroup> = passes
             .iter()
@@ -1652,6 +1721,7 @@ impl Compositor {
         let bounds = model.bounds();
         let extent = (bounds.max - bounds.min).max_element().max(1e-6);
         let center = (bounds.min + bounds.max) * 0.5;
+        let ratio = ((bounds.max - bounds.min) / extent).to_array();
 
         for rect in rects {
             let origin = [
@@ -1666,6 +1736,10 @@ impl Compositor {
                 uniforms.area[0] = origin[0];
                 uniforms.area[1] = origin[1];
                 uniforms.area[2] = state.resolution as i32;
+                if p.pipe == Pipe::MaskGenerator {
+                    // Noise in object space: the bounds relative to their largest side.
+                    uniforms.params[1..4].copy_from_slice(&ratio);
+                }
                 let offset = i * PASS_STRIDE as usize;
                 bytes[offset..offset + size_of::<PassUniforms>()]
                     .copy_from_slice(bytemuck::bytes_of(&uniforms));
@@ -2021,7 +2095,7 @@ fn split(rect: TexelRect, max: u32) -> Vec<TexelRect> {
 
 /// Hash of what in the stack shapes the composite, except the strokes, which the paint
 /// caches track.
-fn signature(stack: &LayerStack) -> u64 {
+fn signature(stack: &LayerStack, maps: &MeshMaps) -> u64 {
     let mut h = std::hash::DefaultHasher::new();
     fn floats(h: &mut impl Hasher, values: &[f32]) {
         for v in values {
@@ -2084,6 +2158,11 @@ fn signature(stack: &LayerStack) -> u64 {
                                 image(h, g.image.as_ref());
                                 projection(h, &g.projection);
                             }
+                            EffectKind::Generator(g) => {
+                                3u8.hash(h);
+                                g.kind.code().hash(h);
+                                floats(h, &g.values);
+                            }
                             EffectKind::Levels(l) => {
                                 2u8.hash(h);
                                 floats(h, &l.input);
@@ -2095,6 +2174,9 @@ fn signature(stack: &LayerStack) -> u64 {
                 }
             }
         }
+    }
+    for map in map_slots(maps) {
+        map.map(|m| m.id).hash(&mut h);
     }
     layers(&mut h, &stack.layers);
     h.finish()
@@ -2329,14 +2411,14 @@ mod tests {
     fn signatures_ignore_strokes_but_not_settings() {
         let mut ids = Ids::default();
         let mut stack = LayerStack::new_default(&mut ids);
-        let before = signature(&stack);
+        let before = signature(&stack, &MeshMaps::default());
         stack.layers[0].blending.get_mut(Channel::Roughness).opacity = 0.5;
-        assert_ne!(signature(&stack), before);
-        let changed = signature(&stack);
+        assert_ne!(signature(&stack, &MeshMaps::default()), before);
+        let changed = signature(&stack, &MeshMaps::default());
         stack
             .layers
             .push(Layer::new(LayerKind::Fill, "Fill layer 1".into(), &mut ids));
-        assert_ne!(signature(&stack), changed);
+        assert_ne!(signature(&stack, &MeshMaps::default()), changed);
     }
 
     #[test]

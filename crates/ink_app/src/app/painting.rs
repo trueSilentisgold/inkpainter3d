@@ -6,8 +6,9 @@ use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Key, PointerButton, RichText, Stroke as Line};
 use glam::{Vec2, Vec3};
 use ink_core::{
-    Alpha, AlphaImage, Brush, Channel, Command, Dab, PressureCurve, SizeSpace, Stroke, StrokePath,
-    StrokeSpace, Tool, snap_direction, surface_dab, uv_dab,
+    Alignment, Alpha, AlphaImage, Brush, Channel, Command, Dab, FillShape, PressureCurve,
+    SizeSpace, Stroke, StrokePath, StrokeSpace, Tool, shape_dabs, snap_direction, surface_dab,
+    uv_dab,
 };
 use std::sync::Arc;
 
@@ -34,6 +35,10 @@ pub struct PaintState {
     /// Settings per tool: Painter keeps them separately for Paint and Eraser.
     pub paint_brush: Brush,
     pub erase_brush: Brush,
+    /// The Polygon Fill tool is active instead of Paint or Eraser (Painter's 4).
+    pub fill_tool: bool,
+    pub stencil: super::stencil::StencilState,
+    pub fill_shape: FillShape,
     pub lazy_mouse: bool,
     /// Lazy mouse distance in percent of the view height (Painter's Distance).
     pub lazy_distance: f32,
@@ -52,6 +57,9 @@ impl Default for PaintState {
             tool: Tool::Paint,
             paint_brush: Brush::default(),
             erase_brush: Brush::default(),
+            fill_tool: false,
+            stencil: Default::default(),
+            fill_shape: FillShape::default(),
             lazy_mouse: false,
             lazy_distance: 8.0,
             alphas: Vec::new(),
@@ -156,6 +164,7 @@ impl InkApp {
                         * size_factor;
                     Some(surface_dab(
                         &hit,
+                        brush.alignment,
                         dir,
                         self.camera.up(),
                         brush.angle,
@@ -215,6 +224,9 @@ impl InkApp {
     ) {
         let events = ui.input(|i| i.events.clone());
         for event in events {
+            if self.stencil_event(ui, &event, rect, response.hovered(), view) {
+                continue;
+            }
             match event {
                 // Pens arrive as touches whose force is the pressure (see pen.rs).
                 egui::Event::Touch { phase, force, .. } => match phase {
@@ -236,7 +248,11 @@ impl InkApp {
                         continue;
                     }
                     let p = vec2(pos);
-                    if modifiers.command
+                    if self.paint.fill_tool {
+                        if button == PointerButton::Primary {
+                            self.fill_at(view, rect, p);
+                        }
+                    } else if modifiers.command
                         && !modifiers.shift
                         && matches!(button, PointerButton::Primary | PointerButton::Secondary)
                     {
@@ -319,6 +335,50 @@ impl InkApp {
         }
     }
 
+    /// Polygon Fill: fills what is under the pointer in the paint target.
+    fn fill_at(&mut self, view: View, rect: egui::Rect, p: Vec2) {
+        let Some((set, _)) = self.paint_target() else {
+            self.status = self.not_paintable_reason().to_owned();
+            return;
+        };
+        let origin = vec2(rect.min);
+        let size = Vec2::new(rect.width(), rect.height());
+        let triangle = match view {
+            View::Model => {
+                let (start, dir) = self.camera.ray(p - origin, size);
+                self.model.pick(start, dir).map(|hit| hit.triangle as u32)
+            }
+            View::Uv => {
+                let uv = self.uv_camera.to_uv(p - origin, size);
+                self.model.triangle_at_uv(set, uv)
+            }
+        };
+        let Some(triangle) = triangle else {
+            return;
+        };
+        let target = self.model.fill_target(self.paint.fill_shape, triangle);
+        if self.model.fill_triangles(&target, set).is_empty() {
+            self.status = "That part belongs to another texture set".to_owned();
+            return;
+        }
+        let brush = self.paint.paint_brush.clone();
+        let Some((set, paint, id)) = self.new_stroke(view, rect, &brush) else {
+            return;
+        };
+        if let Some(layer) = self.model.texture_sets[set].stack.paint_mut(paint)
+            && let Some(stroke) = layer.strokes.last_mut()
+        {
+            let stroke = Arc::make_mut(stroke);
+            stroke.tool = Tool::Paint;
+            stroke.space = StrokeSpace::Surface;
+            stroke.camera = None;
+            stroke.backface_cos = -1.0;
+            stroke.fill = Some(target);
+            stroke.stencil = None;
+        }
+        self.history.record(Command::add_stroke(set, paint, id));
+    }
+
     /// Adds a stroke with the brush to the paint target.
     fn new_stroke(
         &mut self,
@@ -341,6 +401,7 @@ impl InkApp {
             },
             alpha: brush.alpha.clone(),
             hardness: brush.hardness,
+            alignment: brush.alignment,
             opacity: brush.opacity,
             backface_cos: brush.backface_cos(),
             material: brush.material,
@@ -354,6 +415,8 @@ impl InkApp {
             hidden_sets: (0..self.model.texture_sets.len())
                 .filter(|&s| !self.model.texture_sets[s].visible)
                 .collect(),
+            fill: None,
+            stencil: self.stroke_stencil(view, rect),
             dabs: Vec::new(),
         };
         let id = stroke.id;
@@ -365,8 +428,19 @@ impl InkApp {
         Some((set, paint, id))
     }
 
-    fn push_dabs(&mut self, set: usize, paint: u64, id: u64, dabs: Vec<Dab>) {
+    /// Adds dabs to the stroke after Follow Path and Jitter shaped them.
+    fn push_dabs(&mut self, set: usize, paint: u64, id: u64, brush: &Brush, mut dabs: Vec<Dab>) {
         if let Some(layer) = self.model.texture_sets[set].stack.paint_mut(paint) {
+            if let Some(stroke) = layer.strokes.last().filter(|s| s.id == id) {
+                shape_dabs(
+                    brush,
+                    stroke.space,
+                    id,
+                    stroke.dabs.len(),
+                    stroke.dabs.last().copied(),
+                    &mut dabs,
+                );
+            }
             layer.extend_stroke(id, dabs);
         }
     }
@@ -389,7 +463,7 @@ impl InkApp {
                 &mut dabs,
             )
         };
-        self.push_dabs(set, paint, id, dabs);
+        self.push_dabs(set, paint, id, &brush, dabs);
         self.paint.stroke = Some(ActiveStroke {
             view,
             set,
@@ -411,7 +485,8 @@ impl InkApp {
                 .path
                 .move_to(p, self.paint.pressure, &project, &mut dabs);
         }
-        self.push_dabs(active.set, active.paint, active.id, dabs);
+        let brush = active.brush.clone();
+        self.push_dabs(active.set, active.paint, active.id, &brush, dabs);
         self.paint.stroke = Some(active);
     }
 
@@ -459,7 +534,7 @@ impl InkApp {
                 StrokePath::start(from, pressure, brush.spacing, 0.0, &project, &mut dabs);
             path.line_to(to, pressure, &project, &mut dabs);
         }
-        self.push_dabs(set, paint, id, dabs);
+        self.push_dabs(set, paint, id, &brush, dabs);
         self.finish_stroke(set, paint, id);
     }
 
@@ -511,6 +586,7 @@ impl InkApp {
     /// Tool and brush shortcuts: 1 Paint, 2 Eraser, [ and ] size, D lazy mouse, X inverts
     /// the grayscale painted into masks, Ctrl+Z / Ctrl+Y undo and redo.
     pub(super) fn paint_shortcuts(&mut self, ui: &egui::Ui) {
+        self.paint.stencil.ignore = ui.input(|i| i.key_down(Key::N));
         if ui.ctx().text_edit_focused() {
             return;
         }
@@ -539,9 +615,14 @@ impl InkApp {
         }
         if pressed(Key::Num1) {
             self.paint.tool = Tool::Paint;
+            self.paint.fill_tool = false;
         }
         if pressed(Key::Num2) {
             self.paint.tool = Tool::Erase;
+            self.paint.fill_tool = false;
+        }
+        if pressed(Key::Num4) {
+            self.paint.fill_tool = true;
         }
         if pressed(Key::D) {
             self.paint.lazy_mouse = !self.paint.lazy_mouse;
@@ -562,6 +643,17 @@ impl InkApp {
         };
         let modifiers = ui.input(|i| i.modifiers);
         let painter = ui.painter_at(rect);
+        if self.paint.fill_tool {
+            if rect.contains(pointer) && !modifiers.alt {
+                theme::overlay_text(
+                    &painter,
+                    pointer + egui::vec2(14.0, -14.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    &format!("Fill: {}", self.paint.fill_shape.label()),
+                );
+            }
+            return;
+        }
         let active = self.paint.stroke.as_ref().filter(|s| s.view == view);
         if !rect.contains(pointer) && active.is_none() {
             return;
@@ -636,7 +728,15 @@ impl InkApp {
                 let radius = brush
                     .world_radius(self.model_size(), self.camera.view_height_at(hit.position))
                     * size_factor;
-                let dab = surface_dab(&hit, dir, self.camera.up(), brush.angle, radius, 1.0);
+                let dab = surface_dab(
+                    &hit,
+                    brush.alignment,
+                    dir,
+                    self.camera.up(),
+                    brush.angle,
+                    radius,
+                    1.0,
+                );
                 let right = dab.up.cross(dab.normal);
                 (0..=64)
                     .filter_map(|i| {
@@ -693,7 +793,16 @@ impl InkApp {
                     .clicked()
                 {
                     self.paint.tool = tool;
+                    self.paint.fill_tool = false;
                 }
+            }
+            let icon = egui::Image::new(icons::TOOL_POLYGON_FILL)
+                .fit_to_exact_size(egui::Vec2::splat(theme::TOOL_ICON));
+            let button = egui::Button::selectable(self.paint.fill_tool, icon)
+                .image_tint_follows_text_color(true)
+                .min_size(egui::vec2(34.0, 34.0));
+            if ui.add(button).on_hover_text("Polygon fill (4)").clicked() {
+                self.paint.fill_tool = true;
             }
         });
     }
@@ -701,6 +810,26 @@ impl InkApp {
     /// Painter's contextual tool bar above the views: the tool, then its brush settings.
     pub(super) fn tool_bar(&mut self, ui: &mut egui::Ui) {
         let paint = &mut self.paint;
+        if paint.fill_tool {
+            ui.horizontal(|ui| {
+                ui.add(theme::icon(
+                    icons::TOOL_POLYGON_FILL,
+                    theme::ICON,
+                    theme::TEXT_STRONG,
+                ));
+                ui.label(
+                    RichText::new("Polygon fill")
+                        .font(theme::medium(13.0))
+                        .color(theme::TEXT_STRONG),
+                );
+                ui.separator();
+                fill_shape_combo(ui, &mut paint.fill_shape);
+                ui.separator();
+                bar_label(ui, "Stroke opacity");
+                percent(ui, &mut paint.paint_brush.opacity, 0.0..=100.0);
+            });
+            return;
+        }
         // Which groups start behind a separator.
         const SEPARATED: [bool; 7] = [false, true, false, false, false, true, true];
         bar_rows(ui, &SEPARATED, |ui, group| match group {
@@ -778,14 +907,34 @@ impl InkApp {
 
     /// The Properties panel for the current tool: brush, alpha and material.
     pub(super) fn properties_panel(&mut self, ui: &mut egui::Ui) {
-        let tool = self.paint.tool;
         let grayscale = self.paints_grayscale();
+        if self.paint.fill_tool {
+            theme::group(ui, "Polygon fill", true, |ui| {
+                theme::property_grid(ui, "polygon fill").show(ui, |ui| {
+                    ui.label("Fill");
+                    fill_shape_combo(ui, &mut self.paint.fill_shape);
+                    ui.end_row();
+                    ui.label("Stroke opacity");
+                    percent_slider(ui, &mut self.paint.paint_brush.opacity, 0.0..=100.0);
+                    ui.end_row();
+                });
+            });
+            Self::material_section(
+                ui,
+                Tool::Paint,
+                grayscale,
+                &mut self.paint.paint_brush.material,
+            );
+            return;
+        }
+        self.preset_group(ui);
+        let tool = self.paint.tool;
         let mut load_alpha = false;
         let alphas = self.paint.alphas.clone();
         let brush = self.paint.brush_mut();
 
         theme::group(ui, "Brush", true, |ui| {
-            theme::property_grid("brush").show(ui, |ui| {
+            theme::property_grid(ui, "brush").show(ui, |ui| {
                 ui.label("Size");
                 ui.horizontal(|ui| {
                     ui.add(
@@ -834,6 +983,21 @@ impl InkApp {
                 ui.label("Angle");
                 ui.add(egui::Slider::new(&mut brush.angle, 0.0..=360.0).suffix("°"));
                 ui.end_row();
+                ui.label("Follow path");
+                ui.checkbox(&mut brush.follow_path, "")
+                    .on_hover_text("Turn the alpha towards the direction of the stroke");
+                ui.end_row();
+                ui.label("Alignment");
+                egui::ComboBox::from_id_salt("alignment")
+                    .selected_text(brush.alignment.label())
+                    .show_ui(ui, |ui| {
+                        for alignment in Alignment::ALL {
+                            ui.selectable_value(&mut brush.alignment, alignment, alignment.label());
+                        }
+                    })
+                    .response
+                    .on_hover_text("How the tip is projected onto the model (3D view)");
+                ui.end_row();
                 ui.label("Backface culling");
                 ui.checkbox(&mut brush.backface_culling, "");
                 ui.end_row();
@@ -855,8 +1019,23 @@ impl InkApp {
             });
         });
 
+        theme::group(ui, "Jitter", false, |ui| {
+            theme::property_grid(ui, "jitter").show(ui, |ui| {
+                for (label, value) in [
+                    ("Size", &mut brush.jitter.size),
+                    ("Flow", &mut brush.jitter.flow),
+                    ("Angle", &mut brush.jitter.angle),
+                    ("Position", &mut brush.jitter.position),
+                ] {
+                    ui.label(label);
+                    percent_slider(ui, value, 0.0..=100.0);
+                    ui.end_row();
+                }
+            });
+        });
+
         theme::group(ui, "Alpha", false, |ui| {
-            theme::property_grid("alpha").show(ui, |ui| {
+            theme::property_grid(ui, "alpha").show(ui, |ui| {
                 ui.label("Shape");
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("alpha")
@@ -882,13 +1061,31 @@ impl InkApp {
             });
         });
 
-        let material = &mut brush.material;
+        Self::material_section(ui, tool, grayscale, &mut brush.material);
+        self.stencil_group(ui);
+
+        if load_alpha
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Alpha images", ink_io::ALPHA_EXTENSIONS)
+                .pick_file()
+        {
+            self.load_alpha(&path);
+        }
+    }
+
+    /// The grayscale value (masks) or the channels and values (layers) a tool paints.
+    fn material_section(
+        ui: &mut egui::Ui,
+        tool: Tool,
+        grayscale: bool,
+        material: &mut ink_core::BrushMaterial,
+    ) {
         if grayscale {
             // Masks and their paint effects hold one grayscale value; the eraser just
             // takes paint away.
             if tool == Tool::Paint {
                 theme::group_label(ui, "GRAYSCALE");
-                theme::property_grid("grayscale").show(ui, |ui| {
+                theme::property_grid(ui, "grayscale").show(ui, |ui| {
                     ui.label("Value");
                     ui.horizontal(|ui| {
                         ui.add(egui::Slider::new(&mut material.grayscale, 0.0..=1.0));
@@ -917,19 +1114,11 @@ impl InkApp {
                 Self::material_grid(ui, tool, material)
             });
         }
-
-        if load_alpha
-            && let Some(path) = rfd::FileDialog::new()
-                .add_filter("Alpha images", ink_io::ALPHA_EXTENSIONS)
-                .pick_file()
-        {
-            self.load_alpha(&path);
-        }
     }
 
     /// Channel toggles and values of the brush material.
     fn material_grid(ui: &mut egui::Ui, tool: Tool, material: &mut ink_core::BrushMaterial) {
-        theme::property_grid("material").show(ui, |ui| {
+        theme::property_grid(ui, "material").show(ui, |ui| {
             for channel in Channel::ALL {
                 let on = material.channels.contains(channel);
                 if theme::chip(ui, on, channel.label())
@@ -975,6 +1164,17 @@ fn tool_look(tool: Tool) -> (egui::ImageSource<'static>, &'static str) {
         Tool::Paint => (icons::TOOL_PAINT, "Paint"),
         Tool::Erase => (icons::TOOL_ERASER, "Eraser"),
     }
+}
+
+fn fill_shape_combo(ui: &mut egui::Ui, shape: &mut FillShape) {
+    egui::ComboBox::from_id_salt("fill shape")
+        .selected_text(shape.label())
+        .width(theme::fit_width(ui, 110.0, 8.0))
+        .show_ui(ui, |ui| {
+            for choice in FillShape::ALL {
+                ui.selectable_value(shape, choice, choice.label());
+            }
+        });
 }
 
 fn pressure_toggle(ui: &mut egui::Ui, on: &mut bool, hint: &str) {

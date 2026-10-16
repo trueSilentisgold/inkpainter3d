@@ -29,6 +29,24 @@
 //! `only=Name` (shows only this texture set after painting). `2d` renders the 2D (UV) view
 //! of the painted texture set instead.
 //!
+//! `align=wrap|planar|camera` (the brush's alignment), `follow` (Follow Path), `jitter=0.5`
+//! (all four jitter amounts) and `angle=30` apply to those strokes.
+//!
+//! `polyfill=triangle|polygon|mesh|island` fills what the middle of the view shows with a
+//! Polygon Fill stroke (blue), after the other strokes.
+//!
+//! `stencil=half` paints the strokes through a stencil whose left half is white and whose
+//! right half is black, centered in the view.
+//!
+//! Baking: `bake=ao,curvature,...` (keys of `MeshMap::key`, or `all`) bakes mesh maps of the
+//! texture set (`set=Name`, else the first) and writes them as PNGs into `<out>.bake/`;
+//! `bakehigh=file.obj` is the high-poly, `rays=16`, `sub=2`, `dilation=8`, `front=0.1` and `rear=0.1` tune it, and
+//! `bprobe=map,x,y` prints a texel as `bprobe map x y r g b` (8 bits).
+//!
+//! Generators: `generator=edge_wear` (a `GeneratorKind::key`) puts a red fill layer with a black
+//! mask holding that generator on top; `gparam=key:value` (may be given several times) sets
+//! its parameters. Bake the mesh maps it reads in the same run with `bake=`.
+//!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
 //!
@@ -44,9 +62,9 @@ use anyhow::{Context, Result};
 use glam::Vec2;
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, MapImage, Padding, Template};
 use ink_core::{
-    Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect, EffectKind,
-    Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath, StrokeSpace,
-    Tool, surface_dab, uv_dab,
+    Alignment, Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect,
+    EffectKind, Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath,
+    StrokeSpace, Tool, shape_dabs, surface_dab, uv_dab,
 };
 use ink_render::{
     DisplayMode, Highlight, OrbitCamera, ShadingMode, UvCamera, UvView, ViewportRenderer,
@@ -104,6 +122,9 @@ fn main() -> Result<()> {
             set.resolution = res;
         }
     }
+    if let Some(spec) = option("bake") {
+        bake_maps(&device, &queue, &mut model, &args[3..], spec, out_path)?;
+    }
     renderer.set_model(&device, &queue, &model);
 
     let mut camera = OrbitCamera::default();
@@ -116,6 +137,22 @@ fn main() -> Result<()> {
         size: float("size")?.unwrap_or(8.0),
         hardness: float("hardness")?.unwrap_or(0.8),
         backface_culling: !flag("nocull"),
+        angle: float("angle")?.unwrap_or(0.0),
+        follow_path: flag("follow"),
+        jitter: {
+            let j = float("jitter")?.unwrap_or(0.0);
+            ink_core::Jitter {
+                size: j,
+                flow: j,
+                angle: j,
+                position: j,
+            }
+        },
+        alignment: match option("align") {
+            Some("planar") => Alignment::TangentPlanar,
+            Some("camera") => Alignment::Camera,
+            _ => Alignment::TangentWrap,
+        },
         alpha: match option("tip") {
             Some("square") => Alpha::Square,
             _ => Alpha::Round,
@@ -175,6 +212,27 @@ fn main() -> Result<()> {
         None => center.map_or(0, |hit| model.parts[hit.part].texture_set),
     };
     let target = build_stack(&mut model, set, &option, &flag)?;
+    if let Some(key) = option("generator") {
+        let kind = ink_core::GeneratorKind::from_key(key)
+            .with_context(|| format!("unknown generator {key}"))?;
+        let mut generator = ink_core::Generator::new(kind);
+        for a in &args[3..] {
+            if let Some((k, v)) = a.strip_prefix("gparam=").and_then(|p| p.split_once(':')) {
+                generator.set(k, v.parse()?);
+            }
+        }
+        let mut layer = Layer::new(LayerKind::Fill, "Generator".into(), &mut model.ids);
+        if let Content::Fill(fill) = &mut layer.content {
+            fill.values.base_color = [0.9, 0.1, 0.1];
+        }
+        let mut mask = Mask::new(0.0, model.next_id());
+        mask.effects.push(Effect::new(
+            model.next_id(),
+            EffectKind::Generator(generator),
+        ));
+        layer.mask = Some(mask);
+        model.texture_sets[set].stack.layers.push(layer);
+    }
     for layer in model.texture_sets[set].stack.iter() {
         let b = layer.blending.get(Channel::BaseColor);
         eprintln!(
@@ -202,6 +260,7 @@ fn main() -> Result<()> {
                 let radius = brush.world_radius(model_radius, camera.view_height_at(hit.position));
                 Some(surface_dab(
                     &hit,
+                    brush.alignment,
                     dir,
                     camera.up(),
                     brush.angle,
@@ -222,12 +281,35 @@ fn main() -> Result<()> {
             model.texture_sets[set].name,
             dabs.len()
         );
+        let stroke_id = model.next_id();
+        let stencil =
+            (option("stencil") == Some("half") && space == StrokeSpace::Surface).then(|| {
+                let image = Arc::new(ink_core::AlphaImage::new(
+                    "half".into(),
+                    64,
+                    32,
+                    (0..64 * 32)
+                        .map(|i| if i % 64 < 32 { 255 } else { 0 })
+                        .collect(),
+                ));
+                let stencil = ink_core::Stencil {
+                    image: Some(image.clone()),
+                    size: 1.2,
+                    ..Default::default()
+                };
+                ink_core::StrokeStencil {
+                    image,
+                    affine: stencil.view_affine().unwrap(),
+                }
+            });
+        shape_dabs(&brush, space, stroke_id, 0, None, &mut dabs);
         let stroke = Stroke {
-            id: model.next_id(),
+            id: stroke_id,
             tool,
             space,
             alpha: brush.alpha.clone(),
             hardness: brush.hardness,
+            alignment: brush.alignment,
             opacity: brush.opacity,
             backface_cos: brush.backface_cos(),
             material,
@@ -235,9 +317,11 @@ fn main() -> Result<()> {
                 .then(|| camera.stroke_camera(view.x / view.y)),
             hidden_objects: Vec::new(),
             hidden_sets: Vec::new(),
+            fill: None,
+            stencil,
             dabs: Vec::new(),
         };
-        let (stroke_id, paint) = (stroke.id, target);
+        let paint = target;
         let layer = model.texture_sets[set].stack.paint_mut(paint).unwrap();
         layer.strokes.push(std::sync::Arc::new(stroke));
         for chunk in dabs.chunks(live) {
@@ -246,12 +330,43 @@ fn main() -> Result<()> {
             renderer.sync_texture_sets(&device, &queue, &model, true);
         }
     }
+    if let (Some(shape), Some(hit)) = (option("polyfill"), &center) {
+        let shape = match shape {
+            "triangle" => ink_core::FillShape::Triangle,
+            "mesh" => ink_core::FillShape::Mesh,
+            "island" => ink_core::FillShape::UvIsland,
+            _ => ink_core::FillShape::Polygon,
+        };
+        let mut material = BrushMaterial::default();
+        material.values.base_color = [0.1, 0.3, 1.0];
+        let stroke = Stroke {
+            id: model.next_id(),
+            tool: Tool::Paint,
+            space: StrokeSpace::Surface,
+            alpha: Alpha::Round,
+            hardness: 1.0,
+            alignment: Alignment::TangentWrap,
+            opacity: 1.0,
+            backface_cos: -1.0,
+            material,
+            camera: None,
+            hidden_objects: Vec::new(),
+            hidden_sets: Vec::new(),
+            fill: Some(model.fill_target(shape, hit.triangle as u32)),
+            stencil: None,
+            dabs: Vec::new(),
+        };
+        let layer = model.texture_sets[set].stack.paint_mut(target).unwrap();
+        layer.strokes.push(std::sync::Arc::new(stroke));
+        renderer.sync_texture_sets(&device, &queue, &model, true);
+    }
     if let Some(path) = option("save") {
         let project = ink_io::project::Project {
             model: model.clone(),
             source: None,
             view: None,
             export: None,
+            bake: None,
         };
         ink_io::project::save(Path::new(path), &project, &mut Default::default())?;
         eprintln!("Saved {path}");
@@ -441,6 +556,110 @@ fn main() -> Result<()> {
 
 /// Builds the texture set's layer stack from the options. Returns the paint layer the
 /// strokes go into.
+fn bake_maps(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    model: &mut Model,
+    args: &[String],
+    spec: &str,
+    out_path: &str,
+) -> Result<()> {
+    use ink_core::{BakeSettings, HighPoly, MeshMap, Texels};
+    let option = |key: &str| {
+        args.iter()
+            .find_map(|a| a.strip_prefix(key)?.strip_prefix('='))
+    };
+    let mut settings = BakeSettings::default();
+    if spec != "all" {
+        settings.maps = spec.split(',').filter_map(MeshMap::from_key).collect();
+    }
+    if let Some(rays) = option("rays") {
+        settings.ao_rays = rays.parse()?;
+        settings.thickness_rays = settings.ao_rays;
+    }
+    if let Some(sub) = option("sub") {
+        settings.subsampling = sub.parse()?;
+    }
+    if let Some(dilation) = option("dilation") {
+        settings.dilation = dilation.parse()?;
+    }
+    if let Some(front) = option("front") {
+        settings.front_distance = front.parse()?;
+    }
+    if let Some(rear) = option("rear") {
+        settings.rear_distance = rear.parse()?;
+    }
+    let high = option("bakehigh")
+        .map(|path| ink_io::load_model(Path::new(path)).map(|m| HighPoly::from_model(&m)))
+        .transpose()?;
+    let set = match option("set") {
+        Some(name) => model
+            .texture_sets
+            .iter()
+            .position(|s| s.name.starts_with(name))
+            .with_context(|| format!("no texture set {name}"))?,
+        None => 0,
+    };
+    let baker = ink_render::bake::Baker::new(device);
+    let started = std::time::Instant::now();
+    let maps = baker
+        .bake(
+            device,
+            queue,
+            &ink_render::bake::BakeJob {
+                model,
+                set,
+                settings: &settings,
+                high: high.as_ref(),
+            },
+            &mut |_| true,
+        )
+        .map_err(anyhow::Error::msg)?;
+    eprintln!("Baked {} maps in {:.2?}", maps.len(), started.elapsed());
+    let dir = format!("{out_path}.bake");
+    std::fs::create_dir_all(&dir)?;
+    let probes: Vec<(String, u32, u32)> = args
+        .iter()
+        .filter_map(|a| {
+            let v = a.strip_prefix("bprobe=")?.to_owned();
+            let mut parts = v.split(',');
+            Some((
+                parts.next()?.to_owned(),
+                parts.next()?.parse().ok()?,
+                parts.next()?.parse().ok()?,
+            ))
+        })
+        .collect();
+    for (map, image) in maps {
+        let Texels::Rgba16(texels) = &image.texels else {
+            continue;
+        };
+        let rgba8: Vec<u8> = texels.iter().map(|&v| (v >> 8) as u8).collect();
+        image::save_buffer(
+            format!("{dir}/{}.png", map.key()),
+            &rgba8,
+            image.width,
+            image.height,
+            image::ExtendedColorType::Rgba8,
+        )?;
+        for (name, x, y) in &probes {
+            if name == map.key() {
+                let i = ((y * image.width + x) * 4) as usize;
+                println!(
+                    "bprobe {name} {x} {y} {} {} {}",
+                    rgba8[i],
+                    rgba8[i + 1],
+                    rgba8[i + 2]
+                );
+            }
+        }
+        model.texture_sets[set]
+            .mesh_maps
+            .insert(map, Arc::new(image));
+    }
+    Ok(())
+}
+
 fn build_stack<'a>(
     model: &mut Model,
     set: usize,

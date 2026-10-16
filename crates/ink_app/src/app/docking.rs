@@ -19,16 +19,18 @@ pub(super) enum Tab {
     Properties,
     TextureSetSettings,
     Display,
+    Shelf,
 }
 
 impl Tab {
     /// The panels that can be shown and hidden from the Window menu.
-    pub(super) const PANELS: [Self; 5] = [
+    pub(super) const PANELS: [Self; 6] = [
         Self::TextureSetList,
         Self::Layers,
         Self::Properties,
         Self::TextureSetSettings,
         Self::Display,
+        Self::Shelf,
     ];
 
     pub(super) fn title(self) -> &'static str {
@@ -39,6 +41,7 @@ impl Tab {
             Self::Properties => "Properties",
             Self::TextureSetSettings => "Texture set settings",
             Self::Display => "Display settings",
+            Self::Shelf => "Shelf",
         }
     }
 }
@@ -48,7 +51,8 @@ impl Tab {
 pub(super) fn default_layout() -> DockState<Tab> {
     let mut state = DockState::new(vec![Tab::Viewport]);
     let tree = state.main_surface_mut();
-    let [_, right] = tree.split_right(NodeIndex::root(), 0.72, vec![Tab::TextureSetList]);
+    let [left, right] = tree.split_right(NodeIndex::root(), 0.72, vec![Tab::TextureSetList]);
+    tree.split_below(left, 0.74, vec![Tab::Shelf]);
     let [_, layers] = tree.split_below(right, 0.16, vec![Tab::Layers]);
     tree.split_below(
         layers,
@@ -112,11 +116,13 @@ impl TabViewer for Viewer<'_> {
             Tab::TextureSetList => self.app.texture_set_list(ui),
             Tab::Layers => {
                 self.app.layer_stack_panel(ui);
+                self.app.shelf_drop_on_layers(ui);
                 self.app.layers_hovered = ui.rect_contains_pointer(ui.max_rect());
             }
             Tab::Properties => self.app.properties_section(ui),
             Tab::TextureSetSettings => self.app.texture_set_settings(ui),
             Tab::Display => self.app.display_settings(ui, self.rs),
+            Tab::Shelf => self.app.shelf_panel(ui),
         }
     }
 
@@ -146,10 +152,14 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn scroll_bars(&self, tab: &Tab) -> [bool; 2] {
-        // The viewport paints its own area; the panels scroll vertically.
+        // The viewport paints its own area; the panels scroll vertically. Not sideways: their
+        // content adapts to the width it gets.
         [false, *tab != Tab::Viewport]
     }
 }
+
+/// The smallest width or height, in points, a panel can be dragged to.
+const MIN_PANEL_SIZE: f32 = 240.0;
 
 impl InkApp {
     /// Shows the dock in the space left by the menu, tool bars and status bar.
@@ -165,6 +175,8 @@ impl InkApp {
         style.tab.tab_body.stroke = egui::Stroke::NONE;
         style.tab.tab_body.bg_fill = theme::PANEL;
         style.tab.tab_body.corner_radius = egui::CornerRadius::ZERO;
+        // Panels can't be dragged narrower or lower than this; their content wraps below it.
+        style.separator.extra = MIN_PANEL_SIZE;
         style.separator.color_idle = theme::BORDER;
         style.separator.color_hovered = theme::OLIVE;
         style.separator.color_dragged = theme::OLIVE;

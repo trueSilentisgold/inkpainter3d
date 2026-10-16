@@ -1,7 +1,7 @@
 //! Brush strokes stored as data. The pixels are computed from these on the GPU, so strokes
 //! can be painted again at any texture resolution.
 
-use crate::brush::{Alpha, BrushMaterial, Tool};
+use crate::brush::{Alignment, Alpha, Brush, BrushMaterial, Rng, Tool};
 use glam::{Mat4, Vec2, Vec3};
 use std::sync::Arc;
 
@@ -75,6 +75,8 @@ pub struct Stroke {
     pub space: StrokeSpace,
     pub alpha: Alpha,
     pub hardness: f32,
+    /// How the tip projects onto the model; only surface strokes use it.
+    pub alignment: Alignment,
     /// Maximum opacity of the whole stroke, 0 to 1.
     pub opacity: f32,
     /// Cosine of the brush's backface culling angle.
@@ -86,6 +88,10 @@ pub struct Stroke {
     pub hidden_objects: Vec<usize>,
     /// Texture sets that were hidden while painting: they get no paint and hide nothing.
     pub hidden_sets: Vec<usize>,
+    /// A Polygon Fill stroke covers these triangles completely and has no dabs.
+    pub fill: Option<crate::FillTarget>,
+    /// The stencil the stroke was painted through.
+    pub stencil: Option<crate::StrokeStencil>,
     pub dabs: Vec<Dab>,
 }
 
@@ -256,13 +262,18 @@ impl LazyMouse {
 /// upright on screen before `angle` (degrees, counter-clockwise) rotates it.
 pub fn surface_dab(
     hit: &crate::Hit,
+    alignment: Alignment,
     ray_dir: Vec3,
     camera_up: Vec3,
     angle: f32,
     radius: f32,
     flow: f32,
 ) -> Dab {
-    let normal = hit.normal;
+    // Camera alignment stamps straight from the view, whatever the surface looks like.
+    let normal = match alignment {
+        Alignment::Camera => -ray_dir,
+        _ => hit.normal,
+    };
     let up = (camera_up - normal * camera_up.dot(normal))
         .try_normalize()
         .unwrap_or_else(|| normal.any_orthonormal_vector());
@@ -289,6 +300,54 @@ pub fn uv_dab(uv: Vec2, angle: f32, radius: f32, flow: f32) -> Dab {
         view: Vec3::NEG_Z,
         radius,
         flow,
+    }
+}
+
+/// Applies the brush's Follow Path and Jitter to dabs the spacer placed. `previous` is the
+/// stroke's last dab so far and `first_index` the number of dabs before `dabs`; together
+/// with the stroke id they fix the random numbers, so a replay gives the same stroke.
+pub fn shape_dabs(
+    brush: &Brush,
+    space: StrokeSpace,
+    stroke_id: u64,
+    first_index: usize,
+    previous: Option<Dab>,
+    dabs: &mut [Dab],
+) {
+    if brush.follow_path {
+        let mut before = previous;
+        for dab in dabs.iter_mut() {
+            if let Some(prev) = before {
+                follow_path(dab, prev.position, space, brush.angle);
+            }
+            before = Some(*dab);
+        }
+    }
+    if !brush.jitter.is_none() {
+        for (i, dab) in dabs.iter_mut().enumerate() {
+            let mut rng =
+                Rng::new(stroke_id.wrapping_mul(0x1_0000_01B3) ^ (first_index + i) as u64);
+            brush.jitter.apply(dab, || rng.next_f32());
+        }
+    }
+}
+
+/// Turns the top of the alpha towards the direction the stroke moves in.
+fn follow_path(dab: &mut Dab, from: Vec3, space: StrokeSpace, angle: f32) {
+    let step = dab.position - from;
+    match space {
+        StrokeSpace::Surface => {
+            let along = step - dab.normal * step.dot(dab.normal);
+            if let Some(dir) = along.try_normalize() {
+                dab.up = glam::Quat::from_axis_angle(dab.normal, angle.to_radians()) * dir;
+            }
+        }
+        StrokeSpace::Uv => {
+            if let Some(dir) = step.truncate().try_normalize() {
+                let up = Vec2::from_angle(-angle.to_radians()).rotate(dir);
+                dab.up = up.extend(0.0);
+            }
+        }
     }
 }
 
@@ -461,6 +520,44 @@ mod tests {
             radius,
             flow: 1.0,
         }
+    }
+
+    #[test]
+    fn follow_path_turns_the_alpha_along_the_stroke() {
+        let brush = Brush {
+            follow_path: true,
+            ..Brush::default()
+        };
+        let mut dabs = vec![point(0.0, 1.0), point(1.0, 1.0)];
+        shape_dabs(&brush, StrokeSpace::Surface, 1, 0, None, &mut dabs);
+        assert_eq!(dabs[0].up, Vec3::Y, "the first dab has no direction yet");
+        assert!((dabs[1].up - Vec3::X).length() < 1e-5);
+        // A later batch continues from the last stored dab.
+        let mut more = vec![point(1.0, 1.0)];
+        more[0].position.y = 1.0;
+        shape_dabs(&brush, StrokeSpace::Surface, 1, 2, Some(dabs[1]), &mut more);
+        assert!((more[0].up - Vec3::Y).length() < 1e-5);
+    }
+
+    #[test]
+    fn jittered_dabs_replay_identically() {
+        let brush = Brush {
+            jitter: crate::Jitter {
+                size: 1.0,
+                flow: 1.0,
+                angle: 1.0,
+                position: 1.0,
+            },
+            ..Brush::default()
+        };
+        let mut a = vec![point(0.0, 1.0), point(1.0, 1.0), point(2.0, 1.0)];
+        let mut b = a.clone();
+        shape_dabs(&brush, StrokeSpace::Surface, 9, 0, None, &mut a);
+        // Fed in two batches, as a stroke grows.
+        shape_dabs(&brush, StrokeSpace::Surface, 9, 0, None, &mut b[..1]);
+        shape_dabs(&brush, StrokeSpace::Surface, 9, 1, None, &mut b[1..]);
+        assert_eq!(a, b);
+        assert_ne!(a[0], point(0.0, 1.0));
     }
 
     #[test]

@@ -80,6 +80,12 @@ check undo sphere "paint undo display=basecolor" "640,400:$grey" "500,400:$grey"
 check undo-live sphere "paint live=10 undo display=basecolor" "500,400:$grey"
 check paint-4k sphere "res=4096 size=60 paint display=basecolor" "640,400:$red"
 check paint-uv sphere "paint uv 2d" "640,400:b > 190 && r < 140" "400,650:r > 160 && b < 200"
+check paint-planar sphere "paint align=planar display=basecolor" "640,400:$red" "640,250:$grey"
+check paint-camera sphere "paint align=camera display=basecolor" "640,400:$red" "640,250:$grey"
+check paint-follow sphere "paint follow jitter=0.2 display=basecolor" "640,400:$red" "640,250:$grey"
+check polyfill-mesh sphere "polyfill=mesh display=basecolor" "640,400:b > 200 && r < 60" "500,330:b > 200 && r < 60"
+check polyfill-triangle sphere "polyfill=triangle display=basecolor" "500,330:$grey"
+check stencil sphere "paint stencil=half size=20 display=basecolor" "500,400:$red" "700,400:$grey"
 check paint-height sphere "paint height display=height" "500,400:r > 240" "640,250:r < 10"
 
 # Occlusion: the front quad hides the middle of the back one from the stroke.
@@ -156,6 +162,60 @@ check export-exr "$data/uv_island.obj" "$island export=pbr_metallic_roughness fo
     "BaseColor,256,256:r < 15 && b > 190"
 check export-png16 "$data/uv_island.obj" "$island export=pbr_metallic_roughness depth=16" \
     "BaseColor,256,256:r == 51 && b == 229"
+
+# Baking: mesh maps from the model and from a high-poly. Specs are "map,x,y:CONDITION".
+check_bake() {
+    local name=$1 model=$2 options=$3
+    shift 3
+    local probes=() conditions=() spec output
+    for spec in "$@"; do
+        probes+=("bprobe=${spec%%:*}")
+        conditions+=("${spec#*:}")
+    done
+    # shellcheck disable=SC2086
+    if ! output=$("$snapshot" "$model" "$out/$name.png" $options "${probes[@]}" 2>&1); then
+        echo "FAIL $name: the snapshot failed"
+        echo "$output" | tail -n 15
+        failures=$((failures + 1))
+        return
+    fi
+    local failed=0 i line x y r g b map
+    for i in "${!probes[@]}"; do
+        # The snapshot prints the probes map by map, not in the order they were asked for.
+        IFS=, read -r map x y <<<"${probes[$i]#bprobe=}"
+        line=$(grep "^bprobe $map $x $y " <<<"$output" | head -n 1)
+        if [ -z "$line" ]; then
+            echo "FAIL $name: no probe $map $x $y"
+            failed=1
+            continue
+        fi
+        read -r _ _ _ _ r g b <<<"$line"
+        if ! awk -v r="$r" -v g="$g" -v b="$b" "BEGIN { exit !(${conditions[$i]}) }"; then
+            echo "FAIL $name: $map texel $x,$y is $r $g $b, expected ${conditions[$i]}"
+            failed=1
+        fi
+    done
+    if [ "$failed" -eq 0 ]; then
+        echo "ok   $name"
+    else
+        failures=$((failures + 1))
+    fi
+}
+
+# A floor meeting a wall: occlusion falls towards the crease (the bottom of the islands), and
+# the crease is concave while the border of an island is flat.
+check_bake bake-corner "$data/bake_corner.obj" "bake=ambient_occlusion,curvature,position,world_normal res=128 rays=64"     "ambient_occlusion,32,5:r > 240" "ambient_occlusion,32,126:r < 190"     "curvature,32,64:r > 118 && r < 138" "curvature,32,127:r < 100"     "position,32,64:b > 0" "world_normal,32,64:g > 250 && r > 120 && r < 135"
+# The edge of a cube is convex.
+check_bake bake-cube cube "bake=curvature res=512" "curvature,0,100:r > 240" "curvature,100,100:r > 118 && r < 138"
+# A flat quad against a bumpy copy: the bump's slopes tilt the normal, its top is high.
+check_bake bake-high "$data/bake_low.obj" "bake=normal,height,id res=128 bakehigh=$data/bake_high.obj front=0.15 rear=0.05"     "normal,5,5:r > 120 && r < 135 && b > 250" "normal,64,100:g < 110" "normal,64,28:g > 150"     "height,64,64:r > 180" "height,5,5:r < 90" "id,64,64:r > 200"
+
+# Generators read the baked maps: edge wear on a cube is red at its edges and not on its faces.
+check generator-edge cube "bake=curvature,position res=512 generator=edge_wear display=basecolor" \
+    "704,400:$red" "500,400:$grey" "600,300:$grey"
+# Without baked maps a generator still runs: noise falls back to the UV space and varies.
+check generator-noise sphere "generator=noise gparam=scale:4 gparam=contrast:6 display=basecolor" \
+    "500,400:r > 100" "640,300:r > 100"
 
 if [ "$failures" -gt 0 ]; then
     echo "$failures check(s) failed; the renders are in $out"

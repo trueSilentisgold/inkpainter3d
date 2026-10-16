@@ -939,8 +939,8 @@ fn edge_lists(model: &Model) -> (Vec<u32>, Vec<std::ops::Range<u32>>) {
         let start = indices.len() as u32;
         seen.clear();
         let triangles = &model.mesh.indices[part.indices.start as usize..part.indices.end as usize];
-        for tri in triangles.chunks_exact(3) {
-            for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+        for &[i0, i1, i2] in triangles.as_chunks::<3>().0 {
+            for (a, b) in [(i0, i1), (i1, i2), (i2, i0)] {
                 if seen.insert((a.min(b), a.max(b))) {
                     indices.extend([a, b]);
                 }
@@ -1185,7 +1185,14 @@ mod tests {
         validate("paint_seeds.wgsl", include_str!("paint_seeds.wgsl"));
         validate("paint_depth.wgsl", include_str!("paint_depth.wgsl"));
         validate("paint_tiles.wgsl", include_str!("paint_tiles.wgsl"));
-        validate("composite.wgsl", include_str!("composite.wgsl"));
+        validate(
+            "composite.wgsl",
+            &format!(
+                "{}\n{}",
+                include_str!("composite.wgsl"),
+                include_str!("generators.wgsl")
+            ),
+        );
         validate(
             "composite_resolve.wgsl",
             include_str!("composite_resolve.wgsl"),

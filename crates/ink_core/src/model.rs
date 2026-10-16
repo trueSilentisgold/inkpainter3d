@@ -132,6 +132,8 @@ pub struct TextureSet {
     pub resolution: u32,
     pub alpha_mode: AlphaMode,
     pub stack: LayerStack,
+    /// What baking computed for this texture set.
+    pub mesh_maps: crate::MeshMaps,
 }
 
 impl TextureSet {
@@ -144,6 +146,7 @@ impl TextureSet {
             resolution: Self::DEFAULT_RESOLUTION,
             alpha_mode: AlphaMode::default(),
             stack,
+            mesh_maps: Default::default(),
         }
     }
 }
@@ -372,6 +375,11 @@ impl Model {
     pub fn triangle_vertices(&self, triangle: u32) -> [usize; 3] {
         let i = triangle as usize * 3;
         [0, 1, 2].map(|k| self.mesh.indices[i + k] as usize)
+    }
+
+    /// The bounding volume hierarchy of the mesh.
+    pub fn bvh(&self) -> &Bvh {
+        &self.bvh
     }
 
     /// Must be called after `mesh` positions or indices changed.

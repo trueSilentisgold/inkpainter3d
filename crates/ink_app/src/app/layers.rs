@@ -4,10 +4,11 @@
 use super::InkApp;
 use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Image, ImageSource, Key, RichText, Sense, Stroke as Line, vec2};
+use ink_core::generator::ParamKind;
 use ink_core::{
     BlendMode, Channel, ChannelKind, ChannelSet, Command, Content, Effect, EffectKind, Fill,
-    GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place, Projection, ProjectionMode,
-    TextureImage,
+    Generator, GeneratorKind, GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place,
+    Projection, ProjectionMode, TextureImage,
 };
 use std::sync::Arc;
 
@@ -37,7 +38,7 @@ pub struct Selection {
 }
 
 impl Selection {
-    fn layer(layer: u64) -> Self {
+    pub(super) fn layer(layer: u64) -> Self {
         Self {
             layer,
             target: Target::Content,
@@ -46,7 +47,7 @@ impl Selection {
     }
 
     /// The selected layers, the main one first.
-    fn layers(&self) -> Vec<u64> {
+    pub(super) fn layers(&self) -> Vec<u64> {
         let mut layers = vec![self.layer];
         layers.extend(self.more.iter().filter(|&&l| l != self.layer));
         layers
@@ -147,7 +148,7 @@ impl InkApp {
             .map(|s| &s.stack)
     }
 
-    fn stack_mut(&mut self) -> Option<&mut LayerStack> {
+    pub(super) fn stack_mut(&mut self) -> Option<&mut LayerStack> {
         self.model
             .texture_sets
             .get_mut(self.selected_set)
@@ -158,7 +159,7 @@ impl InkApp {
         self.layers.selections.get(self.selected_set)?.as_ref()
     }
 
-    fn select(&mut self, selection: Selection) {
+    pub(super) fn select(&mut self, selection: Selection) {
         if let Some(slot) = self.layers.selections.get_mut(self.selected_set) {
             *slot = Some(selection);
         }
@@ -299,13 +300,13 @@ impl InkApp {
     }
 
     /// Names the undo step of the edit being made now.
-    fn label(&mut self, label: &'static str) {
+    pub(super) fn label(&mut self, label: &'static str) {
         self.layers.label.get_or_insert(label);
     }
 
     // ---- Edits ----
 
-    fn add_layer(&mut self, kind: LayerKind) {
+    pub(super) fn add_layer(&mut self, kind: LayerKind) {
         let anchor = self.selection().map(|s| s.layer);
         let Some(texture_set) = self.model.texture_sets.get_mut(self.selected_set) else {
             return;
@@ -322,6 +323,23 @@ impl InkApp {
             });
             self.select(Selection::layer(id));
         }
+    }
+
+    /// Adds a fill layer above the selection with these contents, e.g. a material from the
+    /// shelf.
+    pub(super) fn add_fill_layer_with(&mut self, name: String, fill: Fill) {
+        self.add_layer(LayerKind::Fill);
+        let Some(id) = self.selection().map(|s| s.layer) else {
+            return;
+        };
+        for image in fill.images.iter().flatten() {
+            self.layers.images.push(image.clone());
+        }
+        if let Some(layer) = self.stack_mut().and_then(|s| s.find_mut(id)) {
+            layer.name = name;
+            layer.content = Content::Fill(fill);
+        }
+        self.label("Add fill layer");
     }
 
     fn delete_selected(&mut self) {
@@ -561,6 +579,7 @@ impl InkApp {
             EffectKind::Paint(_) => "Add paint effect",
             EffectKind::Fill(_) => "Add fill effect",
             EffectKind::Levels(_) => "Add levels",
+            EffectKind::Generator(_) => "Add generator",
         });
         let has_mask = self
             .stack()
@@ -666,86 +685,100 @@ impl InkApp {
         }
     }
 
+    /// Narrower than this, the toolbar's buttons get a row of their own.
+    const TOOLBAR_ONE_ROW: f32 = 290.0;
+
     fn layer_toolbar(&mut self, ui: &mut egui::Ui) {
         let selected = self.selection().map(|s| s.layer);
-        ui.horizontal(|ui| {
+        let narrow = ui.available_width() < Self::TOOLBAR_ONE_ROW;
+        let combo = |app: &mut Self, ui: &mut egui::Ui| {
             egui::ComboBox::from_id_salt("stack channel")
-                .selected_text(self.layers.channel.label())
-                .width(110.0)
+                .selected_text(app.layers.channel.label())
+                .width(110.0f32.min(ui.available_width() - 40.0).max(60.0))
                 .show_ui(ui, |ui| {
                     for channel in Channel::ALL {
-                        ui.selectable_value(&mut self.layers.channel, channel, channel.label());
+                        ui.selectable_value(&mut app.layers.channel, channel, channel.label());
                     }
                 })
                 .response
                 .on_hover_text("The channel whose blending mode and opacity the layers show");
-            // Painter's order, left to right: effect, mask, paint layer, fill layer, folder,
-            // delete. The layout runs right to left, so the buttons are added the other way.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                let enabled = selected.is_some();
-                if ui
-                    .add_enabled_ui(enabled, |ui| {
-                        theme::icon_button(
-                            ui,
-                            icons::DELETE,
-                            "Delete the selected layer or effect (Delete)",
-                        )
-                    })
-                    .inner
-                    .clicked()
-                {
-                    self.delete_selected();
-                }
-                if theme::icon_button(
-                    ui,
-                    icons::ADD_FOLDER,
-                    "Add a folder above the selected layer",
-                )
-                .clicked()
-                {
-                    self.add_layer(LayerKind::Folder);
-                }
-                if theme::icon_button(
-                    ui,
-                    icons::ADD_FILL_LAYER,
-                    "Add a fill layer above the selected layer",
-                )
-                .clicked()
-                {
-                    self.add_layer(LayerKind::Fill);
-                }
-                if theme::icon_button(
-                    ui,
-                    icons::ADD_PAINT_LAYER,
-                    "Add a paint layer above the selected layer",
-                )
-                .clicked()
-                {
-                    self.add_layer(LayerKind::Paint);
-                }
-                ui.add_enabled_ui(enabled, |ui| {
-                    theme::icon_menu(
+        };
+        if narrow {
+            combo(self, ui);
+            ui.horizontal(|ui| self.layer_toolbar_buttons(ui, selected));
+        } else {
+            ui.horizontal(|ui| {
+                combo(self, ui);
+                self.layer_toolbar_buttons(ui, selected);
+            });
+        }
+    }
+
+    fn layer_toolbar_buttons(&mut self, ui: &mut egui::Ui, selected: Option<u64>) {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let enabled = selected.is_some();
+            if ui
+                .add_enabled_ui(enabled, |ui| {
+                    theme::icon_button(
                         ui,
-                        icons::ADD_MASK,
-                        "Add a mask to the selected layer",
-                        |ui| {
-                            if let Some(layer) = selected {
-                                self.mask_menu(ui, layer);
-                            }
-                        },
-                    );
-                    theme::icon_menu(
-                        ui,
-                        icons::ADD_EFFECT,
-                        "Add an effect to the selected layer's mask",
-                        |ui| {
-                            if let Some(layer) = selected {
-                                self.effect_menu(ui, layer);
-                            }
-                        },
-                    );
-                });
+                        icons::DELETE,
+                        "Delete the selected layer or effect (Delete)",
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                self.delete_selected();
+            }
+            if theme::icon_button(
+                ui,
+                icons::ADD_FOLDER,
+                "Add a folder above the selected layer",
+            )
+            .clicked()
+            {
+                self.add_layer(LayerKind::Folder);
+            }
+            if theme::icon_button(
+                ui,
+                icons::ADD_FILL_LAYER,
+                "Add a fill layer above the selected layer",
+            )
+            .clicked()
+            {
+                self.add_layer(LayerKind::Fill);
+            }
+            if theme::icon_button(
+                ui,
+                icons::ADD_PAINT_LAYER,
+                "Add a paint layer above the selected layer",
+            )
+            .clicked()
+            {
+                self.add_layer(LayerKind::Paint);
+            }
+            ui.add_enabled_ui(enabled, |ui| {
+                theme::icon_menu(
+                    ui,
+                    icons::ADD_MASK,
+                    "Add a mask to the selected layer",
+                    |ui| {
+                        if let Some(layer) = selected {
+                            self.mask_menu(ui, layer);
+                        }
+                    },
+                );
+                theme::icon_menu(
+                    ui,
+                    icons::ADD_EFFECT,
+                    "Add an effect to the selected layer's mask",
+                    |ui| {
+                        if let Some(layer) = selected {
+                            self.effect_menu(ui, layer);
+                        }
+                    },
+                );
             });
         });
     }
@@ -803,6 +836,15 @@ impl InkApp {
             self.add_effect(layer, EffectKind::Levels(Levels::default()));
             ui.close();
         }
+        ui.separator();
+        ui.label(RichText::new("GENERATORS").small().color(theme::TEXT_WEAK));
+        for kind in GeneratorKind::ALL {
+            if icon_text_button(ui, icons::EFFECT_GENERATOR, kind.label()) {
+                self.add_effect(layer, EffectKind::Generator(Generator::new(kind)));
+                ui.close();
+            }
+        }
+        ui.separator();
         ui.label(
             RichText::new("Effects go into the mask; one is added if needed.")
                 .small()
@@ -1268,6 +1310,7 @@ impl InkApp {
             EffectKind::Paint(_) => icons::LAYER_PAINT,
             EffectKind::Fill(_) => icons::LAYER_FILL,
             EffectKind::Levels(_) => icons::EFFECT_LEVELS,
+            EffectKind::Generator(_) => icons::EFFECT_GENERATOR,
         };
         let tint = if effect.visible {
             theme::TEXT
@@ -1421,6 +1464,7 @@ impl InkApp {
                 match &mut edited.kind {
                     EffectKind::Fill(gray) => gray_fill_properties(ui, gray, &images, &mut load),
                     EffectKind::Levels(levels) => levels_properties(ui, levels),
+                    EffectKind::Generator(generator) => generator_properties(ui, generator),
                     EffectKind::Paint(_) => return false,
                 }
                 if edited != effect {
@@ -1447,6 +1491,7 @@ impl InkApp {
             Target::Effect(id) => match layer.mask.as_ref()?.effect(id)?.kind {
                 EffectKind::Fill(_) => Some("Fill"),
                 EffectKind::Levels(_) => Some("Levels"),
+                EffectKind::Generator(_) => Some("Generator"),
                 EffectKind::Paint(_) => None,
             },
             Target::Mask => None,
@@ -1572,7 +1617,7 @@ fn copy_name(stack: &LayerStack, name: &str) -> String {
 }
 
 fn projection_ui(ui: &mut egui::Ui, projection: &mut Projection) {
-    theme::property_grid("projection").show(ui, |ui| {
+    theme::property_grid(ui, "projection").show(ui, |ui| {
         ui.label("Projection");
         egui::ComboBox::from_id_salt("projection mode")
             .selected_text(match projection.mode {
@@ -1728,7 +1773,7 @@ fn fill_properties(
         }
     });
     ui.add_space(4.0);
-    theme::property_grid("fill material").show(ui, |ui| {
+    theme::property_grid(ui, "fill material").show(ui, |ui| {
         for channel in Channel::ALL
             .into_iter()
             .filter(|&c| fill.channels.contains(c))
@@ -1779,7 +1824,7 @@ fn gray_fill_properties(
     theme::group_label(ui, "FILL");
     projection_ui(ui, &mut fill.projection);
     theme::group_label(ui, "GRAYSCALE");
-    theme::property_grid("gray fill").show(ui, |ui| {
+    theme::property_grid(ui, "gray fill").show(ui, |ui| {
         ui.label("Value");
         ui.horizontal(|ui| {
             ui.spacing_mut().slider_width = SLOT_SLIDER_WIDTH;
@@ -1792,9 +1837,62 @@ fn gray_fill_properties(
     });
 }
 
+/// The parameters of a generator, from its description.
+fn generator_properties(ui: &mut egui::Ui, generator: &mut Generator) {
+    let kind = generator.kind;
+    theme::group_label(ui, kind.label());
+    let missing = !kind.mesh_maps().is_empty();
+    if missing {
+        let names: Vec<&str> = kind.mesh_maps().iter().map(|m| m.label()).collect();
+        ui.label(
+            RichText::new(format!(
+                "Reads: {}. Bake them first (Ctrl+Shift+B).",
+                names.join(", ")
+            ))
+            .small()
+            .color(theme::TEXT_WEAK),
+        );
+    }
+    theme::property_grid(ui, "generator").show(ui, |ui| {
+        for (i, param) in kind.params().iter().enumerate() {
+            ui.label(param.label);
+            let value = &mut generator.values[i];
+            match param.kind {
+                ParamKind::Choice(names) => {
+                    let mut index = (*value as usize).min(names.len() - 1);
+                    egui::ComboBox::from_id_salt(("generator choice", param.key))
+                        .selected_text(names[index])
+                        .show_ui(ui, |ui| {
+                            for (n, name) in names.iter().enumerate() {
+                                ui.selectable_value(&mut index, n, *name);
+                            }
+                        });
+                    *value = index as f32;
+                }
+                ParamKind::Int => {
+                    let mut n = value.round() as i32;
+                    ui.add(egui::Slider::new(
+                        &mut n,
+                        param.min as i32..=param.max as i32,
+                    ));
+                    *value = n as f32;
+                }
+                ParamKind::Float => {
+                    ui.add(
+                        egui::Slider::new(value, param.min..=param.max)
+                            .logarithmic(param.log)
+                            .max_decimals(2),
+                    );
+                }
+            }
+            ui.end_row();
+        }
+    });
+}
+
 fn levels_properties(ui: &mut egui::Ui, levels: &mut Levels) {
     theme::group_label(ui, "LEVELS");
-    theme::property_grid("levels").show(ui, |ui| {
+    theme::property_grid(ui, "levels").show(ui, |ui| {
         ui.label("Input");
         ui.horizontal(|ui| {
             ui.add(

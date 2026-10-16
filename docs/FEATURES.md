@@ -335,7 +335,7 @@ Layer Stack von Body_MAT                 Ergebnis
 - [x] `P1` Maske ein- und ausschalten (Shift+Klick)
 - [ ] `P1` Maske im Viewport anzeigen (Alt+Klick)
 - [ ] `P1` **Color Selection:** Maske aus Farben der ID-Map
-- [ ] `P1` **Smart Masks:** gespeicherte Masken-Aufbauten aus dem Shelf
+- [x] `P1` **Smart Masks:** gespeicherte Masken-Aufbauten aus dem Shelf
 - [ ] `P2` **Quick Mask** (U bearbeiten, Y leeren, I invertieren)
 
 **Effekte.** Sie liegen in der Maske und auch im Inhalt eines Layers und bilden dort einen
@@ -346,7 +346,7 @@ Deckkraft; Effekte im Layer-Inhalt folgen mit den Filtern.
 - [x] `P0` **Fill**
 - [x] `P1` **Levels**
 - [ ] `P1` **Filter** (siehe Kapitel 11); Blur schon `P0`
-- [ ] `P1` **Generator** (siehe Kapitel 11)
+- [x] `P1` **Generator** (siehe Kapitel 11), bisher nur in Masken
 - [ ] `P2` **Compare Mask**
 - [ ] `P2` **Anchor Point:** Zwischenergebnis des Stacks, das spätere Generatoren und Filter
       als Eingabe nutzen. Klassisches Beispiel: Kanten-Abnutzung, die gemalte Height-Details
@@ -364,8 +364,10 @@ Taste in Klammern = Painter-Shortcut.
 - [x] `P0` **Eraser (2)**
 - [ ] `P1` **Projection (3):** malt mit einer projizierten Textur, die sich mit W / E / R
       verschieben, drehen und skalieren lässt
-- [ ] `P1` **Polygon Fill (4):** füllt nach Dreieck, Polygon, Mesh oder UV-Insel. Ideal für
-      Masken. Kommt in Phase 7, direkt nach den Pinsel-Presets.
+- [x] `P1` **Polygon Fill (4):** füllt nach Dreieck, Polygon, Mesh oder UV-Insel, im 3D- und im
+      2D-Fenster. Ideal für Masken. Das Polygon ist eine Näherung: Das Mesh ist trianguliert,
+      darum gilt ein Dreieck samt seiner Nachbarhälfte (gleiche Ebene, gleiche längste Kante)
+      als Viereck. Ein Fill ist ein Strich ohne Tupfer und speichert seine Dreiecke.
 - [ ] `P1` **Pick Material (P):** übernimmt alle Kanalwerte vom Modell
 - [ ] `P2` **Smudge (5)**
 - [ ] `P2` **Clone (6 relativ, Strg+6 absolut):** Quelle mit V+Klick setzen
@@ -378,7 +380,7 @@ Taste in Klammern = Painter-Shortcut.
       Mauszeiger; Abstand in Prozent der Ansichtshöhe, Standard 8.
 - [ ] `P1` **Symmetrie (L):** Spiegeln an X / Y / Z, lokal oder Welt; radiale Symmetrie
 - [ ] `P1` **Vorherigen Strich fortsetzen (A)**
-- [ ] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
+- [x] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
       S+Rechts zoomen, N ignoriert die Stencil-Maske
 - [x] `P1` **Graustufen invertieren (X)**
 
@@ -407,15 +409,15 @@ Taste in Klammern = Painter-Shortcut.
 - [x] `P0` **Flow:** Strg+Links horizontal ziehen
 - [x] `P0` **Stroke Opacity**
 - [x] `P0` **Spacing**
-- [ ] `P1` **Angle:** Strg+Links vertikal ziehen (umgesetzt). Option „Follow Path“ fehlt noch.
-- [ ] `P1` **Jitter:** Size, Flow, Angle, Position
+- [x] `P1` **Angle:** Strg+Links vertikal ziehen, dazu **Follow Path** (das Alpha dreht sich in Strichrichtung)
+- [x] `P1` **Jitter:** Size, Flow, Angle, Position. Die Zufallswerte hängen an Strich-ID und Tupfer-Nummer, ein Strich sieht beim erneuten Zeichnen identisch aus.
 
 **Projektion**
 
 - [x] `P0` **Backface Culling** mit Winkel, gemessen zur Normale des Stempels wie in Painter
 - [x] `P0` **Verdeckte Flächen bleiben frei:** Jeder Strich merkt sich seine Kamera; was von dort
       hinter anderen Flächen liegt, bekommt keine Farbe.
-- [ ] `P1` **Alignment:** Tangent Wrap (umgesetzt, Standard), Tangent Planar, Camera, UV
+- [x] `P1` **Alignment:** Tangent Wrap (Standard), Tangent Planar, Camera. *UV* (Alpha folgt der UV-Richtung) fehlt noch.
 
 **Tablet**
 
@@ -432,14 +434,17 @@ Taste in Klammern = Painter-Shortcut.
 
 - [x] `P0` **Alpha:** Pinselform aus einem Graustufenbild (PNG, JPEG; Bilder mit Transparenz
       nutzen den Alphakanal). Dazu runde und eckige Spitzen mit Härte.
-- [ ] `P1` **Stencil**
+- [x] `P1` **Stencil:** Bild laden (Eigenschaften), Größe, Drehung, Overlay; der Strich merkt sich die
+      Abbildung vom Bild auf den Bildschirm (3D) oder die UV-Fläche (2D) und wirkt je Tupfer, damit
+      Live-Strich und Neuzeichnen gleich aussehen.
 - [x] `P0` **Material des Pinsels:** Wert oder Farbe pro Kanal; Kanäle einzeln ein- und
       ausschaltbar. Der Eraser hat eigene Kanal-Schalter.
-- [ ] `P1` Material des Pinsels aus Textur oder Material aus dem Shelf
+- [ ] `P1` Material des Pinsels aus Textur oder Material aus dem Shelf (ein Material lässt sich
+      bisher nur als Fill Layer anlegen)
 
 **Presets**
 
-- [ ] `P1` **Pinsel-Presets** speichern und laden
+- [x] `P1` **Pinsel-Presets** speichern und laden: sieben mitgelieferte Presets (Soft round, Hard round, Airbrush, Marker, Chalk, Scatter dots, Decal stamp) und eigene als `.inkbrush`-Datei (ZIP aus `brush.json` und `alpha.png`) im Bibliotheksordner. Das Material (Kanäle, Werte) bleibt beim Laden erhalten.
 
 ---
 
@@ -469,31 +474,40 @@ Taste in Klammern = Painter-Shortcut.
 
 ## 10. Baking (Mesh Maps)
 
-- [ ] `P1` **Baking-Fenster** (Strg+Shift+B, Baking-Modus F8)
+- [x] `P1` **Baking-Fenster** (Strg+Shift+B, auch im Datei-Menü). Ein frei verschiebbares Fenster, der Bake
+      läuft in einem Hintergrund-Thread mit Fortschritt und Abbrechen. Der Baking-Modus (F8)
+      fehlt.
 
 **Maps**
 
 | Prio | Maps | Hinweis |
 |---|---|---|
-| `P1` | Ambient Occlusion, Curvature, World Space Normal, Position, Thickness | vom Low-Poly-Mesh selbst. Die Generatoren brauchen sie. |
-| `P1` | Normal (Tangent Space), Height, ID | von High-Poly auf Low-Poly; ID aus Vertex-Farbe, Material-Farbe oder Mesh-ID |
+| `P1` ✅ | Ambient Occlusion, Curvature, World Space Normal, Position, Thickness | vom Low-Poly-Mesh selbst. Die Generatoren brauchen sie. |
+| `P1` ✅ | Normal (Tangent Space), Height, ID | von High-Poly auf Low-Poly; ID aus Material oder Mesh-Objekt des High-Poly |
 | `P2` | Bent Normals, Opacity | |
+
+Die Maps liegen im Texture Set (16 Bit, in der Größe des Texture Sets) und im Projekt. Das
+Fenster zeigt Vorschaubilder; *Add as layer* legt eine Map als Fill Layer an, zum Ansehen.
 
 **Einstellungen**
 
-- [ ] `P1` Ausgabegröße, Dilation, Antialiasing (Subsampling)
-- [ ] `P1` High-Poly-Dateien (mehrere)
-- [ ] `P1` Zuordnung *Immer* oder *nach Mesh-Name* (Suffix `_low` / `_high`)
-- [ ] `P1` Max. Frontal- und Rear-Distanz (auch relativ zur Bounding Box), Cage-Datei,
-      gemittelte Normalen, Backfaces ignorieren
-- [ ] `P1` Auswahl, welche Texture Sets gebacken werden
-- [ ] `P1` Einstellungen pro Map, z. B. AO-Strahlenzahl und Verteilung, Self-Occlusion,
-      Ground Plane
+- [x] `P1` Ausgabegröße (die des Texture Sets), Dilation, Antialiasing (1×1, 2×2, 4×4)
+- [x] `P1` High-Poly-Dateien (mehrere, werden beim Bake geladen und zusammengefasst)
+- [x] `P1` Zuordnung *Always* oder *By mesh name* (`name_low` sieht nur `name_high`; Meshes
+      ohne Suffix sehen alles)
+- [x] `P1` Max. Frontal- und Rear-Distanz (relativ zur Diagonale der Bounding Box), gemittelte
+      Normalen, Backfaces ignorieren. Eine Cage-Datei fehlt noch.
+- [x] `P1` Auswahl, welche Texture Sets gebacken werden
+- [x] `P1` Einstellungen pro Map: AO-Strahlen, -Distanz und Self-Occlusion, Thickness-Strahlen und
+      -Distanz, Curvature-Radius, ID-Quelle. Eine Ground Plane gibt es nicht.
 
 **Technik**
 
-- [ ] `P1` GPU-Raytracing über eine eigene BVH im Compute-Shader. Das läuft auf jeder
-      Vulkan-GPU und braucht keine RT-Kerne.
+- [x] `P1` GPU-Raytracing über eine eigene BVH im Compute-Shader (`bake.wgsl`). Das läuft auf
+      jeder Vulkan-GPU und braucht keine RT-Kerne. Das Texture Set wird in Kacheln zu 256 × 256
+      gebacken: Ein Raster-Pass zeichnet pro Kachel die Dreiecks-ID jedes Texels, der Compute-Shader
+      schießt von dort Strahlen. Die Curvature kommt aus einem Ring von Strahlen um den Punkt (wie
+      weit liegt die Fläche über oder unter der Tangentialebene), so sieht sie auch harte Kanten.
 - [ ] `P2` Automatisch neu backen, wenn sich das Mesh ändert
 
 ---
@@ -506,15 +520,25 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 **Generatoren** (nutzen die Mesh Maps)
 
-- [ ] `P1` **Mask Builder:** kombiniert Curvature, AO, Position und Thickness mit Rauschen; der
-      wichtigste Generator überhaupt
-- [ ] `P1` **Edge Wear:** Kanten-Abnutzung
-- [ ] `P1` **Dirt:** Schmutz in Vertiefungen
-- [ ] `P1` **Position Gradient:** Verlauf, z. B. von unten nach oben
-- [ ] `P1` **Light:** gerichtete Beleuchtung, auch für den Stylized-Look
-- [ ] `P1` Curvature, AO und Thickness einzeln als Generator
+Ein Generator ist ein Masken-Effekt (Effekt-Menü der Ebene). Jede Art beschreibt ihre
+Parameter einmal (`ink_core::generator`): Daraus entstehen die Oberfläche, die Projektdatei
+und die Slots des Shaders (`generators.wgsl`). Ohne gebackene Maps laufen sie weiter, mit
+Rauschen statt Kanten und Spalten; Rauschen liegt mit einer Position-Map im Objektraum,
+sonst im UV-Raum.
+
+- [x] `P1` **Mask Builder:** mischt Curvature, AO, Thickness und Höhe mit Rauschen, dazu Kontrast
+      und Balance
+- [x] `P1` **Edge Wear:** Kanten-Abnutzung aus der konvexen Curvature, vom Rauschen aufgebrochen
+- [x] `P1` **Dirt:** Schmutz aus AO und konkaver Curvature, Staub auf nach oben zeigenden Flächen
+- [x] `P1` **Position Gradient:** Verlauf entlang X, Y oder Z der Bounding Box, mit Rauschen
+- [x] `P1` **Light:** gerichtete Beleuchtung aus der World-Normal-Map (Azimut, Höhe)
+- [x] `P1` Curvature (konvex, konkav oder beides), AO und Thickness einzeln als Generator
 
 **Filter**
+
+Bisher gibt es *Levels* (Masken-Effekt). Filter, die Nachbartexel brauchen (Blur, Sharpen),
+fehlen noch: Der Compositor rechnet in Kacheln mit einem Texel Rand, dafür braucht es
+einen größeren Rand pro Effekt.
 
 - [ ] `P0` Blur
 - [ ] `P1` Sharpen, HSL / Farbkorrektur, Gradient Map, Height-zu-Normal
@@ -523,39 +547,53 @@ Painter liefert diese Bausteine als `.sbsar`-Dateien aus, die nur Adobes Engine 
 
 **Prozedurale Texturen**
 
-- [ ] `P1` Noises (Perlin, Fractal, Voronoi / Zellen, Wolken)
-- [ ] `P1` Grunges (Kratzer, Flecken, Staub)
+- [x] `P1` Noises (Perlin, Fractal, Zellen, Wolken) als Generator *Noise*
+- [x] `P1` Grunges (Kratzer, Haarstriche, Risse, Flecken, Staub) als Alphas im Shelf, im Code erzeugt
 - [ ] `P1` Muster (Kacheln, Ziegel, Streifen)
 
 **Presets**
 
-- [ ] `P1` **Smart Materials:** Layer-Ordner als Preset speichern; passt sich über die Mesh Maps
-      an jedes Modell an
-- [ ] `P1` **Smart Masks:** Masken-Aufbau als Preset
+- [x] `P1` **Smart Materials:** ausgewählte Ebenen als Preset speichern (`.inksmart`, ein ZIP aus
+      JSON und Bildern; gemalte Striche gehören nicht dazu). Klick oder Ziehen auf den Layer
+      Stack legt Kopien mit neuen Ids über die ausgewählte Ebene. Was auf Generatoren beruht,
+      passt sich über die Mesh Maps an jedes Modell an.
+- [x] `P1` **Smart Masks:** Maske der ausgewählten Ebene als Preset; ersetzt die Maske der
+      ausgewählten Ebene
 
 **Mitgelieferte Inhalte**
 
-- [ ] `P1` **Starter-Bibliothek:** Metalle, Kunststoffe, Holz, Stoff, Leder, Stein; ein Dutzend
-      Smart Materials; Pinsel, Alphas, Grunges, HDRIs. Alles selbst erstellt oder CC0
-      (Poly Haven, ambientCG).
+- [x] `P1` **Starter-Bibliothek:** zwölf Smart Materials (Steel, Painted metal, Rusty metal, Gold,
+      Copper patina, Glossy plastic, Rubber, Dry wood, Leather, Rough stone, Concrete, Fabric) und
+      sechs Smart Masks (Edge wear, Dirt in crevices, Worn surface, Noise patches, Gradient from the
+      bottom, Dust on top), sieben Pinsel, acht Alphas, die HDRI. Alles im Code erzeugt.
+      Weitere Materialien kommen aus den Online-Bibliotheken (CC0).
 
 ---
 
 ## 12. Shelf (Asset-Bibliothek)
 
-- [ ] `P1` **Kategorien** wie in Painter: Materials, Smart Materials, Smart Masks, Brushes,
-      Alphas, Grunges, Procedurals, Textures, Filters, Generators, Environments, Export
-      Presets, Templates
-- [ ] `P1` Suche, Filter, Vorschaubilder; Drag & Drop auf Layer Stack, Viewport und
-      Parameterfelder
-- [ ] `P1` **Eigene Ressourcen importieren** (Bilder, Presets), entweder in die Bibliothek oder
-      nur ins Projekt
+Das Shelf ist ein andockbares Fenster (standardmäßig unter dem Viewport) mit den Kategorien
+Brushes, Alphas, Textures, Materials und Online. Die eigene Bibliothek liegt im Datenordner
+(`shelf/brushes`, `alphas`, `textures`, `materials`), der Ordner-Knopf öffnet sie.
+
+- [x] `P1` **Kategorien** und Vorschaubilder. Umgesetzt: Brushes (Presets mit Vorschaustrich),
+      Alphas (acht im Code erzeugte plus eigene), Textures, Materials, Smart Materials, Smart
+      Masks, Online. Procedurals, Filters, Environments, Export Presets und Templates fehlen noch.
+- [x] `P1` Suche (Filter) und Drag & Drop: Materials und Textures lassen sich auf den Layer Stack
+      ziehen und werden zum Fill Layer. Brushes und Alphas wirken per Klick. Drop auf Viewport und
+      Parameterfelder fehlt noch.
+- [x] `P1` **Eigene Ressourcen importieren** (Pinsel-Presets, Alphas, Texturen, Materialien) in die
+      Bibliothek. Rechtsklick: Löschen, Alpha als Pinselform oder Stencil nutzen. Nur-im-Projekt
+      gibt es nicht.
 - [ ] `P2` Eigene Bibliotheks-Ordner (Sub-Libraries), Favoriten, Tags
-- [ ] `P1` ＋ **PBR-Materialordner importieren:** ein Ordner mit Base Color, Roughness, Normal …
-      im Format von Poly Haven oder ambientCG wird automatisch ein Material
-- [ ] `P1` ＋ **Online-Bibliotheken im Shelf:** ambientCG und Poly Haven (zusammen mehrere
-      tausend CC0-Materialien) direkt durchsuchen und herunterladen. Das ist der Ersatz für
-      Substance 3D Assets, die nur mit Adobes Engine laufen.
+- [x] `P1` ＋ **PBR-Materialordner importieren:** ein Ordner mit Base Color, Roughness, Normal …
+      im Format von Poly Haven oder ambientCG wird zu einem `.inkmat`-Material (ZIP aus
+      `material.json`, den Karten und `preview.png`). Erkannt werden die Dateinamen beider
+      Seiten; ARM- und AO-Karten bleiben außen vor, weil es keinen AO-Kanal gibt.
+- [x] `P1` ＋ **Online-Bibliotheken im Shelf:** ambientCG und Poly Haven (zusammen mehrere
+      tausend CC0-Materialien) durchsuchen, Vorschau, Download in 1K, 2K oder 4K in die
+      Bibliothek und als Fill Layer anlegen. Das ist der Ersatz für Substance 3D Assets, die nur mit
+      Adobes Engine laufen.
 
 ---
 
@@ -763,9 +801,9 @@ texturieren und exportieren.**
 | 4 | **Layer Stack:** Paint, Fill, Ordner, Blend Modes und Deckkraft pro Kanal, Masken, UV- und Tri-planar-Projektion, Kanal-Ansicht | ✅ fertig |
 | 5 | **Projekt und Export:** Projektdatei, Export mit Vorlagen für Blender, Unity, Godot, glTF | ✅ fertig |
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
-| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | |
-| 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | |
-| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | |
-| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Stencil, Color Selection, Geometry Mask, Anchor Points | |
+| 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
+| 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ✅ fertig |
+| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Filter mit Nachbartexeln fehlen noch) |
+| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |

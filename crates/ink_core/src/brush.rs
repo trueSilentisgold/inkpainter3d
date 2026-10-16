@@ -284,6 +284,105 @@ impl PressureMapping {
     }
 }
 
+/// How a surface dab projects its tip onto the model (Painter's Alignment).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Alignment {
+    /// The tip follows the surface: distances are measured in 3D, so it wraps around
+    /// curved surfaces and edges.
+    #[default]
+    TangentWrap,
+    /// The tip is projected straight along the surface normal at the dab.
+    TangentPlanar,
+    /// The tip is projected along the view direction, like a decal from the camera.
+    Camera,
+}
+
+impl Alignment {
+    pub const ALL: [Self; 3] = [Self::TangentWrap, Self::TangentPlanar, Self::Camera];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TangentWrap => "Tangent wrap",
+            Self::TangentPlanar => "Tangent planar",
+            Self::Camera => "Camera",
+        }
+    }
+
+    /// A stable name for files; never changes.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::TangentWrap => "tangent_wrap",
+            Self::TangentPlanar => "tangent_planar",
+            Self::Camera => "camera",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.key() == key)
+    }
+
+    /// The code the shader reads (`ALIGN_*` in paint_dabs.wgsl).
+    pub fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Random variation per dab, each 0 (none) to 1 (full), as in Painter's Jitter section.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Jitter {
+    /// Up to this fraction of the size is taken away from each dab.
+    pub size: f32,
+    /// Up to this fraction of the flow is taken away from each dab.
+    pub flow: f32,
+    /// Random rotation of up to ±180° times this.
+    pub angle: f32,
+    /// Random offset of up to this many radii.
+    pub position: f32,
+}
+
+impl Jitter {
+    pub fn is_none(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Varies a dab. `rng` gives numbers in 0..1; the same stream gives the same dab.
+    pub fn apply(&self, dab: &mut crate::Dab, mut rng: impl FnMut() -> f32) {
+        // Always draw all five numbers so changing one setting does not shift the others.
+        let (size, flow, angle, ox, oy) = (rng(), rng(), rng(), rng(), rng());
+        dab.radius *= 1.0 - self.size * size;
+        dab.flow *= 1.0 - self.flow * flow;
+        let normal = dab.normal;
+        if self.angle > 0.0 {
+            let turn = (angle * 2.0 - 1.0) * 180.0 * self.angle;
+            dab.up = glam::Quat::from_axis_angle(normal, turn.to_radians()) * dab.up;
+        }
+        if self.position > 0.0 {
+            let right = dab.up.cross(normal);
+            dab.position +=
+                (right * (ox * 2.0 - 1.0) + dab.up * (oy * 2.0 - 1.0)) * self.position * dab.radius;
+        }
+    }
+}
+
+/// A small deterministic random stream (splitmix64), so jittered strokes replay exactly.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        Self(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03)
+    }
+
+    /// A number in 0..1.
+    pub fn next_f32(&mut self) -> f32 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        (z >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
 /// Settings of the Paint and Eraser tools, as in Painter's Properties panel and contextual
 /// toolbar. Values Painter shows in percent are fractions here, except `size`.
 #[derive(Clone, Debug)]
@@ -301,6 +400,10 @@ pub struct Brush {
     pub angle: f32,
     /// Soft falloff (0) to hard edge (1) of the round and square tips.
     pub hardness: f32,
+    /// Turns the alpha to the direction of the stroke (Painter's Follow Path).
+    pub follow_path: bool,
+    pub jitter: Jitter,
+    pub alignment: Alignment,
     pub alpha: Alpha,
     /// Whether surfaces turned away from the camera are skipped.
     pub backface_culling: bool,
@@ -323,6 +426,9 @@ impl Default for Brush {
             spacing: 0.2,
             angle: 0.0,
             hardness: 0.0,
+            follow_path: false,
+            jitter: Jitter::default(),
+            alignment: Alignment::default(),
             alpha: Alpha::Round,
             backface_culling: true,
             backface_angle: 90.0,
@@ -389,6 +495,45 @@ impl Brush {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jitter_is_deterministic_and_bounded() {
+        let dab = crate::Dab {
+            position: glam::Vec3::ZERO,
+            normal: glam::Vec3::Z,
+            up: glam::Vec3::Y,
+            view: glam::Vec3::NEG_Z,
+            radius: 1.0,
+            flow: 1.0,
+        };
+        let jitter = Jitter {
+            size: 0.5,
+            flow: 0.5,
+            angle: 1.0,
+            position: 1.0,
+        };
+        let (mut a, mut b) = (dab, dab);
+        let (mut ra, mut rb) = (Rng::new(7), Rng::new(7));
+        jitter.apply(&mut a, || ra.next_f32());
+        jitter.apply(&mut b, || rb.next_f32());
+        assert_eq!(a, b);
+        assert!((0.5..=1.0).contains(&a.radius) && (0.5..=1.0).contains(&a.flow));
+        assert!(a.position.length() <= 2.0f32.sqrt() + 1e-4);
+        assert!((a.up.length() - 1.0).abs() < 1e-4);
+        let mut none = dab;
+        Jitter::default().apply(&mut none, || 0.9);
+        assert_eq!(none.radius, 1.0);
+        assert!(Jitter::default().is_none());
+    }
+
+    #[test]
+    fn rng_covers_the_unit_interval() {
+        let mut rng = Rng::new(1);
+        let values: Vec<f32> = (0..1000).map(|_| rng.next_f32()).collect();
+        assert!(values.iter().all(|v| (0.0..1.0).contains(v)));
+        let mean = values.iter().sum::<f32>() / 1000.0;
+        assert!((mean - 0.5).abs() < 0.05);
+    }
 
     #[test]
     fn channel_sets() {

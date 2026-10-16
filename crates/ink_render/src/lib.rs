@@ -1,6 +1,7 @@
 //! GPU rendering: the 3D viewport, the 2D (UV) view, the brush strokes and the layer
 //! stack compositor.
 
+pub mod bake;
 pub mod camera;
 mod compositor;
 pub mod environment;

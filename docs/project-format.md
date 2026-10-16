@@ -39,7 +39,8 @@ All binary numbers are little-endian; floats are IEEE 754 single precision.
   "images": [{ "file": "images/0.png", "name": "rust", "width": 2048, "height": 2048, "texels": "rgba8" }],
   "alphas": [{ "file": "alphas/0.png", "name": "dots", "width": 256, "height": 256 }],
   "view": { … },
-  "export": { … }
+  "export": { … },
+  "bake": { … }
 }
 ```
 
@@ -57,17 +58,21 @@ All binary numbers are little-endian; floats are IEEE 754 single precision.
 - `parts` cut the mesh's index list into contiguous ranges, in order, grouped by texture
   set: each range belongs to one object and one texture set. Together they cover the whole
   index list.
-- `view` (camera and display settings) and `export` (the export window's settings) are
-  optional; readers drop them if they don't understand them.
+- `view` (camera and display settings), `export` (the export window's settings) and `bake`
+  (the baking window's settings: the maps, subsampling, dilation, distances, ray counts and
+  the high-poly file paths) are optional; readers drop them if they don't understand them.
 
 ### Texture sets
 
 ```json
-{ "name": "Skin", "visible": true, "resolution": 2048, "alpha_mode": "opaque", "layers": [ … ] }
+{ "name": "Skin", "visible": true, "resolution": 2048, "alpha_mode": "opaque", "layers": [ … ],
+  "mesh_maps": [{ "map": "curvature", "image": 3 }] }
 ```
 
 `resolution` is a power of two; `alpha_mode` is `"opaque"`, `"test"` or `"blend"`. `layers`
-lists the layer stack **bottom to top**.
+lists the layer stack **bottom to top**. `mesh_maps` are the baked maps (`ambient_occlusion`,
+`curvature`, `world_normal`, `position`, `thickness`, `normal`, `height`, `id`) as indices into
+`images`; they are 16 bit images the size of the texture set.
 
 ### Layers
 
@@ -121,14 +126,17 @@ mask. Effects are listed bottom to top:
 ```
 
 `kind` is `{ "paint": { … } }` (a paint layer), `{ "fill": { "value": 1.0, "image": null, "projection": { … } } }`
-(a grayscale fill; the image's red channel is used) or `{ "levels": { … } }`.
+(a grayscale fill; the image's red channel is used), `{ "levels": { … } }` or
+`{ "generator": { "kind": "edge_wear", "params": { "amount": 0.5, "noise_scale": 24 } } }`. A
+generator's `kind` and `params` are named by the keys in `ink_core::generator`; parameters
+that are missing take their defaults, unknown ones are ignored.
 
 ### Strokes
 
 ```json
 {
   "id": 21, "tool": "paint", "space": "surface", "alpha": "round",
-  "hardness": 0.8, "opacity": 1.0, "backface_cos": 0.0,
+  "hardness": 0.8, "alignment": "tangent_wrap", "opacity": 1.0, "backface_cos": 0.0,
   "material": { "channels": ["base_color", "roughness"], "values": { … }, "grayscale": 1.0 },
   "camera": { "view_proj": [ … 16 … ], "eye": [0, 1, 4], "forward": [0, 0, -1], "aspect": 1.6, "orthographic": false, "height": 0.73 },
   "hidden_objects": [], "hidden_sets": [],
@@ -139,6 +147,16 @@ mask. Effects are listed bottom to top:
 - `tool`: `"paint"` or `"erase"`. `space`: `"surface"` (painted in the 3D view; dabs in
   world space) or `"uv"` (painted in the 2D view; dabs in UV space, origin top left).
 - `alpha`: `"round"`, `"square"` or `{ "image": n }`, an index into the top-level `alphas`.
+- `alignment`: how the tip is projected onto the model, `"tangent_wrap"` (default, also when the
+  key is missing), `"tangent_planar"` or `"camera"`.
+- `fill` (optional): a Polygon Fill stroke covers whole triangles and has no dabs:
+  `{ "triangles": [ … triangle indices … ] }` or `{ "object": n }` (every triangle of the
+  object in the texture set).
+- `stencil` (optional): `{ "alpha": n, "affine": [a, b, c, d, e, f] }`, an index into the top-level
+  `alphas` and how a point maps into the stencil image's `[-1, 1]` square: `x' = a x + b y + c`,
+  `y' = d x + e y + f`. The input is `(ndc.x * aspect, ndc.y)` of the stroke's camera for surface
+  strokes and the UV for strokes of the 2D view. Dabs use it per dab, so a stroke looks the
+  same live and replayed.
 - `backface_cos`: the cosine of the backface culling angle; -1 paints every surface.
 - `material`: what the brush paints, as for fill layers; `grayscale` is the value painted
   into masks.

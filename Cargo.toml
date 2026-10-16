@@ -30,6 +30,7 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 exr = { version = "1.74", default-features = false }
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [profile.dev]

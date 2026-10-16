@@ -8,11 +8,12 @@ use anyhow::{Context, Result, bail, ensure};
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
-    Aabb, Alpha, AlphaImage, AlphaMode, BlendMode, Blending, BrushMaterial, Channel, ChannelBlend,
-    ChannelSet, ChannelValues, Content, Dab, Effect, EffectKind, Fill, Folder, GrayFill, Ids,
-    Layer, LayerStack, Levels, Mask, Mesh, MeshObject, Model, NormalFormat, PaintLayer, Part,
-    Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, Texels, TextureImage,
-    TextureSet, Tool,
+    Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending,
+    BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect,
+    EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GrayFill, IdSource, Ids, Layer,
+    LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model, NormalFormat,
+    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil,
+    Texels, TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -21,6 +22,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// File extension of project files.
+pub mod smart;
+
 pub const PROJECT_EXTENSION: &str = "ink3d";
 
 const FORMAT: &str = "inkpainter3d project";
@@ -48,6 +51,8 @@ pub struct Project {
     pub view: Option<ViewState>,
     /// The export window's settings.
     pub export: Option<ExportSettings>,
+    /// The baking window's settings.
+    pub bake: Option<BakeSettings>,
 }
 
 /// Camera and display settings of the views.
@@ -81,8 +86,8 @@ pub struct ImageCache {
 }
 
 #[derive(Clone, Debug)]
-struct Encoded {
-    bytes: Arc<Vec<u8>>,
+pub(crate) struct Encoded {
+    pub(crate) bytes: Arc<Vec<u8>>,
 }
 
 /// Writes the project to `path`. The file is replaced only once the new one is complete,
@@ -303,6 +308,8 @@ struct FileProject {
     view: Option<ViewState>,
     #[serde(default, deserialize_with = "lenient")]
     export: Option<FileExport>,
+    #[serde(default, deserialize_with = "lenient")]
+    bake: Option<FileBake>,
 }
 
 fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -350,6 +357,9 @@ struct FileTextureSet {
     #[serde(default)]
     alpha_mode: FileAlphaMode,
     layers: Vec<FileLayer>,
+    /// Baked mesh maps.
+    #[serde(default)]
+    mesh_maps: Vec<FileMeshMap>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Copy)]
@@ -416,7 +426,7 @@ struct FileFill {
 }
 
 #[derive(Serialize, Deserialize)]
-struct FileValues {
+pub(crate) struct FileValues {
     base_color: [f32; 3],
     height: f32,
     roughness: f32,
@@ -476,6 +486,15 @@ enum FileEffectKind {
     Paint(FilePaint),
     Fill(FileGrayFill),
     Levels(FileLevels),
+    Generator(FileGenerator),
+}
+
+/// A generator by the keys of its kind and parameters, so the order of the parameters in the
+/// program can change.
+#[derive(Serialize, Deserialize)]
+struct FileGenerator {
+    kind: String,
+    params: BTreeMap<String, f32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -500,6 +519,9 @@ struct FileStroke {
     space: FileSpace,
     alpha: FileAlphaShape,
     hardness: f32,
+    /// `Alignment::key`; absent in older files (tangent wrap).
+    #[serde(default)]
+    alignment: Option<String>,
     opacity: f32,
     backface_cos: f32,
     material: FileBrushMaterial,
@@ -509,9 +531,29 @@ struct FileStroke {
     hidden_objects: Vec<usize>,
     #[serde(default)]
     hidden_sets: Vec<usize>,
+    /// What a Polygon Fill stroke covers; such strokes have no dabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fill: Option<FileStrokeFill>,
+    /// The stencil the stroke was painted through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stencil: Option<FileStencil>,
     /// First dab and dab count in `dabs.bin`.
     first_dab: u64,
     dab_count: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileStencil {
+    /// Index into the brush alphas.
+    alpha: usize,
+    affine: [f32; 6],
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FileStrokeFill {
+    Triangles(Vec<u32>),
+    Object(usize),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -538,7 +580,7 @@ enum FileAlphaShape {
 }
 
 #[derive(Serialize, Deserialize)]
-struct FileBrushMaterial {
+pub(crate) struct FileBrushMaterial {
     channels: Vec<String>,
     values: FileValues,
     grayscale: f32,
@@ -582,6 +624,33 @@ struct FileAlpha {
 }
 
 #[derive(Serialize, Deserialize)]
+struct FileBake {
+    maps: Vec<String>,
+    subsampling: u32,
+    dilation: u32,
+    front_distance: f32,
+    rear_distance: f32,
+    average_normals: bool,
+    ignore_backfaces: bool,
+    matching: String,
+    id_source: String,
+    ao_rays: u32,
+    ao_distance: f32,
+    ao_self_occlusion: bool,
+    thickness_rays: u32,
+    thickness_distance: f32,
+    curvature_radius: f32,
+    high_poly: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileMeshMap {
+    map: String,
+    /// Index into the top-level `images`.
+    image: usize,
+}
+
+#[derive(Serialize, Deserialize)]
 struct FileExport {
     directory: String,
     template: String,
@@ -619,6 +688,15 @@ impl Saver {
                     AlphaMode::Blend => FileAlphaMode::Blend,
                 },
                 layers: set.stack.layers.iter().map(|l| self.layer(l)).collect(),
+                mesh_maps: set
+                    .mesh_maps
+                    .maps
+                    .iter()
+                    .map(|(map, image)| FileMeshMap {
+                        map: map.key().to_owned(),
+                        image: self.texture(image),
+                    })
+                    .collect(),
             })
             .collect();
         let images = self
@@ -685,6 +763,7 @@ impl Saver {
             images,
             alphas,
             view: project.view.as_ref().map(finite_view),
+            bake: project.bake.as_ref().map(file_bake),
             export: project.export.as_ref().map(|e| FileExport {
                 directory: e.directory.clone(),
                 template: e.template.key.to_owned(),
@@ -757,6 +836,16 @@ impl Saver {
                                 gamma: finite(levels.gamma),
                                 output: finite_n(levels.output),
                             }),
+                            EffectKind::Generator(g) => FileEffectKind::Generator(FileGenerator {
+                                kind: g.kind.key().to_owned(),
+                                params: g
+                                    .kind
+                                    .params()
+                                    .iter()
+                                    .zip(g.values)
+                                    .map(|(p, v)| (p.key.to_owned(), finite(v)))
+                                    .collect(),
+                            }),
                         },
                     })
                     .collect(),
@@ -799,6 +888,7 @@ impl Saver {
                 Alpha::Image(image) => FileAlphaShape::Image(self.alpha(image)),
             },
             hardness: finite(stroke.hardness),
+            alignment: Some(stroke.alignment.key().to_owned()),
             opacity: finite(stroke.opacity),
             backface_cos: finite(stroke.backface_cos),
             material: FileBrushMaterial {
@@ -816,6 +906,14 @@ impl Saver {
             }),
             hidden_objects: stroke.hidden_objects.clone(),
             hidden_sets: stroke.hidden_sets.clone(),
+            fill: stroke.fill.as_ref().map(|f| match f {
+                FillTarget::Triangles(list) => FileStrokeFill::Triangles(list.to_vec()),
+                FillTarget::Object(o) => FileStrokeFill::Object(*o),
+            }),
+            stencil: stroke.stencil.as_ref().map(|s| FileStencil {
+                alpha: self.alpha(&s.image),
+                affine: finite_n(s.affine),
+            }),
             first_dab,
             dab_count: stroke.dabs.len() as u64,
         }
@@ -836,13 +934,29 @@ impl Saver {
     }
 }
 
-fn channel_keys(set: ChannelSet) -> Vec<String> {
+pub(crate) fn material_to_file(m: &BrushMaterial) -> FileBrushMaterial {
+    FileBrushMaterial {
+        channels: channel_keys(m.channels),
+        values: values(&m.values),
+        grayscale: finite(m.grayscale),
+    }
+}
+
+pub(crate) fn material_from_file(m: FileBrushMaterial) -> BrushMaterial {
+    BrushMaterial {
+        channels: channel_set(&m.channels),
+        values: channel_values(m.values),
+        grayscale: m.grayscale,
+    }
+}
+
+pub(crate) fn channel_keys(set: ChannelSet) -> Vec<String> {
     set.iter().map(|c| c.key().to_owned()).collect()
 }
 
 /// JSON has no NaN or infinity: serde_json writes them as null, which no reader accepts.
 /// Such values are saved as 0 and the largest finite values.
-fn finite(v: f32) -> f32 {
+pub(crate) fn finite(v: f32) -> f32 {
     if v.is_nan() {
         0.0
     } else {
@@ -854,7 +968,7 @@ fn finite_n<const N: usize>(v: [f32; N]) -> [f32; N] {
     v.map(finite)
 }
 
-fn values(v: &ChannelValues) -> FileValues {
+pub(crate) fn values(v: &ChannelValues) -> FileValues {
     FileValues {
         base_color: finite_n(v.base_color),
         height: finite(v.height),
@@ -952,7 +1066,7 @@ fn encode_texture(image: &TextureImage) -> Result<Encoded> {
     })
 }
 
-fn encode_alpha(alpha: &AlphaImage) -> Result<Encoded> {
+pub(crate) fn encode_alpha(alpha: &AlphaImage) -> Result<Encoded> {
     use image::ImageEncoder;
     let mut bytes = Vec::new();
     png_encoder(&mut bytes).write_image(
@@ -966,7 +1080,7 @@ fn encode_alpha(alpha: &AlphaImage) -> Result<Encoded> {
     })
 }
 
-fn png_encoder(bytes: &mut Vec<u8>) -> image::codecs::png::PngEncoder<&mut Vec<u8>> {
+pub(crate) fn png_encoder(bytes: &mut Vec<u8>) -> image::codecs::png::PngEncoder<&mut Vec<u8>> {
     image::codecs::png::PngEncoder::new_with_quality(
         bytes,
         image::codecs::png::CompressionType::Fast,
@@ -1043,7 +1157,7 @@ fn check_size(width: u32, height: u32, max: u32) -> Result<()> {
 
 /// Decodes an image whose size is already checked, without the image crate's default
 /// memory limit, which large HDR fills exceed.
-fn decode(bytes: &[u8], format: image::ImageFormat) -> Result<image::DynamicImage> {
+pub(crate) fn decode(bytes: &[u8], format: image::ImageFormat) -> Result<image::DynamicImage> {
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     reader.no_limits();
     Ok(reader.decode()?)
@@ -1174,7 +1288,14 @@ impl Loader<'_> {
                 set.resolution
             );
             let layers = self.layers(set.layers)?;
+            let mut mesh_maps = MeshMaps::default();
+            for entry in set.mesh_maps {
+                if let Some(map) = MeshMap::from_key(&entry.map) {
+                    mesh_maps.insert(map, self.texture(entry.image)?);
+                }
+            }
             texture_sets.push(TextureSet {
+                mesh_maps,
                 name: set.name,
                 visible: set.visible,
                 resolution: set.resolution,
@@ -1255,6 +1376,7 @@ impl Loader<'_> {
             source: file.source,
             view: file.view,
             export,
+            bake: file.bake.map(bake_from_file),
         })
     }
 
@@ -1325,6 +1447,15 @@ impl Loader<'_> {
                             gamma: levels.gamma,
                             output: levels.output,
                         }),
+                        FileEffectKind::Generator(g) => {
+                            let kind = GeneratorKind::from_key(&g.kind)
+                                .with_context(|| format!("Unknown generator {:?}", g.kind))?;
+                            let mut generator = Generator::new(kind);
+                            for (key, value) in g.params {
+                                generator.set(&key, value);
+                            }
+                            EffectKind::Generator(generator)
+                        }
                     };
                     effects.push(Effect {
                         id,
@@ -1428,6 +1559,11 @@ impl Loader<'_> {
                 ),
             },
             hardness: stroke.hardness,
+            alignment: stroke
+                .alignment
+                .as_deref()
+                .and_then(Alignment::from_key)
+                .unwrap_or_default(),
             opacity: stroke.opacity,
             backface_cos: stroke.backface_cos,
             material: BrushMaterial {
@@ -1445,6 +1581,23 @@ impl Loader<'_> {
             }),
             hidden_objects: stroke.hidden_objects,
             hidden_sets: stroke.hidden_sets,
+            fill: stroke.fill.map(|f| match f {
+                FileStrokeFill::Triangles(list) => FillTarget::Triangles(Arc::new(list)),
+                FileStrokeFill::Object(o) => FillTarget::Object(o),
+            }),
+            stencil: stroke
+                .stencil
+                .map(|s| -> Result<StrokeStencil> {
+                    Ok(StrokeStencil {
+                        image: self
+                            .alphas
+                            .get(s.alpha)
+                            .cloned()
+                            .context("A stroke's stencil image is missing")?,
+                        affine: s.affine,
+                    })
+                })
+                .transpose()?,
             dabs,
         })
     }
@@ -1461,7 +1614,7 @@ fn blend_mode(key: &str) -> Result<BlendMode> {
     BlendMode::from_key(key).with_context(|| format!("Unknown blend mode {key}"))
 }
 
-fn channel_set(keys: &[String]) -> ChannelSet {
+pub(crate) fn channel_set(keys: &[String]) -> ChannelSet {
     let mut set = ChannelSet::NONE;
     for channel in keys.iter().filter_map(|k| Channel::from_key(k)) {
         set.set(channel, true);
@@ -1469,7 +1622,7 @@ fn channel_set(keys: &[String]) -> ChannelSet {
     set
 }
 
-fn channel_values(v: FileValues) -> ChannelValues {
+pub(crate) fn channel_values(v: FileValues) -> ChannelValues {
     ChannelValues {
         base_color: v.base_color,
         height: v.height,
@@ -1478,6 +1631,53 @@ fn channel_values(v: FileValues) -> ChannelValues {
         normal: v.normal,
         emissive: v.emissive,
         opacity: v.opacity,
+    }
+}
+
+fn file_bake(b: &BakeSettings) -> FileBake {
+    FileBake {
+        maps: b.maps.iter().map(|m| m.key().to_owned()).collect(),
+        subsampling: b.subsampling,
+        dilation: b.dilation,
+        front_distance: finite(b.front_distance),
+        rear_distance: finite(b.rear_distance),
+        average_normals: b.average_normals,
+        ignore_backfaces: b.ignore_backfaces,
+        matching: b.matching.key().to_owned(),
+        id_source: b.id_source.key().to_owned(),
+        ao_rays: b.ao_rays,
+        ao_distance: finite(b.ao_distance),
+        ao_self_occlusion: b.ao_self_occlusion,
+        thickness_rays: b.thickness_rays,
+        thickness_distance: finite(b.thickness_distance),
+        curvature_radius: finite(b.curvature_radius),
+        high_poly: b
+            .high_poly
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+    }
+}
+
+fn bake_from_file(b: FileBake) -> BakeSettings {
+    let defaults = BakeSettings::default();
+    BakeSettings {
+        maps: b.maps.iter().filter_map(|k| MeshMap::from_key(k)).collect(),
+        subsampling: b.subsampling.clamp(1, 4),
+        dilation: b.dilation.min(256),
+        front_distance: b.front_distance.clamp(0.0, 1.0),
+        rear_distance: b.rear_distance.clamp(0.0, 1.0),
+        average_normals: b.average_normals,
+        ignore_backfaces: b.ignore_backfaces,
+        matching: Matching::from_key(&b.matching).unwrap_or(defaults.matching),
+        id_source: IdSource::from_key(&b.id_source).unwrap_or(defaults.id_source),
+        ao_rays: b.ao_rays.clamp(1, 4096),
+        ao_distance: b.ao_distance.clamp(0.0, 10.0),
+        ao_self_occlusion: b.ao_self_occlusion,
+        thickness_rays: b.thickness_rays.clamp(1, 4096),
+        thickness_distance: b.thickness_distance.clamp(0.0, 10.0),
+        curvature_radius: b.curvature_radius.clamp(0.0, 1.0),
+        high_poly: b.high_poly.into_iter().map(PathBuf::from).collect(),
     }
 }
 
@@ -1563,6 +1763,13 @@ mod tests {
         let alpha = Arc::new(AlphaImage::new("dots".into(), 2, 2, vec![0, 64, 128, 255]));
 
         let stroke = |model: &mut Model, alpha: Alpha, camera: bool| {
+            let stencil = match &alpha {
+                Alpha::Image(image) if camera => Some(StrokeStencil {
+                    image: image.clone(),
+                    affine: [1.0, 0.0, 0.5, 0.0, -2.0, 0.25],
+                }),
+                _ => None,
+            };
             let dab = |x: f32| Dab {
                 position: Vec3::new(x, 0.25, -1.5),
                 normal: Vec3::Z,
@@ -1577,6 +1784,7 @@ mod tests {
                 space: StrokeSpace::Surface,
                 alpha,
                 hardness: 0.3,
+                alignment: Alignment::Camera,
                 opacity: 0.9,
                 backface_cos: 0.1,
                 material: BrushMaterial::default(),
@@ -1590,6 +1798,8 @@ mod tests {
                 }),
                 hidden_objects: vec![1],
                 hidden_sets: vec![],
+                fill: camera.then(|| FillTarget::Triangles(Arc::new(vec![0, 2, 1]))),
+                stencil,
                 dabs: vec![dab(0.0), dab(0.125), dab(1e-7)],
             })
         };
@@ -1598,6 +1808,15 @@ mod tests {
         let s2 = stroke(&mut model, Alpha::Square, false);
         let s3 = stroke(&mut model, Alpha::Image(alpha), false);
         let ids = &mut model.ids;
+        model.texture_sets[1].mesh_maps.insert(
+            MeshMap::Curvature,
+            Arc::new(TextureImage::new(
+                "Curvature".into(),
+                2,
+                2,
+                Texels::Rgba16((0..16).map(|i| i * 4000).collect()),
+            )),
+        );
         let stack = &mut model.texture_sets[0].stack;
         if let Content::Paint(paint) = &mut stack.layers[0].content {
             paint.strokes = vec![s1, s2];
@@ -1644,6 +1863,11 @@ mod tests {
         );
         levels.visible = false;
         mask.effects.push(levels);
+        let mut wear = Generator::new(GeneratorKind::EdgeWear);
+        wear.set("noise_scale", 33.0);
+        wear.set("invert", 1.0);
+        mask.effects
+            .push(Effect::new(ids.next(), EffectKind::Generator(wear)));
         mask.enabled = false;
         fill.mask = Some(mask);
         let mut folder = Layer::new(LayerKind::Folder, "Dirt".into(), ids);
@@ -1677,6 +1901,12 @@ mod tests {
                 outline: false,
                 outline_color: [0.1, 0.2, 0.3],
                 outline_width: 1.5,
+            }),
+            bake: Some(BakeSettings {
+                maps: vec![MeshMap::Curvature, MeshMap::Height],
+                subsampling: 2,
+                high_poly: vec![PathBuf::from("/models/cat_high.fbx")],
+                ..BakeSettings::default()
             }),
             export: Some(ExportSettings {
                 directory: "/tmp/out".into(),
@@ -1728,6 +1958,17 @@ mod tests {
         assert_eq!(b.ids.last(), a.ids.last());
         assert_eq!(loaded.view, original.view);
         assert_eq!(loaded.export, original.export);
+        assert_eq!(loaded.bake, original.bake);
+        let curvature = |m: &Model| match &m.texture_sets[1]
+            .mesh_maps
+            .get(MeshMap::Curvature)
+            .unwrap()
+            .texels
+        {
+            Texels::Rgba16(v) => v.clone(),
+            _ => panic!("stored as 16 bit"),
+        };
+        assert_eq!(curvature(&loaded.model), curvature(&original.model));
         assert_eq!(loaded.source, original.source);
         assert!(!b.objects[1].visible);
         assert_eq!(b.texture_sets[1].resolution, 512);
@@ -1745,6 +1986,11 @@ mod tests {
             assert_eq!(pa.strokes.len(), pb.strokes.len());
             for (sa, sb) in pa.strokes.iter().zip(&pb.strokes) {
                 assert_eq!(sa.dabs, sb.dabs);
+                assert_eq!(sa.fill, sb.fill);
+                assert_eq!(
+                    sa.stencil.as_ref().map(|s| (&s.image.pixels, s.affine)),
+                    sb.stencil.as_ref().map(|s| (&s.image.pixels, s.affine))
+                );
                 assert_eq!(sa.camera, sb.camera);
                 assert!(sa.alpha.same(&sa.alpha));
                 if let (Alpha::Image(ia), Alpha::Image(ib)) = (&sa.alpha, &sb.alpha) {
@@ -1775,7 +2021,7 @@ mod tests {
         let project = project();
         let mut cache = ImageCache::default();
         write(Cursor::new(Vec::new()), &project, &mut cache).unwrap();
-        assert_eq!(cache.textures.len(), 3);
+        assert_eq!(cache.textures.len(), 4);
         assert_eq!(cache.alphas.len(), 1);
         let before = cache.textures.values().next().unwrap().bytes.clone();
         write(Cursor::new(Vec::new()), &project, &mut cache).unwrap();
@@ -1788,6 +2034,10 @@ mod tests {
         // Images the project no longer uses are forgotten.
         let mut bare = project.clone();
         bare.model.texture_sets[0].stack.layers.truncate(1);
+        write(Cursor::new(Vec::new()), &bare, &mut cache).unwrap();
+        // Only the baked map is left.
+        assert_eq!(cache.textures.len(), 1);
+        bare.model.texture_sets[1].mesh_maps = Default::default();
         write(Cursor::new(Vec::new()), &bare, &mut cache).unwrap();
         assert!(cache.textures.is_empty());
     }

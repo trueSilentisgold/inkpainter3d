@@ -412,6 +412,8 @@ pub enum EffectKind {
     Fill(GrayFill),
     /// Changes what lies below instead of adding to it.
     Levels(Levels),
+    /// A procedural mask from the mesh maps and noise.
+    Generator(crate::Generator),
 }
 
 /// A step in a mask's effect stack, blended onto the mask below it.
@@ -455,6 +457,7 @@ impl Effect {
             EffectKind::Paint(_) => "Paint",
             EffectKind::Fill(_) => "Fill",
             EffectKind::Levels(_) => "Levels",
+            EffectKind::Generator(g) => g.kind.label(),
         }
     }
 }
