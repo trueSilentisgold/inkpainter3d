@@ -44,9 +44,47 @@ impl TextureImage {
     }
 }
 
+impl TextureImage {
+    /// The texel nearest to `uv` (origin top-left, wrapping), its components as stored:
+    /// 0 to 1 for 8 and 16 bits, raw for floats.
+    pub fn texel_at_uv(&self, uv: [f32; 2]) -> [f32; 4] {
+        let wrap = |v: f32, size: u32| {
+            let t = (v - v.floor()) * size as f32;
+            (t as u32).min(size.saturating_sub(1))
+        };
+        let (x, y) = (wrap(uv[0], self.width), wrap(uv[1], self.height));
+        let i = ((y * self.width + x) * 4) as usize;
+        match &self.texels {
+            Texels::Rgba8(v) => std::array::from_fn(|c| v[i + c] as f32 / 255.0),
+            Texels::Rgba16(v) => std::array::from_fn(|c| v[i + c] as f32 / 65535.0),
+            Texels::RgbaF32(v) => std::array::from_fn(|c| v[i + c]),
+        }
+    }
+}
+
 /// Images are identified by their id.
 impl PartialEq for TextureImage {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texels_are_read_nearest_and_wrap() {
+        // 2 × 1: black, then white.
+        let image = TextureImage::new(
+            "test".into(),
+            2,
+            1,
+            Texels::Rgba8(vec![0, 0, 0, 255, 255, 255, 255, 255]),
+        );
+        assert_eq!(image.texel_at_uv([0.25, 0.5]), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(image.texel_at_uv([0.75, 0.5]), [1.0; 4]);
+        assert_eq!(image.texel_at_uv([1.25, 0.5]), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(image.texel_at_uv([1.0, 0.5]), [0.0, 0.0, 0.0, 1.0]);
     }
 }

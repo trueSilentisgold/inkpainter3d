@@ -147,7 +147,8 @@ inkpainter3d aims to be a capable alternative that:
     show, like Painter's; all of Painter's blend modes, including Passthrough for folders
     and the normal map modes
   - **masks** (white or black) on layers and folders, painted with a grayscale brush, with
-    paint, fill, levels and blur effects, reordered by drag and drop and copied like layers;
+    paint, fill, levels, blur and **color selection** effects (parts of the baked ID map,
+    picked by clicking the model), reordered by drag and drop and copied like layers;
     Shift + click turns a mask off
   - **fill layers** with a value or an image per channel (PNG, JPEG, TGA, BMP, EXR, HDR;
     normal maps in DirectX or OpenGL format), **UV** or **tri-planar** projection with
@@ -194,7 +195,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | ✅ done |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ✅ done |
 | 9 | **Generators** — mask builder, edge wear, dirt, noises, smart materials and masks, starter content, blur in masks (more filters come later) | ✅ done |
-| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | in progress: symmetry done |
+| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | in progress: symmetry and color selection done |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 12 | **Polish** — translations, UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 

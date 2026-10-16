@@ -19,8 +19,8 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use ink_core::export::{ExportBlock, ExportTexel};
 use ink_core::{
-    BlendMode, Channel, ChannelKind, Content, EffectKind, Layer, LayerStack, Mask, MeshMap,
-    MeshMaps, Model, Projection, ProjectionMode, Texels, TextureImage,
+    BlendMode, Channel, ChannelKind, ColorSelection, Content, EffectKind, Layer, LayerStack, Mask,
+    MeshMap, MeshMaps, Model, Projection, ProjectionMode, Texels, TextureImage,
 };
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -135,13 +135,15 @@ struct GeometryUniforms {
     bounds: [f32; 4],
 }
 
-/// The mesh maps generators can read, in the order of their bindings (5 and up).
-const MAP_SLOTS: [MeshMap; 5] = [
+/// The mesh maps generators and color selections can read, in the order of their bindings
+/// (5 and up) and of the `HAS_*` bits in generators.wgsl.
+const MAP_SLOTS: [MeshMap; 6] = [
     MeshMap::AmbientOcclusion,
     MeshMap::Curvature,
     MeshMap::WorldNormal,
     MeshMap::Position,
     MeshMap::Thickness,
+    MeshMap::Id,
 ];
 
 /// The mesh maps of a texture set that generators read.
@@ -178,6 +180,8 @@ enum Pipe {
     MaskBlurX,
     /// The second pass: along y, blended onto the mask below.
     MaskBlurY,
+    /// Parts of the ID map by color.
+    MaskColorSelection,
 }
 
 /// One step of compositing a chunk.
@@ -394,13 +398,7 @@ impl Builder<'_> {
                     );
                 }
                 EffectKind::Generator(generator) => {
-                    // Which mesh maps exist, so the shader can fall back where one is missing.
-                    let present = self
-                        .maps
-                        .iter()
-                        .enumerate()
-                        .fold(0u32, |bits, (i, m)| bits | (u32::from(m.is_some()) << i));
-                    uniforms.info[3] = generator.kind.code() | (present << 8);
+                    uniforms.info[3] = generator.kind.code() | (self.present_maps() << 8);
                     let v = &generator.values;
                     uniforms.value = [v[0], v[1], v[2], v[3]];
                     uniforms.transform = [v[4], v[5], v[6], v[7]];
@@ -424,11 +422,40 @@ impl Builder<'_> {
                     push(self, Pipe::MaskBlurX, uniforms, None, None);
                     push(self, Pipe::MaskBlurY, uniforms, None, None);
                 }
+                EffectKind::ColorSelection(selection) => {
+                    uniforms.info[3] = self.present_maps() << 8;
+                    // One color per float, as the integer r·65536 + g·256 + b, which a float
+                    // holds exactly; the shader reads them like a generator's parameters.
+                    let mut packed = [0.0f32; ColorSelection::MAX_COLORS];
+                    for (slot, [r, g, b]) in packed.iter_mut().zip(&selection.colors) {
+                        *slot = (*r as u32 * 65536 + *g as u32 * 256 + *b as u32) as f32;
+                    }
+                    uniforms.value = [packed[0], packed[1], packed[2], packed[3]];
+                    uniforms.transform = [packed[4], packed[5], packed[6], packed[7]];
+                    uniforms.offset = [packed[8], packed[9], packed[10], packed[11]];
+                    uniforms.levels = [packed[12], packed[13], packed[14], packed[15]];
+                    uniforms.levels2 = [
+                        selection.tolerance,
+                        selection.hardness,
+                        f32::from(selection.invert),
+                        selection.colors.len().min(ColorSelection::MAX_COLORS) as f32,
+                    ];
+                    push(self, Pipe::MaskColorSelection, uniforms, None, None);
+                }
             }
         }
         self.program
             .steps
             .push(Step::Copy(Tex::MaskTmp(cur), Tex::MaskCache(slot)));
+    }
+
+    /// Which mesh maps exist, one bit per [`MAP_SLOTS`] entry, so the shader can fall back
+    /// where one is missing.
+    fn present_maps(&self) -> u32 {
+        self.maps
+            .iter()
+            .enumerate()
+            .fold(0u32, |bits, (i, m)| bits | (u32::from(m.is_some()) << i))
     }
 
     fn has_paint(&self, paint: u64, channel: usize) -> bool {
@@ -891,6 +918,7 @@ enum PipeMask {
     Generator,
     BlurX,
     BlurY,
+    ColorSelection,
 }
 
 impl Pipe {
@@ -906,6 +934,7 @@ impl Pipe {
             Self::MaskGenerator => PipeKey::Mask(PipeMask::Generator),
             Self::MaskBlurX => PipeKey::Mask(PipeMask::BlurX),
             Self::MaskBlurY => PipeKey::Mask(PipeMask::BlurY),
+            Self::MaskColorSelection => PipeKey::Mask(PipeMask::ColorSelection),
         }
     }
 }
@@ -988,6 +1017,7 @@ impl Compositor {
                 texture(7, filterable, d2, fragment),
                 texture(8, filterable, d2, fragment),
                 texture(9, filterable, d2, fragment),
+                texture(10, filterable, d2, fragment),
             ],
         );
         let pass_layout = layout(
@@ -1105,6 +1135,7 @@ impl Compositor {
             (PipeMask::Generator, "fs_mask_generator"),
             (PipeMask::BlurX, "fs_mask_blur_x"),
             (PipeMask::BlurY, "fs_mask_blur_y"),
+            (PipeMask::ColorSelection, "fs_mask_color_selection"),
         ] {
             let p = pipeline(
                 "composite mask",
@@ -2262,6 +2293,12 @@ fn signature(stack: &LayerStack, maps: &MeshMaps) -> u64 {
                             EffectKind::Blur(b) => {
                                 4u8.hash(h);
                                 b.intensity.to_bits().hash(h);
+                            }
+                            EffectKind::ColorSelection(s) => {
+                                5u8.hash(h);
+                                s.colors.hash(h);
+                                floats(h, &[s.tolerance, s.hardness]);
+                                s.invert.hash(h);
                             }
                         }
                     }

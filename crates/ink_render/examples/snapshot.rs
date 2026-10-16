@@ -48,6 +48,8 @@
 //! Generators: `generator=edge_wear` (a `GeneratorKind::key`) puts a red fill layer with a black
 //! mask holding that generator on top; `gparam=key:value` (may be given several times) sets
 //! its parameters. Bake the mesh maps it reads in the same run with `bake=`.
+//! `colorsel=243,85,85` puts a red fill layer on top whose black mask holds a color
+//! selection of that ID map color (8 bits; `csinvert` inverts it); bake `id` with it.
 //! `smart=Rusty_metal` puts a starter preset (`ink_io::starter`, by name with `_` for spaces)
 //! on top of the stack.
 //!
@@ -243,6 +245,24 @@ fn main() -> Result<()> {
         mask.effects.push(Effect::new(
             model.next_id(),
             EffectKind::Generator(generator),
+        ));
+        layer.mask = Some(mask);
+        model.texture_sets[set].stack.layers.push(layer);
+    }
+    if let Some(rgb) = option("colorsel") {
+        let mut selection = ink_core::ColorSelection::default();
+        let parts: Vec<u8> = rgb.split(',').map(str::parse).collect::<Result<_, _>>()?;
+        anyhow::ensure!(parts.len() == 3, "colorsel takes r,g,b in 8 bits");
+        selection.colors.push([parts[0], parts[1], parts[2]]);
+        selection.invert = flag("csinvert");
+        let mut layer = Layer::new(LayerKind::Fill, "Selected".into(), &mut model.ids);
+        if let Content::Fill(fill) = &mut layer.content {
+            fill.values.base_color = [0.9, 0.1, 0.1];
+        }
+        let mut mask = Mask::new(0.0, model.next_id());
+        mask.effects.push(Effect::new(
+            model.next_id(),
+            EffectKind::ColorSelection(selection),
         ));
         layer.mask = Some(mask);
         model.texture_sets[set].stack.layers.push(layer);

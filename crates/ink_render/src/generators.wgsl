@@ -9,12 +9,14 @@
 @group(0) @binding(7) var map_normal: texture_2d<f32>;
 @group(0) @binding(8) var map_position: texture_2d<f32>;
 @group(0) @binding(9) var map_thickness: texture_2d<f32>;
+@group(0) @binding(10) var map_id: texture_2d<f32>;
 
 const HAS_AO: u32 = 1u;
 const HAS_CURVATURE: u32 = 2u;
 const HAS_NORMAL: u32 = 4u;
 const HAS_POSITION: u32 = 8u;
 const HAS_THICKNESS: u32 = 16u;
+const HAS_ID: u32 = 32u;
 
 const GEN_NOISE: u32 = 0u;
 const GEN_MASK_BUILDER: u32 = 1u;
@@ -286,6 +288,50 @@ fn generate(t: Texel) -> f32 {
 }
 
 // A generator's mask, blended onto what lies below with the effect's mode and opacity.
+// ---- Color selection: parts of the ID map by color ----
+//
+// The picked colors ride in the generator parameter slots, one per float as the integer
+// r·65536 + g·256 + b (8 bits each); levels2 holds tolerance, hardness, invert and the
+// number of colors.
+
+fn picked_color(i: u32) -> vec3<f32> {
+    let packed = u32(gp(i) + 0.5);
+    return vec3<f32>(f32(packed >> 16u), f32((packed >> 8u) & 255u), f32(packed & 255u)) / 255.0;
+}
+
+fn color_selection(t: Texel) -> f32 {
+    if !present(HAS_ID) {
+        return 0.0;
+    }
+    // The nearest texel: filtering would blend the colors of neighbouring parts.
+    let size = vec2<i32>(textureDimensions(map_id));
+    let p = clamp(vec2<i32>(t.uv * vec2<f32>(size)), vec2<i32>(0), size - 1);
+    let id = textureLoad(map_id, p, 0).rgb;
+    var nearest = 2.0;
+    let count = u32(pass_.levels2.w + 0.5);
+    for (var i = 0u; i < count; i++) {
+        // 1 between black and white.
+        nearest = min(nearest, distance(id, picked_color(i)) / sqrt(3.0));
+    }
+    let tolerance = max(pass_.levels2.x, 1e-4);
+    let start = tolerance * clamp(pass_.levels2.y, 0.0, 1.0);
+    var selected = 1.0 - smoothstep(start, tolerance + 1e-4, nearest);
+    if pass_.levels2.z > 0.5 {
+        selected = 1.0 - selected;
+    }
+    return selected;
+}
+
+@fragment
+fn fs_mask_color_selection(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    let local = chunk_texel(frag);
+    let t = map_texel(seed_of(local));
+    let top = vec4<f32>(color_selection(t), 0.0, 0.0, 1.0);
+    let m = textureLoad(below, local, 0).r;
+    let out = blend_premultiplied(vec4<f32>(m, 0.0, 0.0, 1.0), top, pass_.params.x, pass_.info.x, KIND_SCALAR, true);
+    return vec4<f32>(out.x, 0.0, 0.0, 1.0);
+}
+
 @fragment
 fn fs_mask_generator(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let local = chunk_texel(frag);

@@ -434,6 +434,48 @@ impl Blur {
     }
 }
 
+/// Painter's Color Selection: white where the texture set's ID map shows one of the picked
+/// colors. Without an ID map it selects nothing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColorSelection {
+    /// The picked colors, as stored in the ID map: 0 to 1 per component, kept in 8 bits.
+    /// At most [`Self::MAX_COLORS`].
+    pub colors: Vec<[u8; 3]>,
+    /// How far a color may lie from a picked one and still count, 0 to 1 (the distance
+    /// between black and white is 1).
+    pub tolerance: f32,
+    /// 1 cuts off sharply at the tolerance; lower values fade out towards it.
+    pub hardness: f32,
+    pub invert: bool,
+}
+
+impl Default for ColorSelection {
+    fn default() -> Self {
+        Self {
+            colors: Vec::new(),
+            tolerance: 0.1,
+            hardness: 1.0,
+            invert: false,
+        }
+    }
+}
+
+impl ColorSelection {
+    /// As many colors as the compositor's pass parameters hold.
+    pub const MAX_COLORS: usize = 16;
+
+    /// Adds a picked color (0 to 1 per component) unless it is there already or the list is
+    /// full. Returns whether it was added.
+    pub fn pick(&mut self, color: [f32; 3]) -> bool {
+        let color = color.map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8);
+        if self.colors.contains(&color) || self.colors.len() >= Self::MAX_COLORS {
+            return false;
+        }
+        self.colors.push(color);
+        true
+    }
+}
+
 /// What an effect does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EffectKind {
@@ -446,6 +488,8 @@ pub enum EffectKind {
     Blur(Blur),
     /// A procedural mask from the mesh maps and noise.
     Generator(crate::Generator),
+    /// Parts of the ID map, by color.
+    ColorSelection(ColorSelection),
 }
 
 /// A step in a mask's effect stack, blended onto the mask below it.
@@ -491,6 +535,7 @@ impl Effect {
             EffectKind::Levels(_) => "Levels",
             EffectKind::Blur(_) => "Blur",
             EffectKind::Generator(g) => g.kind.label(),
+            EffectKind::ColorSelection(_) => "Color selection",
         }
     }
 }
@@ -1159,6 +1204,18 @@ mod tests {
         for channel in Channel::ALL {
             assert_eq!(Channel::from_key(channel.key()), Some(channel));
         }
+    }
+
+    #[test]
+    fn color_selections_keep_each_color_once_and_stop_when_full() {
+        let mut s = ColorSelection::default();
+        assert!(s.pick([1.0, 0.5, 0.0]));
+        assert_eq!(s.colors, vec![[255, 128, 0]]);
+        assert!(!s.pick([1.0, 0.501, 0.0]), "the same 8-bit color again");
+        for i in 1..ColorSelection::MAX_COLORS {
+            assert!(s.pick([0.0, 0.0, i as f32 / 255.0]));
+        }
+        assert!(!s.pick([0.3, 0.3, 0.3]), "full");
     }
 
     #[test]
