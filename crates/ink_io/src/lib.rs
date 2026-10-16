@@ -372,7 +372,9 @@ pub fn texture_to_rgba8(texture: &TextureImage) -> Vec<u8> {
         Texels::Rgba8(v) => v.clone(),
         Texels::Rgba16(v) => v.iter().map(|&x| (x >> 8) as u8).collect(),
         Texels::RgbaF32(v) => v
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| {
                 let encode = |c: f32| {
                     let c = c.clamp(0.0, 1.0);

@@ -110,7 +110,9 @@ impl Smart {
             let rgba = crate::texture_to_rgba8(image);
             let (mut sum, mut n) = ([0u64; 3], 0u64);
             for p in rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .step_by(((rgba.len() / 4) / 4096).max(1))
             {
                 for c in 0..3 {
