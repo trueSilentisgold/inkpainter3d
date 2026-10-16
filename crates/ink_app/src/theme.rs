@@ -276,6 +276,7 @@ pub mod icons {
         DELETE = "delete",
         EFFECT_LEVELS = "effect-levels",
         EFFECT_BLUR = "effect-blur",
+        EFFECT_COLOR_SELECTION = "effect-color-selection",
         EFFECT_GENERATOR = "effect-generator",
         REMOVE = "remove",
         INVERT = "invert",

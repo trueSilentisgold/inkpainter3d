@@ -215,6 +215,14 @@ check_bake bake-corner "$data/bake_corner.obj" "bake=ambient_occlusion,curvature
 # The edge of a cube is convex.
 check_bake bake-cube cube "bake=curvature res=512" "curvature,0,100:r > 240" "curvature,100,100:r > 118 && r < 138"
 # A flat quad against a bumpy copy: the bump's slopes tilt the normal, its top is high.
+# Color selection: the ID map of two high-poly halves; picking the left one's color (as the
+# bake gives it) selects the left half only, inverted the right half.
+check color-selection "$data/bake_low.obj" \
+    "bake=id res=128 bakehigh=$data/bake_id_high.obj front=0.15 rear=0.05 colorsel=243,85,85 2d display=basecolor" \
+    "450,400:r > 200 && g < 60" "830,400:$grey"
+check color-selection-invert "$data/bake_low.obj" \
+    "bake=id res=128 bakehigh=$data/bake_id_high.obj front=0.15 rear=0.05 colorsel=243,85,85 csinvert 2d display=basecolor" \
+    "450,400:$grey" "830,400:r > 200 && g < 60"
 check_bake bake-high "$data/bake_low.obj" "bake=normal,height,id res=128 bakehigh=$data/bake_high.obj front=0.15 rear=0.05"     "normal,5,5:r > 120 && r < 135 && b > 250" "normal,64,100:g < 110" "normal,64,28:g > 150"     "height,64,64:r > 180" "height,5,5:r < 90" "id,64,64:r > 200"
 
 # Generators read the baked maps: edge wear on a cube is red at its edges and not on its faces.

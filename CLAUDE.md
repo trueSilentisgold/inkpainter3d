@@ -118,7 +118,8 @@ Things that are easy to get wrong:
   2048² array pages (`POOL_FORMATS`: Rgba16Float for colors and normals, Rg16Float for
   scalars, masks and paint effects), premultiplied: value·coverage plus coverage. Each paint
   layer has a page table per channel in a storage buffer (`EMPTY` = no paint).
-- **Compositor** (compositor.rs). Composites in 512² chunks plus a 1-texel apron: first the
+- **Compositor** (compositor.rs). Composites in 512² chunks plus an apron (1 texel, widened by the reach of
+  blurs in masks, `Program::reach`): first the
   masks of the stack into a mask cache, then each channel's layers onto a 16-bit float
   accumulator (`composite.wgsl`); isolated folders composite onto an accumulator of their
   own, passthrough folders blend in place; a resolve pass writes the channel textures and
@@ -179,8 +180,11 @@ Things that are easy to get wrong:
   `ApplyParams`/`TileDraw` (paint), `PassUniforms`/`ResolveUniforms`/`GeometryUniforms`
   (compositor) and `UvUniforms` (2D view) mirror the WGSL structs field for field (vec4/mat4
   only; update the size tests); `export_texel` in compositor.rs reads `ExportOutputs` of
-  composite_resolve.wgsl, whose `APRON` is the compositor's; `BlendMode::code` is the `BLEND_*` constants in
-  composite.wgsl (checked by `blend_codes_match_the_shader`); the order of
+  composite_resolve.wgsl (the apron rides in `ResolveUniforms::area.w`, as it grows with
+  blurs); `BlendMode::code` is the `BLEND_*` constants in
+  composite.wgsl (checked by `blend_codes_match_the_shader`); the order of `MAP_SLOTS`
+  (compositor.rs) is the mesh map bindings from 5 up and the `HAS_*` bits in
+  generators.wgsl; the order of
   `DisplayMode::ALL` is the `DISPLAY_*` code in viewport.wgsl and uv_view.wgsl;
   `UvCamera::to_pixel` and `to_clip` in uv_view.wgsl must agree;
   the alpha mode rides in `id_color.w`; highlighting uses the draw's first instance (1 =

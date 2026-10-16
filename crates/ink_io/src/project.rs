@@ -9,11 +9,11 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
     Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending, Blur,
-    BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, Content, Dab, Effect,
-    EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GrayFill, IdSource, Ids, Layer,
-    LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model, NormalFormat,
-    PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace, StrokeStencil,
-    Texels, TextureImage, TextureSet, Tool,
+    BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, ColorSelection, Content, Dab,
+    Effect, EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GrayFill, IdSource,
+    Ids, Layer, LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model,
+    NormalFormat, PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace,
+    StrokeStencil, Texels, TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -488,11 +488,22 @@ enum FileEffectKind {
     Levels(FileLevels),
     Generator(FileGenerator),
     Blur(FileBlur),
+    ColorSelection(FileColorSelection),
 }
 
 #[derive(Serialize, Deserialize)]
 struct FileBlur {
     intensity: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileColorSelection {
+    /// 8-bit RGB as stored in the ID map.
+    colors: Vec<[u8; 3]>,
+    tolerance: f32,
+    hardness: f32,
+    #[serde(default)]
+    invert: bool,
 }
 
 /// A generator by the keys of its kind and parameters, so the order of the parameters in the
@@ -848,6 +859,14 @@ impl Saver {
                             EffectKind::Blur(blur) => FileEffectKind::Blur(FileBlur {
                                 intensity: finite(blur.intensity),
                             }),
+                            EffectKind::ColorSelection(s) => {
+                                FileEffectKind::ColorSelection(FileColorSelection {
+                                    colors: s.colors.clone(),
+                                    tolerance: finite(s.tolerance),
+                                    hardness: finite(s.hardness),
+                                    invert: s.invert,
+                                })
+                            }
                             EffectKind::Generator(g) => FileEffectKind::Generator(FileGenerator {
                                 kind: g.kind.key().to_owned(),
                                 params: g
@@ -1467,6 +1486,15 @@ impl Loader<'_> {
                         FileEffectKind::Blur(blur) => EffectKind::Blur(Blur {
                             intensity: blur.intensity.clamp(0.0, 1.0),
                         }),
+                        FileEffectKind::ColorSelection(mut s) => {
+                            s.colors.truncate(ColorSelection::MAX_COLORS);
+                            EffectKind::ColorSelection(ColorSelection {
+                                colors: s.colors,
+                                tolerance: s.tolerance.clamp(0.0, 1.0),
+                                hardness: s.hardness.clamp(0.0, 1.0),
+                                invert: s.invert,
+                            })
+                        }
                         FileEffectKind::Generator(g) => {
                             let kind = GeneratorKind::from_key(&g.kind)
                                 .with_context(|| format!("Unknown generator {:?}", g.kind))?;
@@ -1898,6 +1926,15 @@ mod tests {
         let mut blur = Effect::new(ids.next(), EffectKind::Blur(Blur { intensity: 0.35 }));
         blur.blend = BlendMode::Replace;
         mask.effects.push(blur);
+        mask.effects.push(Effect::new(
+            ids.next(),
+            EffectKind::ColorSelection(ColorSelection {
+                colors: vec![[255, 0, 0], [12, 200, 7]],
+                tolerance: 0.25,
+                hardness: 0.5,
+                invert: true,
+            }),
+        ));
         let mut wear = Generator::new(GeneratorKind::EdgeWear);
         wear.set("noise_scale", 33.0);
         wear.set("invert", 1.0);

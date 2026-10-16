@@ -26,8 +26,9 @@ pub use fill::{FillShape, FillTarget};
 pub use generator::{Generator, GeneratorKind};
 pub use history::{Command, History};
 pub use layer::{
-    BlendMode, Blending, Blur, ChannelBlend, Content, Effect, EffectKind, Fill, Folder, GrayFill,
-    Layer, LayerKind, LayerStack, Levels, Mask, Place, Projection, ProjectionMode,
+    BlendMode, Blending, Blur, ChannelBlend, ColorSelection, Content, Effect, EffectKind, Fill,
+    Folder, GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place, Projection,
+    ProjectionMode,
 };
 pub use mesh::{Aabb, Mesh};
 pub use model::{

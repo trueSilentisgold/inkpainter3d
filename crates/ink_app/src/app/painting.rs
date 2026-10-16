@@ -41,6 +41,8 @@ pub struct PaintState {
     pub fill_shape: FillShape,
     /// Painter's symmetry (L): strokes on the model land mirrored or turned too.
     pub symmetry: Symmetry,
+    /// A color selection waiting for a click on the model: (texture set, layer, effect).
+    pub color_pick: Option<(usize, u64, u64)>,
     pub lazy_mouse: bool,
     /// Lazy mouse distance in percent of the view height (Painter's Distance).
     pub lazy_distance: f32,
@@ -63,6 +65,7 @@ impl Default for PaintState {
             stencil: Default::default(),
             fill_shape: FillShape::default(),
             symmetry: Symmetry::default(),
+            color_pick: None,
             lazy_mouse: false,
             lazy_distance: 8.0,
             alphas: Vec::new(),
@@ -251,6 +254,14 @@ impl InkApp {
                         continue;
                     }
                     let p = vec2(pos);
+                    // A click while picking takes a color from the ID map instead of
+                    // painting; any other button cancels.
+                    if let Some(target) = self.paint.color_pick.take() {
+                        if button == PointerButton::Primary {
+                            self.pick_id_color(view, rect, p, target);
+                        }
+                        continue;
+                    }
                     if self.paint.fill_tool {
                         if button == PointerButton::Primary {
                             self.fill_at(view, rect, p);
@@ -381,6 +392,43 @@ impl InkApp {
             stroke.symmetry = Vec::new();
         }
         self.history.record(Command::add_stroke(set, paint, id));
+    }
+
+    /// Takes the ID map's color under the pointer into a color selection.
+    fn pick_id_color(
+        &mut self,
+        view: View,
+        rect: egui::Rect,
+        p: Vec2,
+        (set, layer, effect): (usize, u64, u64),
+    ) {
+        let origin = vec2(rect.min);
+        let size = Vec2::new(rect.width(), rect.height());
+        let uv = match view {
+            View::Model => {
+                let (start, dir) = self.camera.ray(p - origin, size);
+                let hit = self.model.pick(start, dir);
+                match hit {
+                    Some(hit) if self.model.parts[hit.part].texture_set == set => hit.uv,
+                    Some(_) => {
+                        self.status = "That part belongs to another texture set".to_owned();
+                        return;
+                    }
+                    None => return,
+                }
+            }
+            View::Uv => self.uv_camera.to_uv(p - origin, size),
+        };
+        let Some(id_map) = self.model.texture_sets[set]
+            .mesh_maps
+            .get(ink_core::MeshMap::Id)
+            .cloned()
+        else {
+            self.status = "Bake an ID map first (Ctrl+Shift+B)".to_owned();
+            return;
+        };
+        let [r, g, b, _] = id_map.texel_at_uv(uv.to_array());
+        self.pick_selection_color(set, layer, effect, [r, g, b]);
     }
 
     /// Adds a stroke with the brush to the paint target.
@@ -658,6 +706,18 @@ impl InkApp {
         };
         let modifiers = ui.input(|i| i.modifiers);
         let painter = ui.painter_at(rect);
+        if self.paint.color_pick.is_some() {
+            if rect.contains(pointer) && !modifiers.alt {
+                painter.circle_stroke(pointer, 6.0, Line::new(1.5, Color32::WHITE));
+                theme::overlay_text(
+                    &painter,
+                    pointer + egui::vec2(14.0, -14.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    "Click a part to pick its ID color",
+                );
+            }
+            return;
+        }
         if self.paint.fill_tool {
             if rect.contains(pointer) && !modifiers.alt {
                 theme::overlay_text(

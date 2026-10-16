@@ -335,7 +335,10 @@ Layer Stack von Body_MAT                 Ergebnis
       Graustufen, X tauscht Schwarz und Weiß
 - [x] `P1` Maske ein- und ausschalten (Shift+Klick)
 - [ ] `P1` Maske im Viewport anzeigen (Alt+Klick)
-- [ ] `P1` **Color Selection:** Maske aus Farben der ID-Map
+- [x] `P1` **Color Selection:** Masken-Effekt, der die Teile mit den gewählten Farben der
+      gebackenen ID-Map weiß macht. „Pick color“, dann Klick auf das Modell (3D oder 2D)
+      nimmt die Farbe darunter auf, bis zu 16 Farben; Tolerance, Hardness und Invert wie in
+      Painter. Ohne ID-Map wählt sie nichts aus.
 - [x] `P1` **Smart Masks:** gespeicherte Masken-Aufbauten aus dem Shelf
 - [ ] `P2` **Quick Mask** (U bearbeiten, Y leeren, I invertieren)
 
@@ -816,6 +819,6 @@ texturieren und exportieren.**
 | 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ✅ fertig |
 | 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Blur in Masken; weitere Filter folgen) |
-| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | läuft: Symmetrie fertig |
+| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | läuft: Symmetrie und Color Selection fertig |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |

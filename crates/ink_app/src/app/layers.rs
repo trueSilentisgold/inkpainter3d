@@ -6,9 +6,9 @@ use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Image, ImageSource, Key, RichText, Sense, Stroke as Line, vec2};
 use ink_core::generator::ParamKind;
 use ink_core::{
-    BlendMode, Blur, Channel, ChannelKind, ChannelSet, Command, Content, Effect, EffectKind, Fill,
-    Generator, GeneratorKind, GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place,
-    Projection, ProjectionMode, TextureImage,
+    BlendMode, Blur, Channel, ChannelKind, ChannelSet, ColorSelection, Command, Content, Effect,
+    EffectKind, Fill, Generator, GeneratorKind, GrayFill, Layer, LayerKind, LayerStack, Levels,
+    Mask, Place, Projection, ProjectionMode, TextureImage,
 };
 use std::sync::Arc;
 
@@ -573,6 +573,45 @@ impl InkApp {
         self.paint.paint_brush.material.grayscale = 1.0 - background;
     }
 
+    /// Adds a color picked from the ID map to a color selection, as an undo step of its own.
+    pub(super) fn pick_selection_color(
+        &mut self,
+        set: usize,
+        layer: u64,
+        effect: u64,
+        color: [f32; 3],
+    ) {
+        self.commit_stack_edit();
+        let Some(texture_set) = self.model.texture_sets.get_mut(set) else {
+            return;
+        };
+        let before = texture_set.stack.clone();
+        let added = texture_set
+            .stack
+            .find_mut(layer)
+            .and_then(|l| l.mask.as_mut())
+            .and_then(|m| m.effect_mut(effect))
+            .and_then(|e| match &mut e.kind {
+                EffectKind::ColorSelection(s) => Some(s.pick(color)),
+                _ => None,
+            });
+        match added {
+            Some(true) => {
+                self.history
+                    .record(Command::edit_stack(set, "Pick color", before));
+                let [r, g, b] = color.map(|c| (c * 255.0).round() as u8);
+                self.status = format!("Picked #{r:02X}{g:02X}{b:02X}");
+            }
+            Some(false) => {
+                self.status = format!(
+                    "Already picked, or the selection is full ({} colors)",
+                    ColorSelection::MAX_COLORS
+                );
+            }
+            None => {}
+        }
+    }
+
     fn add_effect(&mut self, layer: u64, kind: EffectKind) {
         // Named first: a mask added on the way is part of the same step.
         self.label(match kind {
@@ -581,6 +620,7 @@ impl InkApp {
             EffectKind::Levels(_) => "Add levels",
             EffectKind::Blur(_) => "Add blur",
             EffectKind::Generator(_) => "Add generator",
+            EffectKind::ColorSelection(_) => "Add color selection",
         });
         let has_mask = self
             .stack()
@@ -841,6 +881,11 @@ impl InkApp {
         ui.label(RichText::new("FILTERS").small().color(theme::TEXT_WEAK));
         if icon_text_button(ui, icons::EFFECT_BLUR, "Blur") {
             self.add_effect(layer, EffectKind::Blur(Blur::default()));
+            ui.close();
+        }
+        ui.separator();
+        if icon_text_button(ui, icons::EFFECT_COLOR_SELECTION, "Add color selection") {
+            self.add_effect(layer, EffectKind::ColorSelection(ColorSelection::default()));
             ui.close();
         }
         ui.separator();
@@ -1318,6 +1363,7 @@ impl InkApp {
             EffectKind::Fill(_) => icons::LAYER_FILL,
             EffectKind::Levels(_) => icons::EFFECT_LEVELS,
             EffectKind::Blur(_) => icons::EFFECT_BLUR,
+            EffectKind::ColorSelection(_) => icons::EFFECT_COLOR_SELECTION,
             EffectKind::Generator(_) => icons::EFFECT_GENERATOR,
         };
         let tint = if effect.visible {
@@ -1469,13 +1515,29 @@ impl InkApp {
                     return false;
                 };
                 let mut edited = effect.clone();
+                let set = self.selected_set;
+                let has_id_map = self.model.texture_sets[set]
+                    .mesh_maps
+                    .get(ink_core::MeshMap::Id)
+                    .is_some();
+                let mut picking = self.paint.color_pick == Some((set, layer.id, id));
                 match &mut edited.kind {
                     EffectKind::Fill(gray) => gray_fill_properties(ui, gray, &images, &mut load),
                     EffectKind::Levels(levels) => levels_properties(ui, levels),
                     EffectKind::Blur(blur) => blur_properties(ui, blur),
                     EffectKind::Generator(generator) => generator_properties(ui, generator),
+                    EffectKind::ColorSelection(selection) => {
+                        color_selection_properties(ui, selection, has_id_map, &mut picking)
+                    }
                     EffectKind::Paint(_) => return false,
                 }
+                self.paint.color_pick = if picking {
+                    Some((set, layer.id, id))
+                } else if self.paint.color_pick == Some((set, layer.id, id)) {
+                    None
+                } else {
+                    self.paint.color_pick
+                };
                 if edited != effect {
                     if let Some(slot) = self.mask_mut(layer.id).and_then(|m| m.effect_mut(id)) {
                         *slot = edited;
@@ -1500,6 +1562,7 @@ impl InkApp {
             Target::Effect(id) => match layer.mask.as_ref()?.effect(id)?.kind {
                 EffectKind::Fill(_) => Some("Fill"),
                 EffectKind::Levels(_) => Some("Levels"),
+                EffectKind::ColorSelection(_) => Some("Color selection"),
                 EffectKind::Blur(_) => Some("Blur"),
                 EffectKind::Generator(_) => Some("Generator"),
                 EffectKind::Paint(_) => None,
@@ -1938,6 +2001,65 @@ fn levels_properties(ui: &mut egui::Ui, levels: &mut Levels) {
         if icon_text_button(ui, icons::INVERT, "Invert") {
             levels.output.swap(0, 1);
         }
+        ui.end_row();
+    });
+}
+
+/// The picked colors as swatches with a remove button each, a toggle that waits for a click
+/// on the model, and how the selection is cut off.
+fn color_selection_properties(
+    ui: &mut egui::Ui,
+    selection: &mut ColorSelection,
+    has_id_map: bool,
+    picking: &mut bool,
+) {
+    theme::group_label(ui, "COLOR SELECTION");
+    if !has_id_map {
+        ui.label(
+            RichText::new("This texture set has no ID map yet: bake one (Ctrl+Shift+B).")
+                .small()
+                .color(theme::TEXT_WEAK),
+        );
+    }
+    ui.horizontal(|ui| {
+        ui.toggle_value(picking, "Pick color")
+            .on_hover_text("Then click a part in the 3D or 2D view; any other click cancels");
+        if !selection.colors.is_empty() && ui.button("Clear").clicked() {
+            selection.colors.clear();
+        }
+    });
+    let mut remove = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, [r, g, b]) in selection.colors.iter().enumerate() {
+            let color = Color32::from_rgb(*r, *g, *b);
+            let (rect, response) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+            ui.painter().rect_filled(rect, 3.0, color);
+            ui.painter().rect_stroke(
+                rect,
+                3.0,
+                Line::new(1.0, Color32::from_gray(90)),
+                egui::StrokeKind::Inside,
+            );
+            if response
+                .on_hover_text(format!("#{r:02X}{g:02X}{b:02X}: click to remove"))
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        }
+    });
+    if let Some(i) = remove {
+        selection.colors.remove(i);
+    }
+    theme::property_grid(ui, "color selection").show(ui, |ui| {
+        ui.label("Tolerance");
+        ui.add(egui::Slider::new(&mut selection.tolerance, 0.0..=1.0));
+        ui.end_row();
+        ui.label("Hardness");
+        ui.add(egui::Slider::new(&mut selection.hardness, 0.0..=1.0));
+        ui.end_row();
+        ui.label("Invert");
+        ui.checkbox(&mut selection.invert, "");
         ui.end_row();
     });
 }

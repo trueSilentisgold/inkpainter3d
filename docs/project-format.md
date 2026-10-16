@@ -127,7 +127,9 @@ mask. Effects are listed bottom to top:
 
 `kind` is `{ "paint": { … } }` (a paint layer), `{ "fill": { "value": 1.0, "image": null, "projection": { … } } }`
 (a grayscale fill; the image's red channel is used), `{ "levels": { … } }`,
-`{ "blur": { "intensity": 0.2 } }` (0 to 1, independent of the resolution) or
+`{ "blur": { "intensity": 0.2 } }` (0 to 1, independent of the resolution),
+`{ "color_selection": { "colors": [[243, 85, 85]], "tolerance": 0.1, "hardness": 1.0, "invert": false } }`
+(8-bit colors of the ID map, at most 16) or
 `{ "generator": { "kind": "edge_wear", "params": { "amount": 0.5, "noise_scale": 24 } } }`. A
 generator's `kind` and `params` are named by the keys in `ink_core::generator`; parameters
 that are missing take their defaults, unknown ones are ignored.
