@@ -304,3 +304,10 @@ covered by the GPL; the other icons are drawn for inkpainter3d and are GPL like 
 
 [GPL-3.0-or-later](https://www.gnu.org/licenses/gpl-3.0.html) — inkpainter3d and any
 derivative of it stay free and open.
+
+## Trademarks
+
+Adobe and Substance 3D Painter are trademarks of Adobe Inc. inkpainter3d is an independent
+project and is not affiliated with, sponsored or endorsed by Adobe. Blender, Unity, Godot and
+other product names mentioned here are trademarks of their respective owners and are used
+only to describe compatibility.
