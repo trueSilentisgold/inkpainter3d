@@ -7,8 +7,8 @@ use eframe::egui::{self, Color32, Key, PointerButton, RichText, Stroke as Line};
 use glam::{Vec2, Vec3};
 use ink_core::{
     Alignment, Alpha, AlphaImage, Brush, Channel, Command, Dab, FillShape, PressureCurve,
-    SizeSpace, Stroke, StrokePath, StrokeSpace, Tool, shape_dabs, snap_direction, surface_dab,
-    uv_dab,
+    SizeSpace, Stroke, StrokePath, StrokeSpace, Symmetry, SymmetryMode, Tool, shape_dabs,
+    snap_direction, surface_dab, uv_dab,
 };
 use std::sync::Arc;
 
@@ -39,6 +39,8 @@ pub struct PaintState {
     pub fill_tool: bool,
     pub stencil: super::stencil::StencilState,
     pub fill_shape: FillShape,
+    /// Painter's symmetry (L): strokes on the model land mirrored or turned too.
+    pub symmetry: Symmetry,
     pub lazy_mouse: bool,
     /// Lazy mouse distance in percent of the view height (Painter's Distance).
     pub lazy_distance: f32,
@@ -60,6 +62,7 @@ impl Default for PaintState {
             fill_tool: false,
             stencil: Default::default(),
             fill_shape: FillShape::default(),
+            symmetry: Symmetry::default(),
             lazy_mouse: false,
             lazy_distance: 8.0,
             alphas: Vec::new(),
@@ -375,6 +378,7 @@ impl InkApp {
             stroke.backface_cos = -1.0;
             stroke.fill = Some(target);
             stroke.stencil = None;
+            stroke.symmetry = Vec::new();
         }
         self.history.record(Command::add_stroke(set, paint, id));
     }
@@ -417,6 +421,12 @@ impl InkApp {
                 .collect(),
             fill: None,
             stencil: self.stroke_stencil(view, rect),
+            // Mirrors and turns act on the model; strokes in the 2D view stay as painted.
+            symmetry: if view == View::Model {
+                self.paint.symmetry.copies()
+            } else {
+                Vec::new()
+            },
             dabs: Vec::new(),
         };
         let id = stroke.id;
@@ -583,8 +593,8 @@ impl InkApp {
         }
     }
 
-    /// Tool and brush shortcuts: 1 Paint, 2 Eraser, [ and ] size, D lazy mouse, X inverts
-    /// the grayscale painted into masks, Ctrl+Z / Ctrl+Y undo and redo.
+    /// Tool and brush shortcuts: 1 Paint, 2 Eraser, [ and ] size, D lazy mouse, L symmetry,
+    /// X inverts the grayscale painted into masks, Ctrl+Z / Ctrl+Y undo and redo.
     pub(super) fn paint_shortcuts(&mut self, ui: &egui::Ui) {
         self.paint.stencil.ignore = ui.input(|i| i.key_down(Key::N));
         if ui.ctx().text_edit_focused() {
@@ -626,6 +636,11 @@ impl InkApp {
         }
         if pressed(Key::D) {
             self.paint.lazy_mouse = !self.paint.lazy_mouse;
+        }
+        if pressed(Key::L) {
+            let symmetry = &mut self.paint.symmetry;
+            symmetry.enabled = !symmetry.enabled;
+            self.status = format!("Symmetry {}", if symmetry.enabled { "on" } else { "off" });
         }
         if pressed(Key::X) && self.paints_grayscale() {
             let gray = &mut self.paint.paint_brush.material.grayscale;
@@ -738,13 +753,31 @@ impl InkApp {
                     1.0,
                 );
                 let right = dab.up.cross(dab.normal);
-                (0..=64)
-                    .filter_map(|i| {
+                let ring: Vec<Vec3> = (0..=64)
+                    .map(|i| {
                         let a = i as f32 / 64.0 * std::f32::consts::TAU;
-                        let world = dab.position + (right * a.cos() + dab.up * a.sin()) * radius;
-                        self.camera.project(world, size).map(|s| pos2(s + origin))
+                        dab.position + (right * a.cos() + dab.up * a.sin()) * radius
                     })
-                    .collect()
+                    .collect();
+                let on_screen = |m: &glam::Mat4| -> Vec<egui::Pos2> {
+                    ring.iter()
+                        .filter_map(|&w| {
+                            let s = self.camera.project(m.transform_point3(w), size)?;
+                            Some(pos2(s + origin))
+                        })
+                        .collect()
+                };
+                // Where the symmetry copies of a stroke would land.
+                for copy in self.paint.symmetry.copies() {
+                    let points = on_screen(&copy);
+                    if points.len() > 1 {
+                        painter.add(egui::Shape::line(
+                            points,
+                            Line::new(1.2, Color32::from_white_alpha(150)),
+                        ));
+                    }
+                }
+                on_screen(&glam::Mat4::IDENTITY)
             }
             View::Uv => {
                 let size = Vec2::new(rect.width(), rect.height());
@@ -775,6 +808,82 @@ impl InkApp {
     }
 
     // ---- Panels ----
+
+    /// Symmetry settings in the Properties panel: mirror planes or radial copies, and the
+    /// point they pass through.
+    fn symmetry_group(&mut self, ui: &mut egui::Ui) {
+        let center = self.model.bounds();
+        let model_center = (center.min + center.max) * 0.5;
+        let symmetry = &mut self.paint.symmetry;
+        theme::group(ui, "Symmetry", false, |ui| {
+            theme::property_grid(ui, "symmetry").show(ui, |ui| {
+                ui.label("Enabled");
+                ui.checkbox(&mut symmetry.enabled, "")
+                    .on_hover_text("Toggle with L; acts on strokes in the 3D view");
+                ui.end_row();
+                ui.label("Mode");
+                egui::ComboBox::from_id_salt("symmetry mode")
+                    .selected_text(symmetry.mode.label())
+                    .show_ui(ui, |ui| {
+                        for mode in SymmetryMode::ALL {
+                            ui.selectable_value(&mut symmetry.mode, mode, mode.label());
+                        }
+                    });
+                ui.end_row();
+                match symmetry.mode {
+                    SymmetryMode::Mirror => {
+                        ui.label("Mirror");
+                        ui.horizontal(|ui| {
+                            for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
+                                ui.toggle_value(&mut symmetry.mirror[axis], name);
+                            }
+                        });
+                        ui.end_row();
+                    }
+                    SymmetryMode::Radial => {
+                        ui.label("Axis");
+                        ui.horizontal(|ui| {
+                            for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
+                                ui.selectable_value(&mut symmetry.axis, axis, name);
+                            }
+                        });
+                        ui.end_row();
+                        ui.label("Count");
+                        ui.add(egui::Slider::new(
+                            &mut symmetry.count,
+                            2..=Symmetry::MAX_COUNT,
+                        ));
+                        ui.end_row();
+                    }
+                }
+                ui.label("Center");
+                ui.horizontal(|ui| {
+                    for c in 0..3 {
+                        ui.add(egui::DragValue::new(&mut symmetry.center[c]).speed(0.01));
+                    }
+                });
+                ui.end_row();
+                ui.label("");
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("World origin")
+                        .on_hover_text("The planes pass through 0, 0, 0")
+                        .clicked()
+                    {
+                        symmetry.center = Vec3::ZERO;
+                    }
+                    if ui
+                        .button("Model center")
+                        .on_hover_text("The planes pass through the middle of the model")
+                        .clicked()
+                    {
+                        symmetry.center = model_center;
+                    }
+                });
+                ui.end_row();
+            });
+        });
+    }
 
     /// Painter's tool bar on the left: one icon button per tool.
     pub(super) fn tool_strip(&mut self, ui: &mut egui::Ui) {
@@ -879,6 +988,9 @@ impl InkApp {
                             .speed(0.2),
                     );
                 });
+                ui.add_space(6.0);
+                ui.checkbox(&mut paint.symmetry.enabled, "Symmetry")
+                    .on_hover_text("Paints mirrored or turned copies on the model (L)");
             }
             _ => {
                 ui.add(theme::icon(
@@ -1062,6 +1174,7 @@ impl InkApp {
         });
 
         Self::material_section(ui, tool, grayscale, &mut brush.material);
+        self.symmetry_group(ui);
         self.stencil_group(ui);
 
         if load_alpha

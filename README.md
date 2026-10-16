@@ -110,13 +110,16 @@ inkpainter3d aims to be a capable alternative that:
     the 3D and the 2D view
   - **stencil**: load an image, place it over the view (S + drag) and paint through it; N
     ignores it
+  - **symmetry** (L): mirror strokes across X, Y and Z (alone or combined) or repeat them
+    around an axis, through the world origin or the model's center; each copy is hidden
+    where the mirrored view would not see it
 - **Baking** (Ctrl+Shift+B): mesh maps of a texture set on the GPU, from any Vulkan card
   - ambient occlusion, curvature, world normal, position and thickness from the model, and
     tangent space normal, height and ID from one or more high-poly meshes
   - antialiasing, dilation, ray counts, distances, matching by `_low` / `_high` names; the
     maps are saved in the project
 - **Generators** as mask effects: mask builder, edge wear, dirt, position gradient, light,
-  noise (Perlin, fractal, cells, clouds), and curvature, occlusion and thickness on their own
+  noise (Perlin, fractal, cells, clouds, cell edges), and curvature, occlusion and thickness on their own
   - they read the baked mesh maps, so edges wear and dirt gathers on any model; without maps
     they fall back to noise
 - **Smart materials and smart masks**: save the selected layers or a mask as a preset, apply it
@@ -191,7 +194,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | ✅ done |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ✅ done |
 | 9 | **Generators** — mask builder, edge wear, dirt, noises, smart materials and masks, starter content, blur in masks (more filters come later) | ✅ done |
-| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | |
+| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | in progress: symmetry done |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 12 | **Polish** — translations, UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 
@@ -240,6 +243,7 @@ The same as in Substance 3D Painter.
 | Hardness | Ctrl + right mouse drag up and down |
 | Flow / angle | Ctrl + left mouse drag sideways / up and down |
 | Lazy mouse on / off | D |
+| Symmetry on / off (mirror or radial, set in Properties) | L |
 | Paint black instead of white in a mask (and back) | X |
 | Undo / redo | Ctrl + Z / Ctrl + Y |
 | Layouts: 3D and 2D / 3D / 2D / swap | F1 / F2 / F3 / F4 |

@@ -92,6 +92,9 @@ pub struct Stroke {
     pub fill: Option<crate::FillTarget>,
     /// The stencil the stroke was painted through.
     pub stencil: Option<crate::StrokeStencil>,
+    /// Symmetry: every dab is painted again moved by each of these (mirrored or turned),
+    /// seen by the camera moved the same way. Empty without symmetry.
+    pub symmetry: Vec<Mat4>,
     pub dabs: Vec<Dab>,
 }
 

@@ -543,6 +543,9 @@ struct FileStroke {
     /// The stencil the stroke was painted through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stencil: Option<FileStencil>,
+    /// Symmetry copies: each a 4×4 matrix, column by column.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    symmetry: Vec<[f32; 16]>,
     /// First dab and dab count in `dabs.bin`.
     first_dab: u64,
     dab_count: u64,
@@ -923,6 +926,11 @@ impl Saver {
                 alpha: self.alpha(&s.image),
                 affine: finite_n(s.affine),
             }),
+            symmetry: stroke
+                .symmetry
+                .iter()
+                .map(|m| finite_n(m.to_cols_array()))
+                .collect(),
             first_dab,
             dab_count: stroke.dabs.len() as u64,
         }
@@ -1610,6 +1618,13 @@ impl Loader<'_> {
                     })
                 })
                 .transpose()?,
+            // A damaged matrix would scatter paint anywhere: such copies are left out.
+            symmetry: stroke
+                .symmetry
+                .iter()
+                .map(Mat4::from_cols_array)
+                .filter(|m| m.is_finite() && m.determinant().abs() > 1e-6)
+                .collect(),
             dabs,
         })
     }
@@ -1812,6 +1827,11 @@ mod tests {
                 hidden_sets: vec![],
                 fill: camera.then(|| FillTarget::Triangles(Arc::new(vec![0, 2, 1]))),
                 stencil,
+                symmetry: if camera {
+                    vec![Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))]
+                } else {
+                    Vec::new()
+                },
                 dabs: vec![dab(0.0), dab(0.125), dab(1e-7)],
             })
         };
@@ -2007,6 +2027,7 @@ mod tests {
                     sb.stencil.as_ref().map(|s| (&s.image.pixels, s.affine))
                 );
                 assert_eq!(sa.camera, sb.camera);
+                assert_eq!(sa.symmetry, sb.symmetry);
                 assert!(sa.alpha.same(&sa.alpha));
                 if let (Alpha::Image(ia), Alpha::Image(ib)) = (&sa.alpha, &sb.alpha) {
                     assert_eq!(ia.pixels, ib.pixels);

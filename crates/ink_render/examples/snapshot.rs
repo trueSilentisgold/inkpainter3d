@@ -31,7 +31,8 @@
 //! of the painted texture set instead.
 //!
 //! `align=wrap|planar|camera` (the brush's alignment), `follow` (Follow Path), `jitter=0.5`
-//! (all four jitter amounts) and `angle=30` apply to those strokes.
+//! (all four jitter amounts) and `angle=30` apply to those strokes; `mirror=x` (any of
+//! `xyz`) or `radial=4` (around Y) paints the surface strokes with symmetry about the origin.
 //!
 //! `polyfill=triangle|polygon|mesh|island` fills what the middle of the view shows with a
 //! Polygon Fill stroke (blue), after the other strokes.
@@ -163,6 +164,16 @@ fn main() -> Result<()> {
         ..Default::default()
     };
     let live: usize = option("live").map_or(Ok(usize::MAX), str::parse)?;
+    let mut symmetry = ink_core::Symmetry::default();
+    if let Some(axes) = option("mirror") {
+        symmetry.enabled = true;
+        symmetry.mirror = ['x', 'y', 'z'].map(|a| axes.contains(a));
+    }
+    if let Some(count) = option("radial") {
+        symmetry.enabled = true;
+        symmetry.mode = ink_core::SymmetryMode::Radial;
+        symmetry.count = count.parse()?;
+    }
     let view = Vec2::new(SIZE[0] as f32, SIZE[1] as f32);
     let mut strokes = Vec::new();
     if flag("paint") {
@@ -332,6 +343,11 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             fill: None,
             stencil,
+            symmetry: if space == StrokeSpace::Surface {
+                symmetry.copies()
+            } else {
+                Vec::new()
+            },
             dabs: Vec::new(),
         };
         let paint = target;
@@ -367,6 +383,7 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             fill: Some(model.fill_target(shape, hit.triangle as u32)),
             stencil: None,
+            symmetry: Vec::new(),
             dabs: Vec::new(),
         };
         let layer = model.texture_sets[set].stack.paint_mut(target).unwrap();

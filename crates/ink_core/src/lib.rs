@@ -13,6 +13,7 @@ pub mod mesh;
 pub mod model;
 pub mod stencil;
 pub mod stroke;
+pub mod symmetry;
 pub mod texture;
 
 pub use bake::{BakeSettings, HighPoly, IdSource, Matching, MeshMap, MeshMaps};
@@ -38,4 +39,5 @@ pub use stroke::{
     Dab, DabSpacer, LazyMouse, PaintLayer, Stroke, StrokeCamera, StrokePath, StrokeSpace,
     shape_dabs, snap_direction, surface_dab, uv_dab,
 };
+pub use symmetry::{Symmetry, SymmetryMode};
 pub use texture::{Texels, TextureImage};

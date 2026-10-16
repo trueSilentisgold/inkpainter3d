@@ -80,6 +80,10 @@ check undo sphere "paint undo display=basecolor" "640,400:$grey" "500,400:$grey"
 check undo-live sphere "paint live=10 undo display=basecolor" "500,400:$grey"
 check paint-4k sphere "res=4096 size=60 paint display=basecolor" "640,400:$red"
 check paint-uv sphere "paint uv 2d" "640,400:b > 190 && r < 140" "400,650:r > 160 && b < 200"
+# Symmetry: mirrored across Z, the stroke also lands on the back, which its own camera
+# can't see (2D view: the copy is the right-hand arc).
+check mirror sphere "paint mirror=z 2d display=basecolor" \
+    "500,385:r > 200 && g < 100" "760,395:r > 200 && g < 100"
 check paint-planar sphere "paint align=planar display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-camera sphere "paint align=camera display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-follow sphere "paint follow jitter=0.2 display=basecolor" "640,400:$red" "640,250:$grey"

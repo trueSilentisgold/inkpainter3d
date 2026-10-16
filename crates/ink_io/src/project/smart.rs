@@ -367,6 +367,7 @@ mod tests {
                 hidden_sets: Vec::new(),
                 fill: None,
                 stencil: None,
+                symmetry: Vec::new(),
                 dabs: Vec::new(),
             }));
         }
