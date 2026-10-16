@@ -6,7 +6,7 @@ use crate::theme::{self, icons};
 use eframe::egui::{self, Color32, Image, ImageSource, Key, RichText, Sense, Stroke as Line, vec2};
 use ink_core::generator::ParamKind;
 use ink_core::{
-    BlendMode, Channel, ChannelKind, ChannelSet, Command, Content, Effect, EffectKind, Fill,
+    BlendMode, Blur, Channel, ChannelKind, ChannelSet, Command, Content, Effect, EffectKind, Fill,
     Generator, GeneratorKind, GrayFill, Layer, LayerKind, LayerStack, Levels, Mask, Place,
     Projection, ProjectionMode, TextureImage,
 };
@@ -579,6 +579,7 @@ impl InkApp {
             EffectKind::Paint(_) => "Add paint effect",
             EffectKind::Fill(_) => "Add fill effect",
             EffectKind::Levels(_) => "Add levels",
+            EffectKind::Blur(_) => "Add blur",
             EffectKind::Generator(_) => "Add generator",
         });
         let has_mask = self
@@ -834,6 +835,12 @@ impl InkApp {
         }
         if icon_text_button(ui, icons::EFFECT_LEVELS, "Add levels") {
             self.add_effect(layer, EffectKind::Levels(Levels::default()));
+            ui.close();
+        }
+        ui.separator();
+        ui.label(RichText::new("FILTERS").small().color(theme::TEXT_WEAK));
+        if icon_text_button(ui, icons::EFFECT_BLUR, "Blur") {
+            self.add_effect(layer, EffectKind::Blur(Blur::default()));
             ui.close();
         }
         ui.separator();
@@ -1310,6 +1317,7 @@ impl InkApp {
             EffectKind::Paint(_) => icons::LAYER_PAINT,
             EffectKind::Fill(_) => icons::LAYER_FILL,
             EffectKind::Levels(_) => icons::EFFECT_LEVELS,
+            EffectKind::Blur(_) => icons::EFFECT_BLUR,
             EffectKind::Generator(_) => icons::EFFECT_GENERATOR,
         };
         let tint = if effect.visible {
@@ -1464,6 +1472,7 @@ impl InkApp {
                 match &mut edited.kind {
                     EffectKind::Fill(gray) => gray_fill_properties(ui, gray, &images, &mut load),
                     EffectKind::Levels(levels) => levels_properties(ui, levels),
+                    EffectKind::Blur(blur) => blur_properties(ui, blur),
                     EffectKind::Generator(generator) => generator_properties(ui, generator),
                     EffectKind::Paint(_) => return false,
                 }
@@ -1491,6 +1500,7 @@ impl InkApp {
             Target::Effect(id) => match layer.mask.as_ref()?.effect(id)?.kind {
                 EffectKind::Fill(_) => Some("Fill"),
                 EffectKind::Levels(_) => Some("Levels"),
+                EffectKind::Blur(_) => Some("Blur"),
                 EffectKind::Generator(_) => Some("Generator"),
                 EffectKind::Paint(_) => None,
             },
@@ -1928,6 +1938,15 @@ fn levels_properties(ui: &mut egui::Ui, levels: &mut Levels) {
         if icon_text_button(ui, icons::INVERT, "Invert") {
             levels.output.swap(0, 1);
         }
+        ui.end_row();
+    });
+}
+
+fn blur_properties(ui: &mut egui::Ui, blur: &mut Blur) {
+    theme::group_label(ui, "BLUR");
+    theme::property_grid(ui, "blur").show(ui, |ui| {
+        ui.label("Intensity");
+        ui.add(egui::Slider::new(&mut blur.intensity, 0.0..=1.0));
         ui.end_row();
     });
 }

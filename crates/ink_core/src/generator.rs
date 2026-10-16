@@ -84,7 +84,7 @@ const fn choice(
 
 const OFF_ON: &[&str] = &["Off", "On"];
 
-const NOISE_TYPES: &[&str] = &["Perlin", "Fractal", "Cells", "Clouds"];
+const NOISE_TYPES: &[&str] = &["Perlin", "Fractal", "Cells", "Clouds", "Cell edges"];
 const AXES: &[&str] = &["X", "Y", "Z"];
 const CURVATURE_PARTS: &[&str] = &["Convex", "Concave", "Both"];
 

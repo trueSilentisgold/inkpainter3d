@@ -345,7 +345,8 @@ Deckkraft; Effekte im Layer-Inhalt folgen mit den Filtern.
 - [x] `P0` **Paint**
 - [x] `P0` **Fill**
 - [x] `P1` **Levels**
-- [ ] `P1` **Filter** (siehe Kapitel 11); Blur schon `P0`
+- [ ] `P1` **Filter** (siehe Kapitel 11). Blur gibt es in Masken; im Layer-Inhalt fehlen
+      Filter noch.
 - [x] `P1` **Generator** (siehe Kapitel 11), bisher nur in Masken
 - [ ] `P2` **Compare Mask**
 - [ ] `P2` **Anchor Point:** Zwischenergebnis des Stacks, das spätere Generatoren und Filter
@@ -378,7 +379,12 @@ Taste in Klammern = Painter-Shortcut.
       Strg+Shift+Klick auf 15° eingerastet. Eine gestrichelte Hilfslinie zeigt sie vorher.
 - [x] `P0` **Lazy Mouse (D):** Strichglättung. Der Pinsel hängt an einer Schnur hinter dem
       Mauszeiger; Abstand in Prozent der Ansichtshöhe, Standard 8.
-- [ ] `P1` **Symmetrie (L):** Spiegeln an X / Y / Z, lokal oder Welt; radiale Symmetrie
+- [x] `P1` **Symmetrie (L):** Spiegeln an X / Y / Z (auch kombiniert) oder radial um eine Achse,
+      durch einen frei wählbaren Mittelpunkt (Weltursprung oder Modellmitte). Jede Kopie malt
+      mit einer ebenso gespiegelten Kamera, so wirkt die Verdeckung auch auf der Rückseite.
+      Der Cursor zeigt die Kopien. Gilt für Striche im 3D-Fenster; Polygon Fill und Striche
+      im 2D-Fenster bleiben, wie gemalt. Es fehlen noch: Spiegeln im lokalen Raum eines
+      Meshes und eine sichtbare Symmetrie-Ebene im Viewport.
 - [ ] `P1` **Vorherigen Strich fortsetzen (A)**
 - [x] `P1` **Stencil:** Maske über dem Viewport; S+Links drehen, S+Mitte verschieben,
       S+Rechts zoomen, N ignoriert die Stencil-Maske
@@ -536,18 +542,21 @@ sonst im UV-Raum.
 
 **Filter**
 
-Bisher gibt es *Levels* (Masken-Effekt). Filter, die Nachbartexel brauchen (Blur, Sharpen),
-fehlen noch: Der Compositor rechnet in Kacheln mit einem Texel Rand, dafür braucht es
-einen größeren Rand pro Effekt.
+Filter sind Masken-Effekte wie *Levels*. Wer Nachbartexel liest, braucht einen Rand um jede
+Kachel des Compositors: Er wächst mit der Reichweite der Filter einer Maske, und beim Malen
+unter einem Filter wird um diese Reichweite mehr neu berechnet.
 
-- [ ] `P0` Blur
+- [x] `P0` **Blur** (Masken-Effekt, Menü *Filters*): Gauß-Blur im Texturraum, mit Blend Mode
+      und Deckkraft wie jeder Effekt. *Intensity* 0 bis 1 hängt nicht von der Auflösung ab;
+      volle Stärke reicht 3 % der Texturbreite weit, höchstens 128 Texel. Wie in Painter
+      blurt er über UV-Nähte hinweg in den Rand der Inseln. Im Layer-Inhalt fehlt er noch.
 - [ ] `P1` Sharpen, HSL / Farbkorrektur, Gradient Map, Height-zu-Normal
 - [ ] `P2` Directional Blur, Slope Blur, Warp, Baked Lighting
 - [ ] `P2` ＋ Stylized-Filter: Posterize, Hand-Painted-Look, Pixel Art
 
 **Prozedurale Texturen**
 
-- [x] `P1` Noises (Perlin, Fractal, Zellen, Wolken) als Generator *Noise*
+- [x] `P1` Noises (Perlin, Fractal, Zellen, Wolken, Zellränder für Risse und Falten) als Generator *Noise*
 - [x] `P1` Grunges (Kratzer, Haarstriche, Risse, Flecken, Staub) als Alphas im Shelf, im Code erzeugt
 - [ ] `P1` Muster (Kacheln, Ziegel, Streifen)
 
@@ -565,7 +574,9 @@ einen größeren Rand pro Effekt.
 - [x] `P1` **Starter-Bibliothek:** zwölf Smart Materials (Steel, Painted metal, Rusty metal, Gold,
       Copper patina, Glossy plastic, Rubber, Dry wood, Leather, Rough stone, Concrete, Fabric) und
       sechs Smart Masks (Edge wear, Dirt in crevices, Worn surface, Noise patches, Gradient from the
-      bottom, Dust on top), sieben Pinsel, acht Alphas, die HDRI. Alles im Code erzeugt.
+      bottom, Dust on top), sieben Pinsel, acht Alphas, die HDRI. Alles im Code erzeugt. Jedes
+      Material formt auch die Oberfläche über den Height-Kanal: Lackschicht, Rostkruste,
+      Lochfraß, Poren, Risse, Lederkörnung, Fasern.
       Weitere Materialien kommen aus den Online-Bibliotheken (CC0).
 
 ---
@@ -675,7 +686,7 @@ Brushes, Alphas, Textures, Materials und Online. Die eigene Bibliothek liegt im 
 
 Umgesetzt sind Kamera, Umgebung, die Anzeige-Modi Material und Kanal (M, C / Shift+C),
 Fokus-Modus, Set-Auswahl, Paint und Eraser (1 / 2), Pinselgröße, Härte, Flow und Winkel,
-gerade Linien, Lazy Mouse, Graustufen invertieren (X), die Layer-Shortcuts, Rückgängig /
+gerade Linien, Lazy Mouse, Symmetrie (L), Graustufen invertieren (X), die Layer-Shortcuts, Rückgängig /
 Wiederholen und die Layouts F1 bis F4; Mesh Map
 (B / Shift+B) folgt mit dem Baking. [ und ] funktionieren auch, wenn AltGr als Strg+Alt
 ankommt (deutsche Tastatur unter Windows). Unter Linux
@@ -803,7 +814,7 @@ texturieren und exportieren.**
 | 6 | **Oberfläche:** INKRABBIT-Design (Farben, Schriften, eigene Icons, App-Icon), andockbare Fenster und Standard-Layout wie in Painter, gespeicherte Layouts; die Oberfläche bleibt zunächst englisch | ✅ fertig |
 | 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ✅ fertig |
-| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Filter mit Nachbartexeln fehlen noch) |
-| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | |
+| 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Blur in Masken; weitere Filter folgen) |
+| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | läuft: Symmetrie fertig |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |

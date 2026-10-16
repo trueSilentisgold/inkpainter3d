@@ -28,9 +28,10 @@ use std::sync::Arc;
 
 /// Side of the square chunks the texture is composited in.
 const CHUNK: u32 = 512;
-/// Extra texels around a chunk, for the neighbours the height-to-normal filter reads.
+/// Extra texels around a chunk, for the neighbours the height-to-normal filter reads. Blurs
+/// in masks widen it by their reach ([`Program::reach`]): each one needs that many valid
+/// texels around every texel it writes.
 const APRON: u32 = 1;
-const TEMP: u32 = CHUNK + 2 * APRON;
 const ACC_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
@@ -159,6 +160,8 @@ enum Tex {
     MaskTmp(usize),
     /// A finished mask, per masked layer.
     MaskCache(usize),
+    /// A mask blurred along x, between the two passes of a blur.
+    MaskBlur,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,6 +174,10 @@ enum Pipe {
     MaskEffect,
     MaskLevels,
     MaskGenerator,
+    /// The first pass of a blur: along x, into [`Tex::MaskBlur`].
+    MaskBlurX,
+    /// The second pass: along y, blended onto the mask below.
+    MaskBlurY,
 }
 
 /// One step of compositing a chunk.
@@ -205,6 +212,47 @@ struct Program {
     triplanar: bool,
     /// The mesh maps generators read, by [`MAP_SLOTS`].
     maps: [Option<Arc<TextureImage>>; MAP_SLOTS.len()],
+    /// How far the blurs of the most blurred mask reach, in texels ([`blur_reach`]).
+    reach: u32,
+}
+
+impl Program {
+    /// Texels evaluated around a chunk.
+    fn apron(&self) -> u32 {
+        APRON + self.reach
+    }
+}
+
+/// How far a mask's blurs reach together, in texels: each blur reads its own reach around
+/// every texel, so stacked blurs add up.
+fn mask_reach(mask: &Mask, resolution: u32) -> u32 {
+    mask.effects
+        .iter()
+        .filter(|e| e.visible && e.blend != BlendMode::Disable)
+        .map(|e| match &e.kind {
+            EffectKind::Blur(blur) => blur.radius(resolution).ceil() as u32,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The largest [`mask_reach`] of the visible layers' enabled masks: how far a change of
+/// paint can spread, and how many more texels a chunk needs around it.
+fn blur_reach(layers: &[Layer], resolution: u32) -> u32 {
+    layers
+        .iter()
+        .filter(|l| l.visible)
+        .map(|layer| {
+            let own = layer
+                .mask
+                .as_ref()
+                .filter(|m| m.enabled)
+                .map_or(0, |m| mask_reach(m, resolution));
+            let children = layer.children().map_or(0, |c| blur_reach(c, resolution));
+            own.max(children)
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// Builds a [`Program`] from a layer stack.
@@ -222,6 +270,7 @@ struct Builder<'a> {
 impl Builder<'_> {
     fn build(mut self, stack: &LayerStack) -> Program {
         self.program.maps = self.maps.clone();
+        self.program.reach = blur_reach(&stack.layers, self.resolution);
         self.collect_masks(&stack.layers);
         for channel in Channel::ALL {
             self.current = vec![0];
@@ -276,17 +325,26 @@ impl Builder<'_> {
             .steps
             .push(Step::Clear(Tex::MaskTmp(0), gray(mask.background)));
         let mut push = |builder: &mut Self, pipe, uniforms, paint, image| {
+            // A blur's first pass leaves the mask as it is for the second, which blends the
+            // blurred mask onto it.
+            let (other, target) = match pipe {
+                Pipe::MaskBlurX => (None, Tex::MaskBlur),
+                Pipe::MaskBlurY => (Some(Tex::MaskBlur), Tex::MaskTmp(1 - cur)),
+                _ => (None, Tex::MaskTmp(1 - cur)),
+            };
             builder.program.steps.push(Step::Pass(Box::new(PassStep {
                 pipe,
                 uniforms,
                 below: Tex::MaskTmp(cur),
-                other: None,
+                other,
                 mask: None,
                 paint,
                 image,
-                target: Tex::MaskTmp(1 - cur),
+                target,
             })));
-            cur = 1 - cur;
+            if target != Tex::MaskBlur {
+                cur = 1 - cur;
+            }
         };
         if painted {
             let uniforms = self.paint_uniforms(mask.paint.id, 0, ChannelKind::Scalar);
@@ -359,6 +417,12 @@ impl Builder<'_> {
                     ];
                     uniforms.levels2 = [levels.output[1], 0.0, 0.0, 0.0];
                     push(self, Pipe::MaskLevels, uniforms, None, None);
+                }
+                EffectKind::Blur(blur) => {
+                    // Separable: along x, then along y onto the mask below.
+                    uniforms.params[1] = blur.radius(self.resolution);
+                    push(self, Pipe::MaskBlurX, uniforms, None, None);
+                    push(self, Pipe::MaskBlurY, uniforms, None, None);
                 }
             }
         }
@@ -584,11 +648,14 @@ impl GpuComposite {
     }
 }
 
-/// Textures the size of a chunk.
+/// Textures the size of a chunk and its apron.
 struct Temps {
+    /// Their width and height: a chunk and the apron of the program they were made for.
+    side: u32,
     acc: Vec<[wgpu::Texture; 2]>,
     saves: Vec<wgpu::Texture>,
     mask_tmp: [wgpu::Texture; 2],
+    mask_blur: wgpu::Texture,
     masks: Vec<wgpu::Texture>,
     /// The finished channels, one array layer each.
     results: wgpu::Texture,
@@ -822,6 +889,8 @@ enum PipeMask {
     Effect,
     Levels,
     Generator,
+    BlurX,
+    BlurY,
 }
 
 impl Pipe {
@@ -835,6 +904,8 @@ impl Pipe {
             Self::MaskEffect => PipeKey::Mask(PipeMask::Effect),
             Self::MaskLevels => PipeKey::Mask(PipeMask::Levels),
             Self::MaskGenerator => PipeKey::Mask(PipeMask::Generator),
+            Self::MaskBlurX => PipeKey::Mask(PipeMask::BlurX),
+            Self::MaskBlurY => PipeKey::Mask(PipeMask::BlurY),
         }
     }
 }
@@ -1032,6 +1103,8 @@ impl Compositor {
             (PipeMask::Effect, "fs_mask_effect"),
             (PipeMask::Levels, "fs_mask_levels"),
             (PipeMask::Generator, "fs_mask_generator"),
+            (PipeMask::BlurX, "fs_mask_blur_x"),
+            (PipeMask::BlurY, "fs_mask_blur_y"),
         ] {
             let p = pipeline(
                 "composite mask",
@@ -1263,13 +1336,15 @@ impl Compositor {
             state.signature = Some(signature);
             state.pending.fill(true);
         }
+        // A blur in a mask spreads painted texels as far as it reaches.
+        let reach = blur_reach(&texture_set.stack.layers, size);
         let mut now = Region::default();
         if !changed.is_empty() {
-            now.extend(&changed.grown(PADDING_MARGIN, size));
+            now.extend(&changed.grown(PADDING_MARGIN + reach, size));
             state.stroke_region.extend(changed);
         }
         if !stroke_in_progress && !state.stroke_region.is_empty() {
-            now.extend(&state.stroke_region.grown(STROKE_CATCH_UP, size));
+            now.extend(&state.stroke_region.grown(STROKE_CATCH_UP + reach, size));
             // The padding farther out follows a few chunks per frame.
             let stroke = std::mem::take(&mut state.stroke_region);
             for rect in &stroke.rects {
@@ -1409,12 +1484,18 @@ impl Compositor {
     }
 
     fn ensure_temps(&mut self, device: &wgpu::Device, program: &Program) {
+        // A wider apron needs them all larger; they stay that large.
+        let side = CHUNK + 2 * program.apron();
+        if self.temps.as_ref().is_some_and(|t| t.side < side) {
+            self.temps = None;
+        }
+        let side = self.temps.as_ref().map_or(side, |t| t.side);
         let texture = |label: &str, format, layers: u32| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
-                    width: TEMP,
-                    height: TEMP,
+                    width: side,
+                    height: side,
                     depth_or_array_layers: layers,
                 },
                 mip_level_count: 1,
@@ -1431,9 +1512,11 @@ impl Compositor {
         let temps = self.temps.get_or_insert_with(|| {
             let results = texture("composite results", ACC_FORMAT, Channel::COUNT as u32);
             Temps {
+                side,
                 acc: Vec::new(),
                 saves: Vec::new(),
                 mask_tmp: [0, 1].map(|_| texture("composite mask", MASK_FORMAT, 1)),
+                mask_blur: texture("composite mask blur", MASK_FORMAT, 1),
                 masks: Vec::new(),
                 results_view: results.create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -1534,6 +1617,7 @@ impl Compositor {
             .collect();
         let save_views: Vec<wgpu::TextureView> = temps.saves.iter().map(view).collect();
         let mask_tmp_views = temps.mask_tmp.each_ref().map(view);
+        let mask_blur_view = view(&temps.mask_blur);
         let mask_views: Vec<wgpu::TextureView> = temps.masks.iter().map(view).collect();
         let geometry_views = temps.geometry.each_ref().map(view);
         let texture_of = |tex: Tex| -> &wgpu::Texture {
@@ -1542,6 +1626,7 @@ impl Compositor {
                 Tex::Save(l) => &temps.saves[l],
                 Tex::MaskTmp(i) => &temps.mask_tmp[i],
                 Tex::MaskCache(k) => &temps.masks[k],
+                Tex::MaskBlur => &temps.mask_blur,
             }
         };
         let view_of = |tex: Tex| -> &wgpu::TextureView {
@@ -1550,6 +1635,7 @@ impl Compositor {
                 Tex::Save(l) => &save_views[l],
                 Tex::MaskTmp(i) => &mask_tmp_views[i],
                 Tex::MaskCache(k) => &mask_views[k],
+                Tex::MaskBlur => &mask_blur_view,
             }
         };
 
@@ -1606,7 +1692,10 @@ impl Compositor {
                     Some((image, srgb)) => &self.images[&(image.id, *srgb)],
                     None => &self.dummy_image,
                 };
-                let is_mask = matches!(p.target, Tex::MaskTmp(_) | Tex::MaskCache(_));
+                let is_mask = matches!(
+                    p.target,
+                    Tex::MaskTmp(_) | Tex::MaskCache(_) | Tex::MaskBlur
+                );
                 let dummy = if is_mask {
                     &self.dummy_mask
                 } else {
@@ -1723,13 +1812,14 @@ impl Compositor {
         let center = (bounds.min + bounds.max) * 0.5;
         let ratio = ((bounds.max - bounds.min) / extent).to_array();
 
+        let apron = program.apron();
         for rect in rects {
             let origin = [
-                rect.min[0] as i32 - APRON as i32,
-                rect.min[1] as i32 - APRON as i32,
+                rect.min[0] as i32 - apron as i32,
+                rect.min[1] as i32 - apron as i32,
             ];
-            let w = rect.max[0] - rect.min[0] + 2 * APRON;
-            let h = rect.max[1] - rect.min[1] + 2 * APRON;
+            let w = rect.max[0] - rect.min[0] + 2 * apron;
+            let h = rect.max[1] - rect.min[1] + 2 * apron;
             let mut bytes = vec![0u8; (passes.len().max(1) as u64 * PASS_STRIDE) as usize];
             for (i, p) in passes.iter().enumerate() {
                 let mut uniforms = p.uniforms;
@@ -1749,7 +1839,7 @@ impl Compositor {
                 &self.resolve_buffer,
                 0,
                 bytemuck::bytes_of(&ResolveUniforms {
-                    area: [origin[0], origin[1], state.resolution as i32, 0],
+                    area: [origin[0], origin[1], state.resolution as i32, apron as i32],
                     params: [HEIGHT_FACTOR, 0.0, 0.0, 0.0],
                     base_color: background(Channel::BaseColor),
                     surface: [
@@ -2168,6 +2258,10 @@ fn signature(stack: &LayerStack, maps: &MeshMaps) -> u64 {
                                 floats(h, &l.input);
                                 floats(h, &[l.gamma]);
                                 floats(h, &l.output);
+                            }
+                            EffectKind::Blur(b) => {
+                                4u8.hash(h);
+                                b.intensity.to_bits().hash(h);
                             }
                         }
                     }

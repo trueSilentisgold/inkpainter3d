@@ -275,6 +275,7 @@ pub mod icons {
         ADD_FOLDER = "add-folder",
         DELETE = "delete",
         EFFECT_LEVELS = "effect-levels",
+        EFFECT_BLUR = "effect-blur",
         EFFECT_GENERATOR = "effect-generator",
         REMOVE = "remove",
         INVERT = "invert",

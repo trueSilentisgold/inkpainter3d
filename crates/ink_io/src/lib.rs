@@ -5,6 +5,7 @@ pub mod material;
 pub mod online;
 pub mod preset;
 pub mod project;
+pub mod starter;
 
 use anyhow::{Context, Result, bail};
 use glam::{Mat3, Mat4, Vec2, Vec3};

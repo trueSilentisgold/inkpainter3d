@@ -80,6 +80,10 @@ check undo sphere "paint undo display=basecolor" "640,400:$grey" "500,400:$grey"
 check undo-live sphere "paint live=10 undo display=basecolor" "500,400:$grey"
 check paint-4k sphere "res=4096 size=60 paint display=basecolor" "640,400:$red"
 check paint-uv sphere "paint uv 2d" "640,400:b > 190 && r < 140" "400,650:r > 160 && b < 200"
+# Symmetry: mirrored across Z, the stroke also lands on the back, which its own camera
+# can't see (2D view: the copy is the right-hand arc).
+check mirror sphere "paint mirror=z 2d display=basecolor" \
+    "500,385:r > 200 && g < 100" "760,395:r > 200 && g < 100"
 check paint-planar sphere "paint align=planar display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-camera sphere "paint align=camera display=basecolor" "640,400:$red" "640,250:$grey"
 check paint-follow sphere "paint follow jitter=0.2 display=basecolor" "640,400:$red" "640,250:$grey"
@@ -98,6 +102,9 @@ check no-depth "$data/two_planes.obj" "paint nodepth set=Back only=Back yaw=0 di
 check mask sphere "fill=0.2,0.5,0.9 mask paint display=basecolor" "500,400:$blue" "640,250:$grey"
 check mask-levels sphere "fill=0.2,0.5,0.9 mask levels paint display=basecolor" \
     "500,400:$grey" "640,250:$blue"
+# A blur softens the stroke's edge in the mask: half blue just beside it, grey farther out.
+check mask-blur sphere "fill=0.2,0.5,0.9 mask paint blur=1 display=basecolor" \
+    "500,400:$blue" "500,380:r > 140 && r < 180 && b > 192" "500,340:$grey"
 
 # Blending and folders.
 check multiply sphere "color=1,1,1 fill=0.9,0.2,0.2 folder blend=multiply display=basecolor" \

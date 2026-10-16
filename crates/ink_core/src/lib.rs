@@ -13,6 +13,7 @@ pub mod mesh;
 pub mod model;
 pub mod stencil;
 pub mod stroke;
+pub mod symmetry;
 pub mod texture;
 
 pub use bake::{BakeSettings, HighPoly, IdSource, Matching, MeshMap, MeshMaps};
@@ -25,8 +26,8 @@ pub use fill::{FillShape, FillTarget};
 pub use generator::{Generator, GeneratorKind};
 pub use history::{Command, History};
 pub use layer::{
-    BlendMode, Blending, ChannelBlend, Content, Effect, EffectKind, Fill, Folder, GrayFill, Layer,
-    LayerKind, LayerStack, Levels, Mask, Place, Projection, ProjectionMode,
+    BlendMode, Blending, Blur, ChannelBlend, Content, Effect, EffectKind, Fill, Folder, GrayFill,
+    Layer, LayerKind, LayerStack, Levels, Mask, Place, Projection, ProjectionMode,
 };
 pub use mesh::{Aabb, Mesh};
 pub use model::{
@@ -38,4 +39,5 @@ pub use stroke::{
     Dab, DabSpacer, LazyMouse, PaintLayer, Stroke, StrokeCamera, StrokePath, StrokeSpace,
     shape_dabs, snap_direction, surface_dab, uv_dab,
 };
+pub use symmetry::{Symmetry, SymmetryMode};
 pub use texture::{Texels, TextureImage};

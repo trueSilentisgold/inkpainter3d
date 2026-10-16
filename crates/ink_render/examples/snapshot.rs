@@ -15,7 +15,8 @@
 //! `heightmap=file.png` (its height image), `triplanar`, `scale=4` and `rotate=30` (its
 //! projection);
 //! `mask` (the fill gets a black mask and the strokes paint into it), `levels` (an inverting
-//! levels effect in that mask); `blend=multiply` and `opacity=0.5` (blending of the top
+//! levels effect in that mask), `blur=0.3` (a blur with this intensity on top of that mask,
+//! blended with Replace); `blend=multiply` and `opacity=0.5` (blending of the top
 //! layer's color, roughness and metallic), `nblend=` and `nopacity=` (of its normal);
 //! `folder` (puts the top layer in a folder), `passthrough` (that folder passes through);
 //! `height` (strokes paint only height 1).
@@ -30,7 +31,8 @@
 //! of the painted texture set instead.
 //!
 //! `align=wrap|planar|camera` (the brush's alignment), `follow` (Follow Path), `jitter=0.5`
-//! (all four jitter amounts) and `angle=30` apply to those strokes.
+//! (all four jitter amounts) and `angle=30` apply to those strokes; `mirror=x` (any of
+//! `xyz`) or `radial=4` (around Y) paints the surface strokes with symmetry about the origin.
 //!
 //! `polyfill=triangle|polygon|mesh|island` fills what the middle of the view shows with a
 //! Polygon Fill stroke (blue), after the other strokes.
@@ -46,6 +48,8 @@
 //! Generators: `generator=edge_wear` (a `GeneratorKind::key`) puts a red fill layer with a black
 //! mask holding that generator on top; `gparam=key:value` (may be given several times) sets
 //! its parameters. Bake the mesh maps it reads in the same run with `bake=`.
+//! `smart=Rusty_metal` puts a starter preset (`ink_io::starter`, by name with `_` for spaces)
+//! on top of the stack.
 //!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
@@ -62,7 +66,7 @@ use anyhow::{Context, Result};
 use glam::Vec2;
 use ink_core::export::{BitDepth, ExportSettings, FileFormat, MapImage, Padding, Template};
 use ink_core::{
-    Alignment, Alpha, BlendMode, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect,
+    Alignment, Alpha, BlendMode, Blur, Brush, BrushMaterial, Channel, ChannelSet, Content, Effect,
     EffectKind, Layer, LayerKind, Levels, Mask, Mesh, Model, ProjectionMode, Stroke, StrokePath,
     StrokeSpace, Tool, shape_dabs, surface_dab, uv_dab,
 };
@@ -160,6 +164,16 @@ fn main() -> Result<()> {
         ..Default::default()
     };
     let live: usize = option("live").map_or(Ok(usize::MAX), str::parse)?;
+    let mut symmetry = ink_core::Symmetry::default();
+    if let Some(axes) = option("mirror") {
+        symmetry.enabled = true;
+        symmetry.mirror = ['x', 'y', 'z'].map(|a| axes.contains(a));
+    }
+    if let Some(count) = option("radial") {
+        symmetry.enabled = true;
+        symmetry.mode = ink_core::SymmetryMode::Radial;
+        symmetry.count = count.parse()?;
+    }
     let view = Vec2::new(SIZE[0] as f32, SIZE[1] as f32);
     let mut strokes = Vec::new();
     if flag("paint") {
@@ -232,6 +246,16 @@ fn main() -> Result<()> {
         ));
         layer.mask = Some(mask);
         model.texture_sets[set].stack.layers.push(layer);
+    }
+    if let Some(name) = option("smart") {
+        let preset = ink_io::starter::all()
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&name.replace('_', " ")))
+            .with_context(|| format!("no starter preset {name}"))?;
+        for layer in &preset.layers {
+            let copy = layer.duplicate(&mut model.ids);
+            model.texture_sets[set].stack.layers.push(copy);
+        }
     }
     for layer in model.texture_sets[set].stack.iter() {
         let b = layer.blending.get(Channel::BaseColor);
@@ -319,6 +343,11 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             fill: None,
             stencil,
+            symmetry: if space == StrokeSpace::Surface {
+                symmetry.copies()
+            } else {
+                Vec::new()
+            },
             dabs: Vec::new(),
         };
         let paint = target;
@@ -354,6 +383,7 @@ fn main() -> Result<()> {
             hidden_sets: Vec::new(),
             fill: Some(model.fill_target(shape, hit.triangle as u32)),
             stencil: None,
+            symmetry: Vec::new(),
             dabs: Vec::new(),
         };
         let layer = model.texture_sets[set].stack.paint_mut(target).unwrap();
@@ -752,6 +782,17 @@ fn build_stack<'a>(
                 };
                 mask.effects
                     .push(Effect::new(ids.next(), EffectKind::Levels(levels)));
+            }
+            if let Some(intensity) = floats("blur")? {
+                // Replace, as in the reference project.
+                let mut blur = Effect::new(
+                    ids.next(),
+                    EffectKind::Blur(Blur {
+                        intensity: intensity[0],
+                    }),
+                );
+                blur.blend = BlendMode::Replace;
+                mask.effects.push(blur);
             }
             layer.mask = Some(mask);
         }

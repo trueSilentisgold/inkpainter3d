@@ -404,6 +404,36 @@ impl Levels {
     }
 }
 
+/// A Gaussian blur of what lies below, in texture space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Blur {
+    /// 0 to 1, independent of the resolution: the same intensity looks the same at 1024 and
+    /// at 4096.
+    pub intensity: f32,
+}
+
+impl Default for Blur {
+    fn default() -> Self {
+        Self { intensity: 0.3 }
+    }
+}
+
+impl Blur {
+    /// The largest radius any intensity gives, in texels; it bounds the compositor's work.
+    pub const MAX_RADIUS: f32 = 128.0;
+    /// The radius at full intensity, as a share of the texture's width.
+    const FULL: f32 = 0.03;
+
+    /// How far the blur reaches, in texels of a texture set of `resolution`: the Gaussian's
+    /// radius, three standard deviations. At most [`Self::MAX_RADIUS`]; 0 leaves the mask
+    /// as it is.
+    pub fn radius(&self, resolution: u32) -> f32 {
+        // Squared, so the slider is fine where soft edges need it, at low intensities.
+        let t = self.intensity.clamp(0.0, 1.0);
+        (t * t * Self::FULL * resolution as f32).min(Self::MAX_RADIUS)
+    }
+}
+
 /// What an effect does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EffectKind {
@@ -412,6 +442,8 @@ pub enum EffectKind {
     Fill(GrayFill),
     /// Changes what lies below instead of adding to it.
     Levels(Levels),
+    /// Blurs what lies below and blends the result onto it.
+    Blur(Blur),
     /// A procedural mask from the mesh maps and noise.
     Generator(crate::Generator),
 }
@@ -457,6 +489,7 @@ impl Effect {
             EffectKind::Paint(_) => "Paint",
             EffectKind::Fill(_) => "Fill",
             EffectKind::Levels(_) => "Levels",
+            EffectKind::Blur(_) => "Blur",
             EffectKind::Generator(g) => g.kind.label(),
         }
     }
@@ -1126,5 +1159,14 @@ mod tests {
         for channel in Channel::ALL {
             assert_eq!(Channel::from_key(channel.key()), Some(channel));
         }
+    }
+
+    #[test]
+    fn blur_scales_with_the_resolution_up_to_its_limit() {
+        let blur = Blur { intensity: 0.5 };
+        assert_eq!(Blur { intensity: 0.0 }.radius(4096), 0.0);
+        assert!((blur.radius(4096) - 4.0 * blur.radius(1024)).abs() < 1e-3);
+        assert_eq!(Blur { intensity: 1.0 }.radius(8192), Blur::MAX_RADIUS);
+        assert!(Blur { intensity: 1.0 }.radius(4096) <= Blur::MAX_RADIUS);
     }
 }

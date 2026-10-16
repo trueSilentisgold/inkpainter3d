@@ -126,7 +126,8 @@ mask. Effects are listed bottom to top:
 ```
 
 `kind` is `{ "paint": { … } }` (a paint layer), `{ "fill": { "value": 1.0, "image": null, "projection": { … } } }`
-(a grayscale fill; the image's red channel is used), `{ "levels": { … } }` or
+(a grayscale fill; the image's red channel is used), `{ "levels": { … } }`,
+`{ "blur": { "intensity": 0.2 } }` (0 to 1, independent of the resolution) or
 `{ "generator": { "kind": "edge_wear", "params": { "amount": 0.5, "noise_scale": 24 } } }`. A
 generator's `kind` and `params` are named by the keys in `ink_core::generator`; parameters
 that are missing take their defaults, unknown ones are ignored.
@@ -157,6 +158,10 @@ that are missing take their defaults, unknown ones are ignored.
   `y' = d x + e y + f`. The input is `(ndc.x * aspect, ndc.y)` of the stroke's camera for surface
   strokes and the UV for strokes of the 2D view. Dabs use it per dab, so a stroke looks the
   same live and replayed.
+- `symmetry` (optional): the symmetry copies of a surface stroke, each a 4 × 4 matrix column
+  by column (a mirror or a rotation in world space). Every dab is painted again moved by each
+  one, seen by the stroke's camera moved the same way. Matrices that are not finite or
+  cannot be inverted are ignored.
 - `backface_cos`: the cosine of the backface culling angle; -1 paints every surface.
 - `material`: what the brush paints, as for fill layers; `grayscale` is the value painted
   into masks.

@@ -211,6 +211,7 @@ mod tests {
             camera: None,
             hidden_objects: Vec::new(),
             hidden_sets: Vec::new(),
+            symmetry: Vec::new(),
             dabs: Vec::new(),
         }
     }

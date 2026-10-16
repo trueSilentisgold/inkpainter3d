@@ -35,7 +35,9 @@ const MAX_DABS_PER_DRAW: usize = 64;
 /// same whatever the window size.
 const DEPTH_MAP_SIZE: u32 = 2048;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-/// Depth maps kept for strokes painted from the same view.
+/// Depth maps kept for strokes painted from the same view: at least one per camera of a
+/// stroke with all its symmetry copies (`Symmetry::MAX_COUNT`), or every new dab would draw
+/// them all again.
 const DEPTH_MAP_CACHE: usize = 8;
 /// Video memory for the tiles strokes painted over, kept for fast undo.
 const PRE_IMAGE_BUDGET: u64 = 512 << 20;
@@ -1254,7 +1256,8 @@ impl PaintCaches {
         }
     }
 
-    /// Adds dabs to the coverage texture. Returns the texels that may have changed.
+    /// Adds dabs to the coverage texture, and their symmetry copies (each seen by the stroke's
+    /// camera moved the same way). Returns the texels that may have changed.
     #[allow(clippy::too_many_arguments)]
     fn rasterize(
         &mut self,
@@ -1266,6 +1269,41 @@ impl PaintCaches {
         size: u32,
         coverage: &wgpu::TextureView,
         stroke: &Stroke,
+        dabs: &[Dab],
+    ) -> Region {
+        let camera = stroke
+            .camera
+            .filter(|_| stroke.space == StrokeSpace::Surface);
+        let mut changed = self.rasterize_copy(
+            device, queue, model, mesh, set, size, coverage, stroke, camera, dabs,
+        );
+        // Copies of a surface stroke's dabs; a fill has none, UV strokes are not mirrored.
+        if stroke.space == StrokeSpace::Surface && stroke.fill.is_none() {
+            for m in &stroke.symmetry {
+                let copies: Vec<Dab> = dabs.iter().map(|d| d.transformed(m)).collect();
+                let camera = camera.map(|c| c.transformed(m));
+                changed.extend(&self.rasterize_copy(
+                    device, queue, model, mesh, set, size, coverage, stroke, camera, &copies,
+                ));
+            }
+        }
+        changed
+    }
+
+    /// Adds dabs to the coverage texture as seen by `camera` (None paints through
+    /// everything). Returns the texels that may have changed.
+    #[allow(clippy::too_many_arguments)]
+    fn rasterize_copy(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        mesh: &GpuMesh,
+        set: usize,
+        size: u32,
+        coverage: &wgpu::TextureView,
+        stroke: &Stroke,
+        camera: Option<StrokeCamera>,
         dabs: &[Dab],
     ) -> Region {
         let tip = match &stroke.alpha {
@@ -1283,9 +1321,6 @@ impl PaintCaches {
             Some(s) => self.alpha_view(device, queue, &Alpha::Image(s.image.clone())),
             None => self.white_alpha.clone(),
         };
-        let camera = stroke
-            .camera
-            .filter(|_| stroke.space == StrokeSpace::Surface);
         let depth = match &camera {
             Some(camera) => self.depth_map(device, queue, model, mesh, stroke, camera),
             None => self.no_depth.clone(),
