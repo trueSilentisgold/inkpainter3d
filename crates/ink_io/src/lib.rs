@@ -243,7 +243,45 @@ fn append_gltf_mesh(
 }
 
 fn load_obj(path: &Path, out: &mut ModelBuilder) -> Result<()> {
-    let (models, materials) = tobj::load_obj(path, &tobj::GPU_LOAD_OPTIONS)
+    let bytes =
+        std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    // tobj forgets `usemtl` names that no .mtl file defines and puts all their faces into
+    // one unnamed slot; Painter keeps them apart by name. So a material library of our own,
+    // read before the file's, names every one of them; the file's own libraries come later
+    // and override what they define.
+    let mut names: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("usemtl") else {
+            continue;
+        };
+        let name = rest.trim();
+        if rest.starts_with(char::is_whitespace)
+            && !name.is_empty()
+            && !names.iter().any(|n| n == name)
+        {
+            names.push(name.to_owned());
+        }
+    }
+    const OWN_LIBRARY: &str = "<inkpainter3d: usemtl names>";
+    let source = format!("mtllib {OWN_LIBRARY}\n{text}");
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let (models, materials) =
+        tobj::load_obj_buf(&mut source.as_bytes(), &tobj::GPU_LOAD_OPTIONS, |library| {
+            if library == Path::new(OWN_LIBRARY) {
+                let materials = names
+                    .iter()
+                    .map(|name| tobj::Material {
+                        name: name.clone(),
+                        ..Default::default()
+                    })
+                    .collect();
+                let map = names.iter().cloned().zip(0..).collect();
+                Ok((materials, map))
+            } else {
+                tobj::load_mtl(dir.join(library))
+            }
+        })
         .with_context(|| format!("Failed to read {}", path.display()))?;
     // A missing .mtl file is not an error; the material slots just stay unnamed.
     let materials = materials.unwrap_or_default();
@@ -702,6 +740,20 @@ Connections:  {
             "Wood is used by Box and Lid"
         );
         assert_eq!(model.sets_of_object(0), [0, 1], "Box uses Metal and Wood");
+    }
+
+    #[test]
+    fn obj_keeps_materials_its_library_does_not_define() {
+        // Only Wood is in the library; Paint and Glass are named by `usemtl` alone, and the
+        // second file has no library at all.
+        write_temp("shelf.mtl", "newmtl Wood\nKd 1 1 1\n");
+        let obj = "mtllib shelf.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n\
+                   usemtl Wood\nf 1 2 3\nusemtl Paint\nf 1 3 4\nusemtl Glass\nf 1 2 4\n";
+        let model = load_model(&write_temp("shelf.obj", obj)).unwrap();
+        assert_eq!(set_names(&model), ["Glass", "Paint", "Wood"]);
+        let obj = "v 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl A\nf 1 2 3\nusemtl B\nf 1 3 2\n";
+        let model = load_model(&write_temp("bare.obj", obj)).unwrap();
+        assert_eq!(set_names(&model), ["A", "B"]);
     }
 
     #[test]

@@ -95,7 +95,8 @@ sich in inkpainter3d genauso bauen lassen.** Es enthält:
 ### 2.1 Import
 
 - [x] `P0` Beim Import bleiben **Materialzuweisung und Mesh-Namen erhalten**: aus FBX
-      (Material pro Polygon), glTF (Material pro Primitive) und OBJ (`usemtl`).
+      (Material pro Polygon), glTF (Material pro Primitive) und OBJ (`usemtl`, auch ohne Eintrag
+      in der `.mtl`-Datei).
 - [x] `P0` Jedes Material wird ein Texture Set. Meshes ohne Material landen in einem
       Standard-Set.
 - [x] `P0` **Tangenten nach MikkTSpace**, damit Normal Maps in Unreal, Unity, Godot und Blender
