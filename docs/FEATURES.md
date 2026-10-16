@@ -551,7 +551,7 @@ unter einem Filter wird um diese Reichweite mehr neu berechnet.
 
 **Prozedurale Texturen**
 
-- [x] `P1` Noises (Perlin, Fractal, Zellen, Wolken) als Generator *Noise*
+- [x] `P1` Noises (Perlin, Fractal, Zellen, Wolken, Zellränder für Risse und Falten) als Generator *Noise*
 - [x] `P1` Grunges (Kratzer, Haarstriche, Risse, Flecken, Staub) als Alphas im Shelf, im Code erzeugt
 - [ ] `P1` Muster (Kacheln, Ziegel, Streifen)
 
@@ -569,7 +569,9 @@ unter einem Filter wird um diese Reichweite mehr neu berechnet.
 - [x] `P1` **Starter-Bibliothek:** zwölf Smart Materials (Steel, Painted metal, Rusty metal, Gold,
       Copper patina, Glossy plastic, Rubber, Dry wood, Leather, Rough stone, Concrete, Fabric) und
       sechs Smart Masks (Edge wear, Dirt in crevices, Worn surface, Noise patches, Gradient from the
-      bottom, Dust on top), sieben Pinsel, acht Alphas, die HDRI. Alles im Code erzeugt.
+      bottom, Dust on top), sieben Pinsel, acht Alphas, die HDRI. Alles im Code erzeugt. Jedes
+      Material formt auch die Oberfläche über den Height-Kanal: Lackschicht, Rostkruste,
+      Lochfraß, Poren, Risse, Lederkörnung, Fasern.
       Weitere Materialien kommen aus den Online-Bibliotheken (CC0).
 
 ---

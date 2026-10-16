@@ -47,6 +47,8 @@
 //! Generators: `generator=edge_wear` (a `GeneratorKind::key`) puts a red fill layer with a black
 //! mask holding that generator on top; `gparam=key:value` (may be given several times) sets
 //! its parameters. Bake the mesh maps it reads in the same run with `bake=`.
+//! `smart=Rusty_metal` puts a starter preset (`ink_io::starter`, by name with `_` for spaces)
+//! on top of the stack.
 //!
 //! `probe=x,y` (may be given several times) prints the pixel there as `probe x y r g b`,
 //! for scripted checks (scripts/gpu-smoke.sh).
@@ -233,6 +235,16 @@ fn main() -> Result<()> {
         ));
         layer.mask = Some(mask);
         model.texture_sets[set].stack.layers.push(layer);
+    }
+    if let Some(name) = option("smart") {
+        let preset = ink_io::starter::all()
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&name.replace('_', " ")))
+            .with_context(|| format!("no starter preset {name}"))?;
+        for layer in &preset.layers {
+            let copy = layer.duplicate(&mut model.ids);
+            model.texture_sets[set].stack.layers.push(copy);
+        }
     }
     for layer in model.texture_sets[set].stack.iter() {
         let b = layer.blending.get(Channel::BaseColor);

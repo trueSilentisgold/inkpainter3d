@@ -5,7 +5,6 @@
 
 mod content;
 mod smart;
-mod starter;
 
 use super::InkApp;
 use super::presets::user_dir as brush_dir;

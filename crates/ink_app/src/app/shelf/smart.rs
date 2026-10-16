@@ -1,5 +1,5 @@
 //! Smart materials and smart masks in the shelf: presets of layers or of a mask, the ones
-//! made in code (`starter.rs`) and the user's own saved from the layer stack.
+//! made in code (`ink_io::starter`) and the user's own saved from the layer stack.
 
 use super::{Action, Category, Event, InkApp, cell, library_dir, safe_name};
 use eframe::egui::{self, TextureHandle};
@@ -71,7 +71,7 @@ impl InkApp {
     /// files are made by a thread.
     pub(super) fn smart_rescan(&mut self, ctx: &egui::Context, generation: u64) {
         let mut items = Vec::new();
-        for smart in super::starter::all() {
+        for smart in ink_io::starter::all() {
             let smart = Arc::new(smart);
             let mask = smart.kind == SmartKind::Mask;
             items.push(SmartItem {

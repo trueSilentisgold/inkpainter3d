@@ -98,31 +98,40 @@ fn fractal(p: vec3<f32>, octaves: i32, gain: f32, seed: u32) -> f32 {
     return clamp(0.5 + 0.5 * sum / max(total, 1e-6), 0.0, 1.0);
 }
 
-// Distance to the nearest of a randomly placed point per cell, 0 to 1.
-fn cells(p: vec3<f32>, seed: u32) -> f32 {
+// Distances to the nearest (x) and second nearest (y) of a randomly placed point per cell.
+fn cell_distances(p: vec3<f32>, seed: u32) -> vec2<f32> {
     let i = vec3<i32>(floor(p));
     let f = p - floor(p);
     var best = 8.0;
+    var second = 8.0;
     for (var z = -1; z <= 1; z++) {
         for (var y = -1; y <= 1; y++) {
             for (var x = -1; x <= 1; x++) {
                 let o = vec3<i32>(x, y, z);
                 let h = hash3(i + o, seed);
                 let jitter = vec3<f32>(f32(h & 0x3ffu), f32((h >> 10u) & 0x3ffu), f32((h >> 20u) & 0x3ffu)) / 1023.0;
-                best = min(best, distance(f, vec3<f32>(o) + jitter));
+                let d = distance(f, vec3<f32>(o) + jitter);
+                second = min(second, max(best, d));
+                best = min(best, d);
             }
         }
     }
-    return clamp(best, 0.0, 1.0);
+    return vec2<f32>(best, second);
 }
 
-// 0 Perlin, 1 fractal, 2 cells, 3 clouds.
+// 0 Perlin, 1 fractal, 2 cells, 3 clouds, 4 cell edges.
 fn noise_field(kind: u32, p: vec3<f32>, octaves: i32, gain: f32, seed: u32) -> f32 {
     if kind == 0u {
         return clamp(0.5 + 0.5 * perlin(p, seed), 0.0, 1.0);
     }
     if kind == 2u {
-        return cells(p, seed);
+        // Distance to the nearest point, 0 to 1.
+        return clamp(cell_distances(p, seed).x, 0.0, 1.0);
+    }
+    if kind == 4u {
+        // How far from the border between two cells: 0 on it, for cracks and creases.
+        let d = cell_distances(p, seed);
+        return clamp(d.y - d.x, 0.0, 1.0);
     }
     let f = fractal(p, octaves, gain, seed);
     if kind == 3u {
