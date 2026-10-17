@@ -98,6 +98,12 @@ check occlusion "$data/two_planes.obj" "paint set=Back only=Back yaw=0 display=b
 check no-depth "$data/two_planes.obj" "paint nodepth set=Back only=Back yaw=0 display=basecolor" \
     "640,400:$red"
 
+# Geometry masks: the fill leaves out the narrow front mesh, and strokes pass through it
+# onto the back one (with the front hidden, Alt+H; without the mask the front would hide
+# the middle of the stroke, as in `occlusion`).
+check geometry-mask "$data/two_meshes.obj" "fill=0.2,0.5,0.9 exclude=Front yaw=0 display=basecolor"     "640,400:$grey" "450,400:$blue"
+check geometry-mask-paint "$data/two_meshes.obj" "paint exclude=Front hideexcluded yaw=0 display=basecolor"     "640,400:$red" "450,400:$red"
+
 # Masks: the strokes paint the fill's black mask; levels invert it.
 check mask sphere "fill=0.2,0.5,0.9 mask paint display=basecolor" "500,400:$blue" "640,250:$grey"
 check mask-levels sphere "fill=0.2,0.5,0.9 mask levels paint display=basecolor" \

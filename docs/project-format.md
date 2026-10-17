@@ -96,6 +96,8 @@ lists the layer stack **bottom to top**. `mesh_maps` are the baked maps (`ambien
   `color_burn`, `color_dodge`, `soft_light`, `hard_light`, `vivid_light`, `linear_light`,
   `pin_light`, `tint`, `saturation`, `color`, `value`, `normal_map_combine`,
   `normal_map_detail`, `normal_map_inverse_detail`.
+- `excluded_meshes` (optional): the geometry mask, the names of the texture set's meshes the
+  layer leaves out (a folder: everything in it too). Missing means none.
 
 `content` is one of:
 
@@ -172,6 +174,8 @@ that are missing take their defaults, unknown ones are ignored.
   everything.
 - `hidden_objects`, `hidden_sets`: indices of objects and texture sets that were hidden;
   they got no paint and hid nothing.
+- `excluded_parts` (optional): `[object, texture set]` pairs the painted layer's geometry
+  mask left out; they got no paint and hid nothing.
 - `first_dab`, `dab_count`: the stroke's dabs in `dabs.bin`.
 
 ## `mesh.bin`

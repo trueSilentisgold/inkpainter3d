@@ -733,7 +733,6 @@ impl ViewportRenderer {
                 device,
                 queue,
                 model,
-                mesh,
                 (&mesh.vertices, &mesh.indices),
                 &self.paint,
                 index,
@@ -774,7 +773,6 @@ impl ViewportRenderer {
             device,
             queue,
             model,
-            mesh,
             (&mesh.vertices, &mesh.indices),
             &self.paint,
             set,
@@ -821,6 +819,8 @@ impl ViewportRenderer {
         self.targets.as_ref().map(|t| &t.resolve)
     }
 
+    /// Draws the visible parts but `hidden` (object, texture set).
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         device: &wgpu::Device,
@@ -829,8 +829,12 @@ impl ViewportRenderer {
         settings: &ViewportSettings,
         model: &Model,
         highlight: Highlight,
+        hidden: &[(usize, usize)],
     ) {
         let Some(targets) = &self.targets else { return };
+        let shown = |p: &ink_core::Part| {
+            model.is_part_visible(p) && !hidden.contains(&(p.object, p.texture_set))
+        };
         queue.write_buffer(
             &self.uniform_buffer,
             0,
@@ -853,7 +857,7 @@ impl ViewportRenderer {
                 pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 let visible = |blend: bool| {
                     model.parts.iter().filter(move |p| {
-                        model.is_part_visible(p)
+                        shown(p)
                             && (model.texture_sets[p.texture_set].alpha_mode == AlphaMode::Blend)
                                 == blend
                     })
@@ -885,7 +889,7 @@ impl ViewportRenderer {
                     pass.set_pipeline(&self.wire_pipeline);
                     pass.set_index_buffer(mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
                     for (part, edges) in model.parts.iter().zip(&mesh.edge_ranges) {
-                        if model.is_part_visible(part) {
+                        if shown(part) {
                             pass.draw_indexed(edges.clone(), 0, 0..1);
                         }
                     }

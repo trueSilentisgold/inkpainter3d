@@ -24,8 +24,9 @@
 > **Status:** early development. A game asset can be textured and exported end to end:
 > viewport, texture sets, brush engine with presets, stencil and polygon fill, layer stack with
 > masks, project files and export, a shelf with online libraries, baking of mesh maps,
-> generators with smart materials, and a blur filter for masks are done. Next come the
-> remaining tools (projection, symmetry, color selection), then stylized and vector layers.
+> generators with smart materials, a blur filter for masks, symmetry, color selection and
+> geometry masks are done. Next come the remaining tools (projection, anchor points), then
+> stylized and vector layers.
 > See the [roadmap](#roadmap).
 
 <p align="center">
@@ -150,6 +151,8 @@ inkpainter3d aims to be a capable alternative that:
     paint, fill, levels, blur and **color selection** effects (parts of the baked ID map,
     picked by clicking the model), reordered by drag and drop and copied like layers;
     Shift + click turns a mask off
+  - **geometry masks** on layers and folders: the meshes a layer applies to, ticked by name;
+    strokes pass through the meshes left out, and Alt + H hides them to paint underneath
   - **fill layers** with a value or an image per channel (PNG, JPEG, TGA, BMP, EXR, HDR;
     normal maps in DirectX or OpenGL format), **UV** or **tri-planar** projection with
     scale, rotation, offset and hardness; height becomes normal detail
@@ -195,7 +198,7 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 | 7 | **Brushes and shelf** — brush presets, jitter, alignment, stencil, polygon fill; a shelf with categories, your own brushes, alphas, materials and textures, PBR folder import, online libraries (ambientCG, Poly Haven) | ✅ done |
 | 8 | **Baking** — AO, curvature, position, thickness, world normal; normal, height and ID from high poly | ✅ done |
 | 9 | **Generators** — mask builder, edge wear, dirt, noises, smart materials and masks, starter content, blur in masks (more filters come later) | ✅ done |
-| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | in progress: symmetry and color selection done |
+| 10 | **Remaining tools** — projection, symmetry, color selection, geometry mask, anchor points | in progress: symmetry, color selection and geometry mask done |
 | 11 | **Stylized and vector layers** — ink channel, toon controls, editable paths on the surface | |
 | 12 | **Polish** — translations, UDIM, smudge and clone, path tools, post effects, physics brushes (fur), Python API, installers (AppImage / Flatpak, Windows) | |
 
@@ -256,6 +259,7 @@ The same as in Substance 3D Painter.
 | Perspective / orthographic | F5 / F6 |
 | Material / next channel / previous channel | M / C / Shift + C |
 | Focus on selected texture set | Alt + Q |
+| Hide the meshes the selected layer's geometry mask leaves out | Alt + H |
 | Select texture set under cursor | Ctrl + Alt + right click |
 | Duplicate / group layers | Ctrl + D / Ctrl + G |
 | Copy / cut / paste / delete layers (pointer over the layer stack) | Ctrl + C / Ctrl + X / Ctrl + V / Delete |

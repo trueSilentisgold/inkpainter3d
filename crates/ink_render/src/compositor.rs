@@ -19,8 +19,8 @@ use bytemuck::{Pod, Zeroable};
 use egui_wgpu::wgpu;
 use ink_core::export::{ExportBlock, ExportTexel};
 use ink_core::{
-    BlendMode, Channel, ChannelKind, ColorSelection, Content, EffectKind, Layer, LayerStack, Mask,
-    MeshMap, MeshMaps, Model, Projection, ProjectionMode, Texels, TextureImage,
+    BlendMode, Channel, ChannelKind, ColorSelection, Content, EffectKind, GeometryMask, Layer,
+    LayerStack, Mask, MeshMap, MeshMaps, Model, Projection, ProjectionMode, Texels, TextureImage,
 };
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -182,6 +182,8 @@ enum Pipe {
     MaskBlurY,
     /// Parts of the ID map by color.
     MaskColorSelection,
+    /// The geometry mask: black on the meshes it leaves out.
+    MaskGeometry,
 }
 
 /// One step of compositing a chunk.
@@ -218,6 +220,9 @@ struct Program {
     maps: [Option<Arc<TextureImage>>; MAP_SLOTS.len()],
     /// How far the blurs of the most blurred mask reach, in texels ([`blur_reach`]).
     reach: u32,
+    /// The meshes each geometry mask leaves out, one bit per mesh of the texture set (in
+    /// [`Model::objects_in_set`] order), [`Builder::mesh_words`] words per mask.
+    excluded_meshes: Vec<u32>,
 }
 
 impl Program {
@@ -269,9 +274,67 @@ struct Builder<'a> {
     mask_slots: HashMap<u64, usize>,
     save_level: usize,
     maps: [Option<Arc<TextureImage>>; MAP_SLOTS.len()],
+    /// The names of the texture set's meshes, by their index among the set's.
+    meshes: Vec<String>,
+    /// Layers whose geometry mask leaves out every mesh: they and their children do nothing.
+    skipped: HashSet<u64>,
 }
 
-impl Builder<'_> {
+/// What a geometry mask leaves out of a texture set.
+enum Exclusion {
+    Nothing,
+    Everything,
+    /// Some meshes, from this word of [`Program::excluded_meshes`] on.
+    Some(u32),
+}
+
+impl<'a> Builder<'a> {
+    fn new(paint: &'a PaintCaches, model: &Model, set: usize, resolution: u32) -> Self {
+        Self {
+            paint,
+            resolution,
+            program: Program::default(),
+            current: Vec::new(),
+            mask_slots: HashMap::new(),
+            save_level: 0,
+            maps: map_slots(&model.texture_sets[set].mesh_maps),
+            meshes: model
+                .objects_in_set(set)
+                .iter()
+                .map(|&o| model.objects[o].name.clone())
+                .collect(),
+            skipped: HashSet::new(),
+        }
+    }
+
+    fn mesh_words(&self) -> usize {
+        self.meshes.len().div_ceil(32)
+    }
+
+    /// Adds the meshes the geometry mask leaves out to the program.
+    fn exclusion(&mut self, mask: &GeometryMask) -> Exclusion {
+        if mask.is_empty() {
+            return Exclusion::Nothing;
+        }
+        let mut words = vec![0u32; self.mesh_words()];
+        let mut excluded = 0;
+        for (i, name) in self.meshes.iter().enumerate() {
+            if mask.excludes(name) {
+                words[i / 32] |= 1 << (i % 32);
+                excluded += 1;
+            }
+        }
+        if excluded == 0 {
+            Exclusion::Nothing
+        } else if excluded == self.meshes.len() {
+            Exclusion::Everything
+        } else {
+            let offset = self.program.excluded_meshes.len() as u32;
+            self.program.excluded_meshes.extend(words);
+            Exclusion::Some(offset)
+        }
+    }
+
     fn build(mut self, stack: &LayerStack) -> Program {
         self.program.maps = self.maps.clone();
         self.program.reach = blur_reach(&stack.layers, self.resolution);
@@ -289,14 +352,24 @@ impl Builder<'_> {
         self.program
     }
 
-    /// Evaluates the masks of visible layers into their cache slots.
+    /// Evaluates the masks of visible layers, with their geometry masks, into their cache
+    /// slots.
     fn collect_masks(&mut self, layers: &[Layer]) {
         for layer in layers.iter().filter(|l| l.visible) {
-            if let Some(mask) = layer.mask.as_ref().filter(|m| m.enabled) {
+            let mask = layer.mask.as_ref().filter(|m| m.enabled);
+            let geometry = match self.exclusion(&layer.geometry_mask) {
+                Exclusion::Everything => {
+                    self.skipped.insert(layer.id);
+                    continue;
+                }
+                Exclusion::Nothing => None,
+                Exclusion::Some(offset) => Some(offset),
+            };
+            if mask.is_some() || geometry.is_some() {
                 let slot = self.program.masks;
                 self.program.masks += 1;
                 self.mask_slots.insert(layer.id, slot);
-                self.mask_steps(mask, slot);
+                self.mask_steps(mask, geometry, slot);
             }
             if let Some(children) = layer.children() {
                 self.collect_masks(children);
@@ -304,30 +377,33 @@ impl Builder<'_> {
         }
     }
 
-    fn mask_steps(&mut self, mask: &Mask, slot: usize) {
+    /// The steps of a layer's mask (white without one), then of its geometry mask, which
+    /// leaves out the meshes from word `geometry` of [`Program::excluded_meshes`] on.
+    fn mask_steps(&mut self, mask: Option<&Mask>, geometry: Option<u32>, slot: usize) {
         let gray = |v: f32| wgpu::Color {
             r: v as f64,
             g: 0.0,
             b: 0.0,
             a: 1.0,
         };
-        let painted = self.has_paint(mask.paint.id, 0);
+        let background = mask.map_or(1.0, |m| m.background);
+        let painted = mask.is_some_and(|m| self.has_paint(m.paint.id, 0));
         // Disable leaves an effect out, as for layers.
         let effects: Vec<_> = mask
-            .effects
             .iter()
+            .flat_map(|m| &m.effects)
             .filter(|e| e.visible && e.blend != BlendMode::Disable)
             .collect();
-        if !painted && effects.is_empty() {
+        if !painted && effects.is_empty() && geometry.is_none() {
             self.program
                 .steps
-                .push(Step::Clear(Tex::MaskCache(slot), gray(mask.background)));
+                .push(Step::Clear(Tex::MaskCache(slot), gray(background)));
             return;
         }
         let mut cur = 0;
         self.program
             .steps
-            .push(Step::Clear(Tex::MaskTmp(0), gray(mask.background)));
+            .push(Step::Clear(Tex::MaskTmp(0), gray(background)));
         let mut push = |builder: &mut Self, pipe, uniforms, paint, image| {
             // A blur's first pass leaves the mask as it is for the second, which blends the
             // blurred mask onto it.
@@ -350,7 +426,7 @@ impl Builder<'_> {
                 cur = 1 - cur;
             }
         };
-        if painted {
+        if let Some(mask) = mask.filter(|_| painted) {
             let uniforms = self.paint_uniforms(mask.paint.id, 0, ChannelKind::Scalar);
             push(
                 self,
@@ -444,6 +520,13 @@ impl Builder<'_> {
                 }
             }
         }
+        if let Some(offset) = geometry {
+            let uniforms = PassUniforms {
+                info: [0, 1, 0, offset],
+                ..Default::default()
+            };
+            push(self, Pipe::MaskGeometry, uniforms, None, None);
+        }
         self.program
             .steps
             .push(Step::Copy(Tex::MaskTmp(cur), Tex::MaskCache(slot)));
@@ -516,6 +599,9 @@ impl Builder<'_> {
         self.program.depth = self.program.depth.max(depth + 1);
         let kind = channel.kind();
         for layer in layers.iter().filter(|l| l.visible) {
+            if self.skipped.contains(&layer.id) {
+                continue;
+            }
             let blend = layer.blending.get(channel);
             if blend.mode == BlendMode::Disable {
                 continue;
@@ -631,6 +717,9 @@ pub(crate) struct GpuComposite {
     /// For every covered texel, the index of its triangle; made when a tri-planar
     /// projection needs it.
     triangles: Option<wgpu::TextureView>,
+    /// For every covered texel, the index of its mesh among the texture set's; made when a
+    /// geometry mask needs it.
+    objects: Option<wgpu::TextureView>,
     /// Hash of everything in the stack that shapes the result, except strokes.
     signature: Option<u64>,
     /// Chunks still to composite, row by row.
@@ -873,6 +962,7 @@ pub(crate) struct Compositor {
     export: wgpu::RenderPipeline,
     geometry: wgpu::RenderPipeline,
     triangles: wgpu::RenderPipeline,
+    objects: wgpu::RenderPipeline,
     seed_init: wgpu::RenderPipeline,
     jfa: wgpu::RenderPipeline,
     mip_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
@@ -881,6 +971,8 @@ pub(crate) struct Compositor {
     pass_buffer: wgpu::Buffer,
     resolve_buffer: wgpu::Buffer,
     geometry_buffer: wgpu::Buffer,
+    /// [`Program::excluded_meshes`] of the program that runs.
+    excluded_buffer: wgpu::Buffer,
     temps: Option<Temps>,
     /// Uploaded fill images by image id and whether they hold colors (sRGB).
     images: HashMap<(u64, bool), wgpu::TextureView>,
@@ -894,6 +986,7 @@ pub(crate) struct Compositor {
     dummy_slots: wgpu::Buffer,
     dummy_image: wgpu::TextureView,
     dummy_geometry: [wgpu::TextureView; 3],
+    dummy_objects: wgpu::TextureView,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -919,6 +1012,7 @@ enum PipeMask {
     BlurX,
     BlurY,
     ColorSelection,
+    Geometry,
 }
 
 impl Pipe {
@@ -935,6 +1029,7 @@ impl Pipe {
             Self::MaskBlurX => PipeKey::Mask(PipeMask::BlurX),
             Self::MaskBlurY => PipeKey::Mask(PipeMask::BlurY),
             Self::MaskColorSelection => PipeKey::Mask(PipeMask::ColorSelection),
+            Self::MaskGeometry => PipeKey::Mask(PipeMask::Geometry),
         }
     }
 }
@@ -1018,6 +1113,9 @@ impl Compositor {
                 texture(8, filterable, d2, fragment),
                 texture(9, filterable, d2, fragment),
                 texture(10, filterable, d2, fragment),
+                // The mesh of every texel and what geometry masks leave out.
+                texture(11, uint, d2, fragment),
+                buffer(12, storage, false, fragment),
             ],
         );
         let pass_layout = layout(
@@ -1136,6 +1234,7 @@ impl Compositor {
             (PipeMask::BlurX, "fs_mask_blur_x"),
             (PipeMask::BlurY, "fs_mask_blur_y"),
             (PipeMask::ColorSelection, "fs_mask_color_selection"),
+            (PipeMask::Geometry, "fs_mask_geometry"),
         ] {
             let p = pipeline(
                 "composite mask",
@@ -1181,6 +1280,15 @@ impl Compositor {
             &geometry_shader,
             "vs_triangles",
             "fs_triangles",
+            &[],
+            &[SEED_FORMAT],
+        );
+        let objects = pipeline(
+            "mesh ids",
+            &[&triangles_layout],
+            &geometry_shader,
+            "vs_objects",
+            "fs_objects",
             &[],
             &[SEED_FORMAT],
         );
@@ -1269,6 +1377,7 @@ impl Compositor {
             export,
             geometry,
             triangles,
+            objects,
             seed_init,
             jfa,
             mip_pipelines,
@@ -1289,6 +1398,7 @@ impl Compositor {
                 size_of::<GeometryUniforms>() as u64,
                 wgpu::BufferUsages::UNIFORM,
             ),
+            excluded_buffer: buffer("excluded meshes", 256, wgpu::BufferUsages::STORAGE),
             temps: None,
             images: HashMap::new(),
             set_images: Vec::new(),
@@ -1304,6 +1414,7 @@ impl Compositor {
             dummy_slots: buffer("dummy slots", 16, wgpu::BufferUsages::STORAGE),
             dummy_image: small("dummy image", wgpu::TextureFormat::Rgba8Unorm, 1, d2),
             dummy_geometry: GEOMETRY_FORMATS.map(|f| small("dummy geometry", f, 1, d2)),
+            dummy_objects: small("dummy mesh ids", SEED_FORMAT, 1, d2),
             static_layout,
             pass_layout,
             resolve_layout,
@@ -1331,6 +1442,7 @@ impl Compositor {
             resolution,
             seeds,
             triangles: None,
+            objects: None,
             signature: None,
             pending: Vec::new(),
             cursor: 0,
@@ -1351,7 +1463,6 @@ impl Compositor {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         model: &Model,
-        mesh: &GpuMesh,
         mesh_buffers: (&wgpu::Buffer, &wgpu::Buffer),
         paint: &PaintCaches,
         set: usize,
@@ -1406,22 +1517,7 @@ impl Compositor {
             return;
         }
 
-        let program = Builder {
-            paint,
-            resolution: size,
-            program: Program::default(),
-            current: Vec::new(),
-            mask_slots: HashMap::new(),
-            save_level: 0,
-            maps: map_slots(&texture_set.mesh_maps),
-        }
-        .build(&texture_set.stack);
-        if program.triplanar && state.triangles.is_none() {
-            state.triangles =
-                Some(self.compute_triangles(device, queue, model, mesh, mesh_buffers, set, size));
-        }
-        self.ensure_temps(device, &program);
-        self.upload_images(device, queue, model.texture_sets.len(), set, &program);
+        let program = self.program(device, queue, model, mesh_buffers, paint, set, state);
         self.run(
             device,
             queue,
@@ -1454,7 +1550,6 @@ impl Compositor {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         model: &Model,
-        mesh: &GpuMesh,
         mesh_buffers: (&wgpu::Buffer, &wgpu::Buffer),
         paint: &PaintCaches,
         set: usize,
@@ -1462,23 +1557,7 @@ impl Compositor {
         chunks: std::ops::Range<usize>,
         sink: &mut dyn FnMut(ExportBlock),
     ) -> Result<(), String> {
-        let size = state.resolution;
-        let program = Builder {
-            paint,
-            resolution: size,
-            program: Program::default(),
-            current: Vec::new(),
-            mask_slots: HashMap::new(),
-            save_level: 0,
-            maps: map_slots(&model.texture_sets[set].mesh_maps),
-        }
-        .build(&model.texture_sets[set].stack);
-        if program.triplanar && state.triangles.is_none() {
-            state.triangles =
-                Some(self.compute_triangles(device, queue, model, mesh, mesh_buffers, set, size));
-        }
-        self.ensure_temps(device, &program);
-        self.upload_images(device, queue, model.texture_sets.len(), set, &program);
+        let program = self.program(device, queue, model, mesh_buffers, paint, set, state);
         let rects: Vec<TexelRect> = chunks
             .filter(|&i| i < state.pending.len())
             .map(|i| state.chunk_rect(i))
@@ -1505,6 +1584,45 @@ impl Compositor {
             Some(err) => Err(err),
             None => Ok(()),
         }
+    }
+
+    /// The program for a texture set's stack, with everything it reads made and uploaded.
+    #[allow(clippy::too_many_arguments)]
+    fn program(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: &Model,
+        mesh_buffers: (&wgpu::Buffer, &wgpu::Buffer),
+        paint: &PaintCaches,
+        set: usize,
+        state: &mut GpuComposite,
+    ) -> Program {
+        let size = state.resolution;
+        let program = Builder::new(paint, model, set, size).build(&model.texture_sets[set].stack);
+        if program.triplanar && state.triangles.is_none() {
+            let ids = self.compute_ids(device, queue, model, mesh_buffers, set, size, false);
+            state.triangles = Some(ids);
+        }
+        if !program.excluded_meshes.is_empty() {
+            if state.objects.is_none() {
+                let ids = self.compute_ids(device, queue, model, mesh_buffers, set, size, true);
+                state.objects = Some(ids);
+            }
+            let bytes: &[u8] = bytemuck::cast_slice(&program.excluded_meshes);
+            if bytes.len() as u64 > self.excluded_buffer.size() {
+                self.excluded_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("excluded meshes"),
+                    size: (bytes.len() as u64).next_power_of_two(),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+            }
+            queue.write_buffer(&self.excluded_buffer, 0, bytes);
+        }
+        self.ensure_temps(device, &program);
+        self.upload_images(device, queue, model.texture_sets.len(), set, &program);
+        program
     }
 
     /// Forgets the uploaded fill images, e.g. when the model is replaced.
@@ -1706,6 +1824,18 @@ impl Compositor {
                 }),
             });
         }
+        let objects = state
+            .objects
+            .as_ref()
+            .filter(|_| !program.excluded_meshes.is_empty());
+        static_entries.push(wgpu::BindGroupEntry {
+            binding: 11,
+            resource: wgpu::BindingResource::TextureView(objects.unwrap_or(&self.dummy_objects)),
+        });
+        static_entries.push(wgpu::BindGroupEntry {
+            binding: 12,
+            resource: self.excluded_buffer.as_entire_binding(),
+        });
         let static_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("composite static"),
             layout: &self.static_layout,
@@ -2122,15 +2252,18 @@ impl Compositor {
 
     /// For every texel covered by the texture set's triangles, the index of its triangle.
     #[allow(clippy::too_many_arguments)]
-    fn compute_triangles(
+    /// For every texel the set's triangles cover, the index of its triangle, or with
+    /// `objects` the index of its mesh among the set's ([`Model::objects_in_set`]).
+    #[allow(clippy::too_many_arguments)]
+    fn compute_ids(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         model: &Model,
-        _mesh: &GpuMesh,
         mesh_buffers: (&wgpu::Buffer, &wgpu::Buffer),
         set: usize,
         resolution: u32,
+        objects: bool,
     ) -> wgpu::TextureView {
         let view =
             seed_texture(device, resolution, "triangle ids").create_view(&Default::default());
@@ -2160,10 +2293,16 @@ impl Compositor {
                     a: 0.0,
                 }),
             );
-            pass.set_pipeline(&self.triangles);
+            pass.set_pipeline(if objects {
+                &self.objects
+            } else {
+                &self.triangles
+            });
             pass.set_bind_group(0, &group, &[]);
+            let in_set = model.objects_in_set(set);
             for part in model.parts.iter().filter(|p| p.texture_set == set) {
-                pass.draw(part.indices.clone(), 0..1);
+                let object = in_set.binary_search(&part.object).unwrap_or(0) as u32;
+                pass.draw(part.indices.clone(), object..object + 1);
             }
         }
         queue.submit([encoder.finish()]);
@@ -2237,6 +2376,7 @@ fn signature(stack: &LayerStack, maps: &MeshMaps) -> u64 {
         for layer in list {
             layer.id.hash(h);
             layer.visible.hash(h);
+            layer.geometry_mask.hash(h);
             for channel in Channel::ALL {
                 let b = layer.blending.get(channel);
                 b.mode.code().hash(h);
@@ -2550,6 +2690,9 @@ mod tests {
             .layers
             .push(Layer::new(LayerKind::Fill, "Fill layer 1".into(), &mut ids));
         assert_ne!(signature(&stack, &MeshMaps::default()), changed);
+        let added = signature(&stack, &MeshMaps::default());
+        stack.layers[0].geometry_mask.set_excluded("Belt", true);
+        assert_ne!(signature(&stack, &MeshMaps::default()), added);
     }
 
     #[test]

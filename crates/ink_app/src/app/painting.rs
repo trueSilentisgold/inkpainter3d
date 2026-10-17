@@ -134,6 +134,19 @@ fn vec2(p: egui::Pos2) -> Vec2 {
     Vec2::new(p.x, p.y)
 }
 
+/// The closest visible triangle the ray hits outside the parts (object, texture set) the
+/// geometry mask leaves out: strokes only meet included geometry, as in Painter.
+fn pick_included(
+    model: &ink_core::Model,
+    excluded: &[(usize, usize)],
+    start: Vec3,
+    dir: Vec3,
+) -> Option<ink_core::Hit> {
+    model.pick_where(start, dir, |p| {
+        !excluded.contains(&(p.object, p.texture_set))
+    })
+}
+
 fn pos2(v: Vec2) -> egui::Pos2 {
     egui::pos2(v.x, v.y)
 }
@@ -161,9 +174,10 @@ impl InkApp {
         match view {
             View::Model => {
                 let model_size = self.model_size();
+                let excluded = self.excluded_parts();
                 Box::new(move |p, pressure| {
                     let (start, dir) = self.camera.ray(p - origin, size);
-                    let hit = self.model.pick(start, dir)?;
+                    let hit = pick_included(&self.model, &excluded, start, dir)?;
                     let (size_factor, flow_factor) = brush.pressure.factors(pressure);
                     let radius = brush
                         .world_radius(model_size, self.camera.view_height_at(hit.position))
@@ -360,7 +374,8 @@ impl InkApp {
         let triangle = match view {
             View::Model => {
                 let (start, dir) = self.camera.ray(p - origin, size);
-                self.model.pick(start, dir).map(|hit| hit.triangle as u32)
+                pick_included(&self.model, &self.excluded_parts(), start, dir)
+                    .map(|hit| hit.triangle as u32)
             }
             View::Uv => {
                 let uv = self.uv_camera.to_uv(p - origin, size);
@@ -467,6 +482,7 @@ impl InkApp {
             hidden_sets: (0..self.model.texture_sets.len())
                 .filter(|&s| !self.model.texture_sets[s].visible)
                 .collect(),
+            excluded_parts: self.excluded_parts(),
             fill: None,
             stencil: self.stroke_stencil(view, rect),
             // Mirrors and turns act on the model; strokes in the 2D view stay as painted.
@@ -797,7 +813,8 @@ impl InkApp {
                 let origin = vec2(rect.min);
                 let size = Vec2::new(rect.width(), rect.height());
                 let (start, dir) = self.camera.ray(p - origin, size);
-                let Some(hit) = self.model.pick(start, dir) else {
+                let Some(hit) = pick_included(&self.model, &self.excluded_parts(), start, dir)
+                else {
                     return;
                 };
                 let radius = brush

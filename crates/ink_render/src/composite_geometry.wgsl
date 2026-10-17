@@ -1,7 +1,7 @@
 // Geometry in texture space, for projections that need to know where a texel lies on the
-// model (tri-planar). First the triangle of every covered texel is drawn into a map; per
-// chunk, the position, normal and tangent at every texel's seed are then interpolated from
-// its triangle's vertices.
+// model (tri-planar) and for geometry masks. First the triangle (or the mesh) of every
+// covered texel is drawn into a map; per chunk, the position, normal and tangent at every
+// texel's seed are then interpolated from its triangle's vertices.
 
 const NONE: u32 = 0xffffffffu;
 // Floats per vertex in the vertex buffer: position, normal, uv, tangent (see Vertex in
@@ -30,6 +30,28 @@ fn vs_triangles(@builtin(vertex_index) i: u32) -> TriangleOut {
 @fragment
 fn fs_triangles(in: TriangleOut) -> @location(0) u32 {
     return in.triangle;
+}
+
+// The same for the mesh of every covered texel: each part is drawn with the index of its
+// mesh among the texture set's as the instance.
+struct ObjectOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) @interpolate(flat) object: u32,
+}
+
+@vertex
+fn vs_objects(@builtin(vertex_index) i: u32, @builtin(instance_index) object: u32) -> ObjectOut {
+    let v = tri_indices[i];
+    let uv = vec2<f32>(tri_vertices[v * STRIDE + 6u], tri_vertices[v * STRIDE + 7u]);
+    var out: ObjectOut;
+    out.clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+    out.object = object;
+    return out;
+}
+
+@fragment
+fn fs_objects(in: ObjectOut) -> @location(0) u32 {
+    return in.object;
 }
 
 // Must match GeometryUniforms in compositor.rs.

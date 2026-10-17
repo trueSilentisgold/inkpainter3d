@@ -82,6 +82,11 @@ struct Pass {
 @group(0) @binding(2) var geometry_position: texture_2d<f32>;
 @group(0) @binding(3) var geometry_normal: texture_2d<f32>;
 @group(0) @binding(4) var geometry_tangent: texture_2d<f32>;
+// Bindings 5 to 10 are the mesh maps (generators.wgsl).
+// For every covered texel, the index of its mesh among the texture set's (NONE elsewhere),
+// and the meshes each geometry mask leaves out, one bit per mesh, from Pass.info.w on.
+@group(0) @binding(11) var mesh_objects: texture_2d<u32>;
+@group(0) @binding(12) var<storage, read> excluded_meshes: array<u32>;
 
 @group(1) @binding(0) var<uniform> pass_: Pass;
 // The accumulator or mask so far.
@@ -648,4 +653,18 @@ fn fs_mask_levels(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> 
     var t = select(step(l.x, m), clamp((m - l.x) / span, 0.0, 1.0), abs(span) > 1e-6);
     t = pow(t, 1.0 / max(l.z, 1e-3));
     return vec4<f32>(mix(l.w, pass_.levels2.x, t), 0.0, 0.0, 1.0);
+}
+
+// The geometry mask: black on the meshes it leaves out.
+@fragment
+fn fs_mask_geometry(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
+    let local = chunk_texel(frag);
+    let m = textureLoad(below, local, 0).r;
+    let object = textureLoad(mesh_objects, seed_of(local), 0).r;
+    if object == NONE {
+        return vec4<f32>(m, 0.0, 0.0, 1.0);
+    }
+    let bits = excluded_meshes[pass_.info.w + object / 32u];
+    let excluded = ((bits >> (object % 32u)) & 1u) != 0u;
+    return vec4<f32>(select(m, 0.0, excluded), 0.0, 0.0, 1.0);
 }

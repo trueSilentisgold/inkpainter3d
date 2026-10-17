@@ -50,6 +50,9 @@
 //! its parameters. Bake the mesh maps it reads in the same run with `bake=`.
 //! `colorsel=243,85,85` puts a red fill layer on top whose black mask holds a color
 //! selection of that ID map color (8 bits; `csinvert` inverts it); bake `id` with it.
+//! `exclude=Name` leaves the mesh out of the geometry masks of the top layer and of the layer
+//! the strokes paint into, whose strokes then pass through it; `hideexcluded` hides it in the
+//! view (Alt+H).
 //! `smart=Rusty_metal` puts a starter preset (`ink_io::starter`, by name with `_` for spaces)
 //! on top of the stack.
 //!
@@ -228,6 +231,24 @@ fn main() -> Result<()> {
         None => center.map_or(0, |hit| model.parts[hit.part].texture_set),
     };
     let target = build_stack(&mut model, set, &option, &flag)?;
+    // The geometry mask of the top layer and of the layer the strokes paint into; their
+    // strokes pass through what it leaves out.
+    let mut excluded_parts = Vec::new();
+    if let Some(name) = option("exclude") {
+        let stack = &mut model.texture_sets[set].stack;
+        let owner = stack
+            .iter()
+            .find(|l| l.own_paint().any(|p| p.id == target))
+            .map(|l| l.id);
+        let top = stack.layers.last().map(|l| l.id);
+        for id in [owner, top].into_iter().flatten() {
+            if let Some(layer) = stack.find_mut(id) {
+                layer.geometry_mask.set_excluded(name, true);
+            }
+        }
+        let names = owner.map_or_else(Vec::new, |id| stack.excluded_meshes(id));
+        excluded_parts = model.parts_named(set, &names);
+    }
     if let Some(key) = option("generator") {
         let kind = ink_core::GeneratorKind::from_key(key)
             .with_context(|| format!("unknown generator {key}"))?;
@@ -300,7 +321,9 @@ fn main() -> Result<()> {
         let project = |p: Vec2, _pressure: f32| match space {
             StrokeSpace::Surface => {
                 let (origin, dir) = camera.ray(p, view);
-                let hit = model.pick(origin, dir)?;
+                let hit = model.pick_where(origin, dir, |p| {
+                    !excluded_parts.contains(&(p.object, p.texture_set))
+                })?;
                 let radius = brush.world_radius(model_radius, camera.view_height_at(hit.position));
                 Some(surface_dab(
                     &hit,
@@ -361,6 +384,7 @@ fn main() -> Result<()> {
                 .then(|| camera.stroke_camera(view.x / view.y)),
             hidden_objects: Vec::new(),
             hidden_sets: Vec::new(),
+            excluded_parts: excluded_parts.clone(),
             fill: None,
             stencil,
             symmetry: if space == StrokeSpace::Surface {
@@ -401,6 +425,7 @@ fn main() -> Result<()> {
             camera: None,
             hidden_objects: Vec::new(),
             hidden_sets: Vec::new(),
+            excluded_parts: Vec::new(),
             fill: Some(model.fill_target(shape, hit.triangle as u32)),
             stencil: None,
             symmetry: Vec::new(),
@@ -483,6 +508,11 @@ fn main() -> Result<()> {
             &settings,
             &model,
             Highlight::default(),
+            if flag("hideexcluded") {
+                &excluded_parts
+            } else {
+                &[]
+            },
         );
         renderer.output_texture().context("no output")?
     };

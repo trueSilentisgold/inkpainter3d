@@ -88,6 +88,9 @@ pub struct Stroke {
     pub hidden_objects: Vec<usize>,
     /// Texture sets that were hidden while painting: they get no paint and hide nothing.
     pub hidden_sets: Vec<usize>,
+    /// Parts, as (object, texture set), that the painted layer's geometry mask left out:
+    /// they get no paint and hide nothing, as Painter's strokes only meet included geometry.
+    pub excluded_parts: Vec<(usize, usize)>,
     /// A Polygon Fill stroke covers these triangles completely and has no dabs.
     pub fill: Option<crate::FillTarget>,
     /// The stencil the stroke was painted through.
@@ -102,12 +105,16 @@ impl Stroke {
     /// Whether the stroke paints the part's triangles (if they are in its texture set).
     /// Hidden objects and texture sets get no paint.
     pub fn paints(&self, part: &crate::Part) -> bool {
-        !self.hidden_objects.contains(&part.object) && !self.hidden_sets.contains(&part.texture_set)
+        self.occludes(part)
     }
 
     /// Whether the part hid what lay behind it when the stroke was painted.
     pub fn occludes(&self, part: &crate::Part) -> bool {
-        !self.hidden_objects.contains(&part.object) && !self.hidden_sets.contains(&part.texture_set)
+        !self.hidden_objects.contains(&part.object)
+            && !self.hidden_sets.contains(&part.texture_set)
+            && !self
+                .excluded_parts
+                .contains(&(part.object, part.texture_set))
     }
 }
 
