@@ -7,8 +7,8 @@ use eframe::egui::{self, Color32, Image, ImageSource, Key, RichText, Sense, Stro
 use ink_core::generator::ParamKind;
 use ink_core::{
     BlendMode, Blur, Channel, ChannelKind, ChannelSet, ColorSelection, Command, Content, Effect,
-    EffectKind, Fill, Generator, GeneratorKind, GrayFill, Layer, LayerKind, LayerStack, Levels,
-    Mask, Place, Projection, ProjectionMode, TextureImage,
+    EffectKind, Fill, Generator, GeneratorKind, GeometryMask, GrayFill, Layer, LayerKind,
+    LayerStack, Levels, Mask, Place, Projection, ProjectionMode, TextureImage,
 };
 use std::sync::Arc;
 
@@ -26,6 +26,8 @@ pub enum Target {
     Mask,
     /// An effect in the mask, by id.
     Effect(u64),
+    /// The geometry mask: which meshes the layer applies to.
+    Geometry,
 }
 
 /// The selection in a texture set's layer stack.
@@ -72,6 +74,8 @@ pub struct LayersState {
     /// Name of the next recorded edit; set by the action that makes it.
     label: Option<&'static str>,
     clipboard: Clipboard,
+    /// What "Copy geometry mask" copied.
+    geometry_clipboard: Option<GeometryMask>,
     /// Something was copied that the system clipboard doesn't know about yet.
     copied: bool,
     /// Layer being renamed and the name typed so far.
@@ -90,6 +94,7 @@ impl Default for LayersState {
             pending: None,
             label: None,
             clipboard: Clipboard::Empty,
+            geometry_clipboard: None,
             copied: false,
             effect_drop: None,
             renaming: None,
@@ -215,6 +220,43 @@ impl InkApp {
         Some((self.selected_set, paint))
     }
 
+    /// The parts, as (object, texture set), that the geometry masks of the selected layer and
+    /// of the folders it is in leave out.
+    pub(super) fn excluded_parts(&self) -> Vec<(usize, usize)> {
+        let (Some(selection), Some(stack)) = (self.selection(), self.stack()) else {
+            return Vec::new();
+        };
+        let names = stack.excluded_meshes(selection.layer);
+        self.model.parts_named(self.selected_set, &names)
+    }
+
+    /// The parts the 3D view leaves out: the excluded ones while Alt+H hides them.
+    pub(super) fn hidden_parts(&self) -> Vec<(usize, usize)> {
+        if self.hide_excluded {
+            self.excluded_parts()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Hide excluded geometry (Alt+H): shows only the meshes the selected layer applies to,
+    /// so that what they covered can be painted.
+    pub(super) fn toggle_hide_excluded(&mut self) {
+        if !self.hide_excluded && self.excluded_parts().is_empty() {
+            self.status = "The selected layer's geometry mask leaves nothing out".into();
+            return;
+        }
+        self.hide_excluded = !self.hide_excluded;
+        self.status = format!(
+            "Excluded geometry {}",
+            if self.hide_excluded {
+                "hidden"
+            } else {
+                "shown"
+            }
+        );
+    }
+
     /// Whether the brush paints grayscale (into a mask) rather than material channels.
     pub(super) fn paints_grayscale(&self) -> bool {
         self.selection()
@@ -234,6 +276,9 @@ impl InkApp {
                 Content::Folder(_) => "A folder can't be painted: select a paint layer or a mask",
                 Content::Paint(_) => "",
             },
+            Some((s, _)) if s.target == Target::Geometry => {
+                "The geometry mask isn't painted: tick its meshes in the properties"
+            }
             Some(_) => "This effect can't be painted: select the mask or a paint effect",
             None => "Add a paint layer to paint",
         }
@@ -1082,7 +1127,7 @@ impl InkApp {
             let mask_selected = main
                 && selection
                     .as_ref()
-                    .is_some_and(|s| s.target != Target::Content);
+                    .is_some_and(|s| matches!(s.target, Target::Mask | Target::Effect(_)));
             let response = thumbnail(ui, mask_selected, |ui, rect| {
                 let painter = ui.painter();
                 let v = (mask.background * 255.0) as u8;
@@ -1105,6 +1150,14 @@ impl InkApp {
             .on_hover_text("Mask: click to paint it, Shift+click turns it off");
             mask_response = Some(response);
         }
+        // Geometry mask.
+        let meshes = self.model.mesh_names_in_set(self.selected_set);
+        let geometry_selected = main
+            && selection
+                .as_ref()
+                .is_some_and(|s| s.target == Target::Geometry);
+        let geometry = geometry_badge(ui, &layer.geometry_mask, &meshes, geometry_selected);
+        geometry.context_menu(|ui| self.geometry_menu(ui, layer.id, &meshes));
         // Name, or the rename field.
         let renaming = self
             .layers
@@ -1158,7 +1211,12 @@ impl InkApp {
         // Clicks on the row or the content thumbnail select the layer; on the mask
         // thumbnail they select the mask.
         let (shift, command) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
-        if let Some(mask) = mask_response
+        if geometry.clicked() {
+            self.select(Selection {
+                target: Target::Geometry,
+                ..Selection::layer(layer.id)
+            });
+        } else if let Some(mask) = mask_response
             && mask.clicked()
         {
             if shift {
@@ -1421,6 +1479,47 @@ impl InkApp {
         }
     }
 
+    /// Right-click on a geometry mask, as in Painter.
+    fn geometry_menu(&mut self, ui: &mut egui::Ui, layer: u64, meshes: &[String]) {
+        let Some(mask) = self
+            .stack()
+            .and_then(|s| s.find(layer))
+            .map(|l| l.geometry_mask.clone())
+        else {
+            return;
+        };
+        let mut edited = mask.clone();
+        if ui.button("Copy geometry mask").clicked() {
+            self.layers.geometry_clipboard = Some(mask.clone());
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                self.layers.geometry_clipboard.is_some(),
+                egui::Button::new("Paste into geometry mask"),
+            )
+            .clicked()
+        {
+            edited = self.layers.geometry_clipboard.clone().unwrap_or_default();
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Include all").clicked() {
+            edited.include_all();
+            ui.close();
+        }
+        if ui.button("Exclude all").clicked() {
+            edited.exclude_all(meshes.iter().map(String::as_str));
+            ui.close();
+        }
+        if edited != mask {
+            if let Some(l) = self.stack_mut().and_then(|s| s.find_mut(layer)) {
+                l.geometry_mask = edited;
+            }
+            self.label("Edit geometry mask");
+        }
+    }
+
     fn layer_context_menu(&mut self, ui: &mut egui::Ui, layer: u64) {
         if self
             .selection()
@@ -1545,6 +1644,29 @@ impl InkApp {
                     self.label("Edit effect");
                 }
             }
+            Target::Geometry => {
+                let set = self.selected_set;
+                let meshes = self.model.mesh_names_in_set(set);
+                let mut mask = layer.geometry_mask.clone();
+                if let Some(name) = geometry_properties(ui, &mut mask, &meshes) {
+                    // The mesh under the pointer lights up in the views.
+                    let object = self
+                        .model
+                        .objects_in_set(set)
+                        .into_iter()
+                        .find(|&o| self.model.objects[o].name == name);
+                    self.hover = crate::app::Highlight {
+                        texture_set: Some(set),
+                        object,
+                    };
+                }
+                if mask != layer.geometry_mask {
+                    if let Some(l) = self.stack_mut().and_then(|s| s.find_mut(layer.id)) {
+                        l.geometry_mask = mask;
+                    }
+                    self.label("Edit geometry mask");
+                }
+            }
             Target::Mask => return false,
         }
         if let Some(request) = load {
@@ -1567,6 +1689,7 @@ impl InkApp {
                 EffectKind::Generator(_) => Some("Generator"),
                 EffectKind::Paint(_) => None,
             },
+            Target::Geometry => Some("Geometry mask"),
             Target::Mask => None,
         }
     }
@@ -1647,6 +1770,92 @@ fn thumbnail(
         );
     }
     response
+}
+
+/// The geometry mask's icon in a layer row: how many meshes still get the layer once some
+/// are left out, red when none do.
+fn geometry_badge(
+    ui: &mut egui::Ui,
+    mask: &GeometryMask,
+    meshes: &[String],
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(22.0, 26.0), Sense::click());
+    let included = mask.included_count(meshes);
+    let excluded = included < meshes.len();
+    let tint = if included == 0 {
+        theme::DANGER
+    } else if excluded {
+        theme::OLIVE
+    } else {
+        theme::TEXT_DISABLED
+    };
+    let center = rect.center() - vec2(0.0, if excluded { 4.0 } else { 0.0 });
+    theme::icon(icons::GEOMETRY_MASK, 14.0, tint).paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::Vec2::splat(14.0)),
+    );
+    if excluded {
+        ui.painter().text(
+            rect.center_bottom() - vec2(0.0, 1.0),
+            egui::Align2::CENTER_BOTTOM,
+            included.to_string(),
+            egui::FontId::proportional(10.0),
+            tint,
+        );
+    }
+    if selected {
+        ui.painter().rect_stroke(
+            rect,
+            3.0,
+            Line::new(2.0, theme::OLIVE),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let tip = if excluded {
+        format!(
+            "Geometry mask: {included} of {} meshes. Click to edit, right-click for more",
+            meshes.len()
+        )
+    } else {
+        "Geometry mask: all meshes. Click to leave some out".to_owned()
+    };
+    response.on_hover_text(tip)
+}
+
+/// The meshes of a geometry mask, ticked where the layer applies. Returns the name under
+/// the pointer.
+fn geometry_properties(
+    ui: &mut egui::Ui,
+    mask: &mut GeometryMask,
+    meshes: &[String],
+) -> Option<String> {
+    theme::group_label(ui, "GEOMETRY MASK");
+    ui.label(
+        RichText::new("The layer applies to the ticked meshes; Alt+H hides the others.")
+            .small()
+            .color(theme::TEXT_WEAK),
+    );
+    ui.horizontal(|ui| {
+        if ui.button("Include all").clicked() {
+            mask.include_all();
+        }
+        if ui.button("Exclude all").clicked() {
+            mask.exclude_all(meshes.iter().map(String::as_str));
+        }
+    });
+    let mut hovered = None;
+    for name in meshes {
+        let mut included = !mask.excludes(name);
+        let response = ui.checkbox(&mut included, name);
+        if response.changed() {
+            mask.set_excluded(name, !included);
+        }
+        if response.hovered() {
+            hovered = Some(name.clone());
+        }
+    }
+    hovered
 }
 
 /// An icon centered at a point, in the color of text.

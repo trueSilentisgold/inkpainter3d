@@ -50,6 +50,8 @@ pub struct InkApp {
     hover: Highlight,
     /// Mesh and texture set under the cursor in the viewport.
     hover_info: Option<String>,
+    /// Hide the meshes the selected layer's geometry mask leaves out (Alt+H).
+    hide_excluded: bool,
     /// Unsnapped camera angles while snap-rotating (Alt+Shift+LMB).
     snap_angles: Option<(f32, f32)>,
     status: String,
@@ -130,6 +132,7 @@ impl InkApp {
             focus: None,
             hover: Highlight::default(),
             hover_info: None,
+            hide_excluded: false,
             snap_angles: None,
             status: format!("GPU: {} ({:?})", info.name, info.backend),
             paint: PaintState::default(),
@@ -718,6 +721,9 @@ impl InkApp {
         }
         if alt && pressed(Key::Q) {
             self.toggle_focus();
+        }
+        if alt && pressed(Key::H) {
+            self.toggle_hide_excluded();
         }
     }
 }

@@ -129,7 +129,10 @@ impl InkApp {
                 Vec2::new(local.x, local.y),
                 Vec2::new(rect.width(), rect.height()),
             );
-            self.model.pick(origin, dir)
+            let hidden = self.hidden_parts();
+            self.model.pick_where(origin, dir, |p| {
+                !hidden.contains(&(p.object, p.texture_set))
+            })
         });
         let part = hit.map(|h| self.model.parts[h.part].clone());
         self.hover_info = part.as_ref().map(|p| {
@@ -171,6 +174,7 @@ impl InkApp {
             &self.settings,
             &self.model,
             self.hover,
+            &self.hidden_parts(),
         );
         show(ui, self.viewport_texture, rect);
 
@@ -181,6 +185,7 @@ impl InkApp {
             &mut self.settings.display,
             &mut self.settings.wireframe,
         );
+        self.hide_excluded_toggle(ui, rect);
         self.draw_stencil(ui, rect);
         self.draw_brush_cursor(ui, rect, View::Model);
         hint(
@@ -323,6 +328,30 @@ impl InkApp {
         self.camera.frame(&self.model.bounds());
         self.uv_auto_frame = true;
         self.uv_framed_size = None;
+    }
+
+    /// Hide excluded geometry (Alt+H), next to the display mode; off while the selected
+    /// layer's geometry mask leaves nothing out, as in Painter.
+    fn hide_excluded_toggle(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        let excluded = !self.excluded_parts().is_empty();
+        if !excluded {
+            self.hide_excluded = false;
+        }
+        let at =
+            egui::Rect::from_min_size(rect.min + egui::vec2(236.0, 8.0), egui::vec2(26.0, 24.0));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(at), |ui| {
+            ui.add_enabled_ui(excluded, |ui| {
+                let mut on = self.hide_excluded;
+                theme::icon_toggle(
+                    ui,
+                    theme::icons::GEOMETRY_MASK,
+                    &mut on,
+                    "Hide excluded geometry (Alt+H): show only the meshes the selected layer \
+                     applies to, to paint what they covered",
+                );
+                self.hide_excluded = on;
+            });
+        });
     }
 
     pub(super) fn reset_hover(&mut self) {

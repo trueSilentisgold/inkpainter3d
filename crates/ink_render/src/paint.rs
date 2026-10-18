@@ -1528,6 +1528,7 @@ impl PaintCaches {
             camera.aspect.to_bits().hash(&mut hasher);
             stroke.hidden_objects.hash(&mut hasher);
             stroke.hidden_sets.hash(&mut hasher);
+            stroke.excluded_parts.hash(&mut hasher);
             hasher.finish()
         };
         self.depth_uses += 1;
