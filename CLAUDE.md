@@ -251,6 +251,39 @@ project round trips, export padding, normal formats and packing) and checks a fe
 of each. Add a case when you add something the renderer must keep
 doing; its test images live in `crates/ink_render/examples/testdata/`.
 
+## Aufgaben und Tickets
+
+Offene Aufgaben kommen aus ClickUp (Space „Inkrabbti“ → Ordner „inkpainter3d“,
+ID 1500530000017199; Listen: Features 1500530000018143, Bugs 1500530000018144,
+Releases 1500530000018146; Status „to do“, „in progress“, „complete“) und liegen als
+lokale Tickets in `tickets/`. Ablauf und Dateiformat stehen in `tickets/README.md`,
+Werkzeug ist der Skill `/tickets`. Kurz:
+
+- Neue Aufgaben zuerst in ClickUp anlegen, dann lokal abgleichen.
+- Beginnt die Arbeit an einem Ticket: `status: in-arbeit`, in ClickUp „in progress“.
+- Ist es gebaut, geprüft und auf `main` gemergt: Ticket nach `tickets/erledigt/` mit
+  `erledigt:` und `commits:`, in ClickUp „complete“ plus Kommentar mit Commit und
+  Kurzfassung.
+- `docs/FEATURES.md` bleibt der vollständige Katalog: Fertige Funktionen werden dort und
+  im README abgehakt wie unter „Source of truth“ beschrieben. Neue P0/P1-Punkte im
+  Katalog bekommen auch eine Aufgabe in der Liste „Features“.
+
+## Releases
+
+A pushed tag `v*` builds Windows, Linux and macOS downloads and publishes the GitHub release
+(`.github/workflows/release.yml`; English notes from `.github/release-notes/<tag>.md`). The
+owner creates the tag.
+
+Every release also gets a Discord announcement, written by Claude, in
+`.github/announcements/<tag>/`: `message.md` in English, like all texts about the tool
+(Discord markdown, at most 4096 characters, `{release}` becomes the release link) and
+`image.svg`, a 1200 × 675 update image, its text in English too,
+in the INKRABBIT look (start from the previous release's), rendered to `image.png` with
+`scripts/render-announcement.sh <tag>` (needs `cargo install resvg --locked`). Show the owner
+both and **post only after the owner approves**: `announce.yml` is run by hand
+(`gh workflow run announce.yml -f tag=<tag>`) and posts through the `DISCORD_WEBHOOK_URL`
+secret. Never put the webhook URL in the repo or in chat.
+
 ## Seeing the app without a display
 
 To render with the snapshot example, run the app or take screenshots without a GPU or
