@@ -13,4 +13,4 @@ The first ready-built version of **inkpainter3d** is here: a free, open-source 3
 
 This is an early version: expect rough edges and keep backups of your projects. On macOS, allow the app on its first start under *System Settings → Privacy & Security → Open Anyway*.
 
-**Next up:** the projection tool and anchor points. Feedback and bug reports are welcome here in the channel or on GitHub.
+**Next up:** the projection tool and anchor points. Feedback and bug reports are welcome on GitHub: https://github.com/trueSilentisgold/inkpainter3d/issues

@@ -286,7 +286,8 @@ in the INKRABBIT look (start from the previous release's), rendered to `image.pn
 `scripts/render-announcement.sh <tag>` (needs `cargo install resvg --locked`). Show the owner
 both and **post only after the owner approves**: `announce.yml` is run by hand
 (`gh workflow run announce.yml -f tag=<tag>`) and posts through the `DISCORD_WEBHOOK_URL`
-secret. Never put the webhook URL in the repo or in chat.
+secret. Never put the webhook URL in the repo or in chat. Feedback and bug reports go to GitHub
+issues only: never invite people to post them in the Discord channel.
 
 ## Seeing the app without a display
 

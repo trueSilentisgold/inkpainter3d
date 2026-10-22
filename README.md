@@ -236,8 +236,8 @@ projects open via **File → Open…** or the same way. HDR panoramas load via
 Found a bug? **Help → Report a bug…** opens a GitHub issue with your version, system and GPU
 filled in, and after a crash the app offers to report it on the next start. Crash reports
 are kept in `%LOCALAPPDATA%\inkpainter3d\crashes` on Windows and
-`~/.local/share/inkpainter3d/crashes` on Linux. Without a GitHub account, copy the report
-from the same dialog and post it on the Discord server.
+`~/.local/share/inkpainter3d/crashes` on Linux. Bugs and feedback go to
+[GitHub issues](https://github.com/trueSilentisgold/inkpainter3d/issues).
 
 To check rendering without a window, e.g. on a server, render a snapshot to PNG:
 

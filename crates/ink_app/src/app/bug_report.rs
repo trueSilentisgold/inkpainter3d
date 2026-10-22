@@ -99,7 +99,9 @@ impl InkApp {
                 }
                 if ui
                     .add_enabled(ready, egui::Button::new("Copy report"))
-                    .on_hover_text("For pasting it somewhere else, e.g. the Discord server")
+                    .on_hover_text(
+                        "Puts the report on the clipboard, e.g. to add it to an existing issue",
+                    )
                     .clicked()
                 {
                     ui.ctx().copy_text(report::bug_report_text(
