@@ -729,6 +729,11 @@ Super-Taste umstellt. `P2` ＋: Alternative Navigationsschemata (Blender, Maya) 
 - [ ] `P1` **Speicherbudget:** Caches werden ausgelagert, bevor der VRAM voll ist
 - [ ] `P0` Läuft unter **Vulkan** (Linux, Windows) und mit **Mesa** (AMD, Intel) sowie NVIDIA
 - [ ] `P0` Tests und CI für Windows und Linux (besteht bereits)
+- [x] `P1` ＋ **Bugs melden und Crash-Reports** (Help → Report a bug…): öffnet ein
+      vorausgefülltes GitHub-Issue mit Version, System, GPU und den letzten Log-Zeilen. Nach
+      einem Absturz bietet die App den Crash-Report beim nächsten Start an (Fehler, Backtrace,
+      Log, Projekt-Eckdaten ohne Namen oder Bilder). Gesendet wird nur auf Klick. Native
+      Abstürze (Treiber, Speicherzugriff) fängt das noch nicht.
 
 ---
 

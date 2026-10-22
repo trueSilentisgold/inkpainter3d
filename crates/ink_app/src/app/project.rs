@@ -1057,7 +1057,7 @@ pub(super) fn config_dir() -> Option<PathBuf> {
 
 /// Where data goes: `~/.local/share/inkpainter3d` on Linux, `%LOCALAPPDATA%\inkpainter3d`
 /// on Windows.
-pub(super) fn data_dir() -> Option<PathBuf> {
+pub(crate) fn data_dir() -> Option<PathBuf> {
     let base = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else {

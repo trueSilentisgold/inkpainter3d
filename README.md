@@ -176,6 +176,10 @@ inkpainter3d aims to be a capable alternative that:
     background, or none
   - choose the texture sets, see every file before it is written, follow the export in the
     list of exports
+- **Bug and crash reports** (Help → Report a bug…): opens a prefilled GitHub issue with the
+  app version, system, GPU and the last log lines; after a crash the app offers the crash
+  report on the next start. You see everything first, and nothing is sent until you submit
+  the issue
 
 </details>
 
@@ -228,6 +232,12 @@ sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxr
 Projects start from a model with **File → New…**, or by dropping the model onto the window;
 projects open via **File → Open…** or the same way. HDR panoramas load via
 **File → Load environment…** or by dropping them, too.
+
+Found a bug? **Help → Report a bug…** opens a GitHub issue with your version, system and GPU
+filled in, and after a crash the app offers to report it on the next start. Crash reports
+are kept in `%LOCALAPPDATA%\inkpainter3d\crashes` on Windows and
+`~/.local/share/inkpainter3d/crashes` on Linux. Bugs and feedback go to
+[GitHub issues](https://github.com/trueSilentisgold/inkpainter3d/issues).
 
 To check rendering without a window, e.g. on a server, render a snapshot to PNG:
 

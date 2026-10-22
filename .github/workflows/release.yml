@@ -81,6 +81,8 @@ jobs:
           case "${{ matrix.name }}" in
             windows-x64)
               cp target/release/inkpainter3d.exe "dist/$dir/"
+              # The symbols next to the exe give crash reports readable backtraces.
+              cp target/release/inkpainter3d.pdb "dist/$dir/"
               (cd dist && 7z a -tzip "$dir.zip" "$dir" > /dev/null)
               echo "ASSET=dist/$dir.zip" >> "$GITHUB_ENV"
               ;;

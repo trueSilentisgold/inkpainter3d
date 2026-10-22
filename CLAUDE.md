@@ -55,7 +55,11 @@ reads or writes files; `ink_render` does everything wgpu and depends only on `in
 window, `app/presets.rs` for brush presets, `app/stencil.rs` for the stencil and `app/shelf/`
 for the shelf: library folders, thumbnails on worker threads, the online libraries), `theme.rs` (the INKRABBIT look: color tokens, fonts, the SVG icons in `assets/icons`
 and helpers for recurring widgets such as section headers, icon buttons, rows and property
-grids; use them instead of styling widgets ad hoc)
+grids; use them instead of styling widgets ad hoc),
+`report.rs` (bug and crash reports: the logger keeps the last log lines, a panic hook
+writes `crash-*.txt` into the data folder, both become prefilled GitHub issues with the
+report as Markdown in the body (`issue_url`; the forms in `.github/ISSUE_TEMPLATE` are
+for issues opened on GitHub); the dialogs are in `app/bug_report.rs`; `INKPAINTER3D_CRASH_TEST=1` panics at start to try it)
 plus `pen.rs`, pen input on Linux: a Wayland tablet client and an XInput2 pressure reader
 (Linux-only dependencies).
 
@@ -282,7 +286,8 @@ in the INKRABBIT look (start from the previous release's), rendered to `image.pn
 `scripts/render-announcement.sh <tag>` (needs `cargo install resvg --locked`). Show the owner
 both and **post only after the owner approves**: `announce.yml` is run by hand
 (`gh workflow run announce.yml -f tag=<tag>`) and posts through the `DISCORD_WEBHOOK_URL`
-secret. Never put the webhook URL in the repo or in chat.
+secret. Never put the webhook URL in the repo or in chat. Feedback and bug reports go to GitHub
+issues only: never invite people to post them in the Discord channel.
 
 ## Seeing the app without a display
 

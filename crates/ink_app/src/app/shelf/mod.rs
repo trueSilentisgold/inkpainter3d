@@ -674,7 +674,7 @@ impl InkApp {
             Action::OpenFolder(category) => {
                 if let Some(dir) = library_dir(category) {
                     let _ = std::fs::create_dir_all(&dir);
-                    open_in_file_manager(&dir);
+                    crate::report::open_folder(&dir);
                 }
             }
             Action::Search => self.shelf_search(ctx, false),
@@ -1283,14 +1283,4 @@ fn fit_text(ui: &egui::Ui, text: &str, width: f32) -> String {
         }
     }
     "…".to_owned()
-}
-
-fn open_in_file_manager(dir: &Path) {
-    #[cfg(windows)]
-    let program = "explorer";
-    #[cfg(target_os = "macos")]
-    let program = "open";
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let program = "xdg-open";
-    let _ = std::process::Command::new(program).arg(dir).spawn();
 }

@@ -1,0 +1,29 @@
+name: Crash report
+description: The app closed or stopped with an error. After a crash, the app offers to fill this in on the next start.
+labels: [bug]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: What were you doing?
+      description: What you did right before the crash, as far as you remember (painting, exporting, opening a project …).
+  - type: textarea
+    id: system
+    attributes:
+      label: Version and system
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: crash
+    attributes:
+      label: Error and backtrace
+      description: Filled in by the app. If it says "cut", paste the full report from your clipboard into a comment.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      render: text
