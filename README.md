@@ -201,8 +201,14 @@ terms, same shortcuts. The full feature catalog with priorities lives in
 
 ## Getting started
 
-Requires a recent stable [Rust toolchain](https://rustup.rs). On Windows you also need the
-Visual Studio C++ Build Tools.
+Ready-built versions for Windows, Linux and macOS are on the
+[releases page](https://github.com/trueSilentisgold/inkpainter3d/releases): unzip and start
+`inkpainter3d`. On Linux the file dialogs need GTK 3 (installed on most desktops). The macOS
+app is not notarized, so macOS refuses it on the first start; allow it under
+**System Settings → Privacy & Security → Open Anyway**. The macOS build is untested so far.
+
+To build it yourself you need a recent stable [Rust toolchain](https://rustup.rs). On
+Windows you also need the Visual Studio C++ Build Tools.
 
 ```sh
 cargo run --release                     # opens with a default sphere
@@ -300,7 +306,7 @@ The interface uses [Space Grotesk](https://github.com/floriankarsten/space-grote
 (© 2020 The Space Grotesk Project Authors) and
 [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (© 2020 The JetBrains Mono
 Project Authors), both under the SIL Open Font License 1.1; the license texts are next to
-the fonts in `assets/fonts`.
+the fonts in `assets/fonts` and in the `licenses` folder of the downloads.
 
 inkpainter3d is made by [INKRABBIT](https://inkrabbit.de). The INKRABBIT name and the rabbit
 logo (`assets/branding`, `assets/icons/inkrabbit.svg`) are the studio's marks and are not

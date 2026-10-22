@@ -1,0 +1,195 @@
+name: Release
+
+# Pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) builds the app for
+# Windows, Linux and macOS, publishes a GitHub release with the downloads and announces it
+# on Discord through the webhook in the `DISCORD_WEBHOOK_URL` secret (skipped without one).
+# Release notes come from `.github/release-notes/<tag>.md` when it exists, otherwise GitHub
+# lists the merged pull requests. Versions below 1.0 are marked as pre-releases. Pull
+# requests that change this workflow only run the builds, to try them before a release.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: [".github/workflows/release.yml"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+          # The oldest supported runner, so the binary runs on older glibc versions too.
+          - name: linux-x64
+            os: ubuntu-22.04
+          - name: macos-universal
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        # A GUI program: no console window next to the app. Local builds keep the console
+        # for the log. `cargo rustc` passes the flags to the app only, not to build scripts.
+        run: >-
+          cargo rustc --release --locked -p ink_app --bin inkpainter3d --
+          -C link-arg=/SUBSYSTEM:WINDOWS -C link-arg=/ENTRY:mainCRTStartup
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release --locked
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0-test' }}
+        run: |
+          dir="inkpainter3d-${VERSION}-${{ matrix.name }}"
+          mkdir -p "dist/$dir/licenses"
+          cp LICENSE README.md "dist/$dir/"
+          cp assets/fonts/space-grotesk/OFL.txt "dist/$dir/licenses/OFL-SpaceGrotesk.txt"
+          cp assets/fonts/jetbrains-mono/OFL.txt "dist/$dir/licenses/OFL-JetBrainsMono.txt"
+          case "${{ matrix.name }}" in
+            windows-x64)
+              cp target/release/inkpainter3d.exe "dist/$dir/"
+              (cd dist && 7z a -tzip "$dir.zip" "$dir" > /dev/null)
+              echo "ASSET=dist/$dir.zip" >> "$GITHUB_ENV"
+              ;;
+            linux-x64)
+              cp target/release/inkpainter3d "dist/$dir/"
+              tar -C dist -czf "dist/$dir.tar.gz" "$dir"
+              echo "ASSET=dist/$dir.tar.gz" >> "$GITHUB_ENV"
+              ;;
+            macos-universal)
+              app="dist/$dir/inkpainter3d.app"
+              mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+              lipo -create -output "$app/Contents/MacOS/inkpainter3d" \
+                target/aarch64-apple-darwin/release/inkpainter3d \
+                target/x86_64-apple-darwin/release/inkpainter3d
+              iconset=dist/AppIcon.iconset
+              mkdir -p "$iconset"
+              for size in 16 32 64 128 256; do
+                sips -z $size $size assets/branding/app-icon-256.png --out "$iconset/icon_${size}x${size}.png" > /dev/null
+              done
+              cp "$iconset/icon_32x32.png" "$iconset/icon_16x16@2x.png"
+              cp "$iconset/icon_64x64.png" "$iconset/icon_32x32@2x.png"
+              cp "$iconset/icon_256x256.png" "$iconset/icon_128x128@2x.png"
+              rm "$iconset/icon_64x64.png"
+              iconutil -c icns "$iconset" -o "$app/Contents/Resources/AppIcon.icns"
+              version="${VERSION#v}"
+              cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>inkpainter3d</string>
+            <key>CFBundleDisplayName</key><string>inkpainter3d</string>
+            <key>CFBundleIdentifier</key><string>io.github.truesilentisgold.inkpainter3d</string>
+            <key>CFBundleExecutable</key><string>inkpainter3d</string>
+            <key>CFBundleIconFile</key><string>AppIcon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${version}</string>
+            <key>CFBundleVersion</key><string>${version}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+              # Not notarized (that needs a paid Apple developer account); an ad-hoc
+              # signature at least lets Apple Silicon run it after "Open Anyway".
+              codesign --force --deep --sign - "$app"
+              ditto -c -k --keepParent "dist/$dir" "dist/$dir.zip"
+              echo "ASSET=dist/$dir.zip" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(--title "inkpainter3d ${GITHUB_REF_NAME}")
+          notes=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$notes" ]; then args+=(--notes-file "$notes"); else args+=(--generate-notes); fi
+          case "$GITHUB_REF_NAME" in v0.*|*-*) args+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* "${args[@]}"
+
+      - name: Announce on Discord
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "No DISCORD_WEBHOOK_URL secret; skipping the announcement."
+            exit 0
+          fi
+          gh release view "$GITHUB_REF_NAME" --json url,body,assets > release.json
+          jq -n --slurpfile r release.json --arg tag "$GITHUB_REF_NAME" \
+            --arg repo "https://github.com/${GITHUB_REPOSITORY}" '
+            $r[0] as $r
+            | def link($suffix; $label):
+                ($r.assets[] | select(.name | endswith($suffix))) as $a
+                | "[\($label)](\($a.url))";
+            {
+              username: "inkpainter3d",
+              embeds: [{
+                title: "inkpainter3d \($tag) is out",
+                url: $r.url,
+                color: 5665832,
+                description: (
+                  ($r.body | if length > 3000 then .[0:3000] + "…" else . end)
+                  + "\n\n**Download**\n"
+                  + ([link("windows-x64.zip"; "Windows (x64)"),
+                      link("linux-x64.tar.gz"; "Linux (x64)"),
+                      link("macos-universal.zip"; "macOS (Apple Silicon and Intel)")]
+                     | join(" · "))
+                  + "\n\nUnzip and start `inkpainter3d`. Source code and older versions: \($repo)/releases"
+                ),
+              }],
+            }' > discord.json
+          curl --fail-with-body -sS -H "Content-Type: application/json" -d @discord.json "$WEBHOOK"
