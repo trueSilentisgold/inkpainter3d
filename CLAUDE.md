@@ -130,7 +130,11 @@ Things that are easy to get wrong:
   repaints while it is true); painted regions composite right away with an 8-texel margin,
   and the stroke's padding catches up to 64 texels when it ends. While a stroke is in
   progress, full composites wait. A new pixel-affecting field of a layer must go into
-  `signature`.
+  `signature`. A geometry mask is a last pass over the layer's mask (white without one):
+  `fs_mask_geometry` reads the mesh of each texel's seed from a map drawn like the
+  triangle map (`compute_ids`, mesh index in `Model::objects_in_set` order as the
+  instance) and one bit per mesh from `Program::excluded_meshes`; a layer that leaves out
+  every mesh is skipped.
 - **Undo of layer edits.** `Command::EditStack` swaps the whole stack; strokes are shared
   `Arc`s, so the copy is cheap. The app clones the selected set's stack before the panels
   run (`begin_stack_edits`) and records a step when it changed (`end_stack_edits`), once no

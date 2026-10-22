@@ -365,6 +365,7 @@ mod tests {
                 camera: None,
                 hidden_objects: Vec::new(),
                 hidden_sets: Vec::new(),
+                excluded_parts: Vec::new(),
                 fill: None,
                 stencil: None,
                 symmetry: Vec::new(),

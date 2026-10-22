@@ -269,6 +269,32 @@ impl Model {
         self.texture_sets[part.texture_set].visible && self.objects[part.object].visible
     }
 
+    /// The names of the meshes in the texture set, as a geometry mask lists them: sorted,
+    /// each name once (objects may share a name).
+    pub fn mesh_names_in_set(&self, set: usize) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .objects_in_set(set)
+            .into_iter()
+            .map(|o| self.objects[o].name.clone())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    /// The parts of the texture set whose mesh has one of the names, as (object, texture
+    /// set): what a geometry mask leaves out.
+    pub fn parts_named(&self, set: usize, names: &[String]) -> Vec<(usize, usize)> {
+        if names.is_empty() {
+            return Vec::new();
+        }
+        self.objects_in_set(set)
+            .into_iter()
+            .filter(|&o| names.contains(&self.objects[o].name))
+            .map(|o| (o, set))
+            .collect()
+    }
+
     /// Objects with triangles in the texture set, in object order.
     pub fn objects_in_set(&self, set: usize) -> Vec<usize> {
         let mut objects: Vec<usize> = self
@@ -320,8 +346,19 @@ impl Model {
     /// Finds the closest triangle hit by the ray, considering only visible parts.
     /// Triangles are hit from both sides.
     pub fn pick(&self, origin: Vec3, dir: Vec3) -> Option<Hit> {
+        self.pick_where(origin, dir, |_| true)
+    }
+
+    /// [`Self::pick`], considering only the visible parts `accept` lets through.
+    pub fn pick_where(
+        &self,
+        origin: Vec3,
+        dir: Vec3,
+        accept: impl Fn(&Part) -> bool,
+    ) -> Option<Hit> {
         let hit = self.bvh.raycast(&self.mesh, origin, dir, |t| {
-            self.is_part_visible(&self.parts[self.part_of_triangle(t)])
+            let part = &self.parts[self.part_of_triangle(t)];
+            self.is_part_visible(part) && accept(part)
         })?;
         let corners = self.triangle_vertices(hit.triangle);
         let [wa, wb, wc] = [

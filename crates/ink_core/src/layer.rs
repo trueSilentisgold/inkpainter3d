@@ -625,6 +625,8 @@ pub struct Layer {
     pub blending: Blending,
     pub content: Content,
     pub mask: Option<Mask>,
+    /// The meshes the layer leaves out; for a folder, everything in it does too.
+    pub geometry_mask: GeometryMask,
 }
 
 impl Layer {
@@ -647,6 +649,7 @@ impl Layer {
             blending: Blending::new_layer(),
             content,
             mask: None,
+            geometry_mask: GeometryMask::default(),
         }
     }
 
@@ -732,6 +735,56 @@ impl Layer {
     }
 }
 
+/// Painter's geometry mask: the meshes of the texture set a layer (or folder) leaves out,
+/// by mesh name, as Painter groups them. Names rather than indices, so that it still holds
+/// after a re-import. A new layer leaves out nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GeometryMask {
+    /// Sorted, without repeats.
+    pub excluded: Vec<String>,
+}
+
+impl GeometryMask {
+    /// Whether the layer applies to every mesh.
+    pub fn is_empty(&self) -> bool {
+        self.excluded.is_empty()
+    }
+
+    pub fn excludes(&self, name: &str) -> bool {
+        self.excluded
+            .binary_search_by(|n| n.as_str().cmp(name))
+            .is_ok()
+    }
+
+    pub fn set_excluded(&mut self, name: &str, excluded: bool) {
+        match (
+            self.excluded.binary_search_by(|n| n.as_str().cmp(name)),
+            excluded,
+        ) {
+            (Err(i), true) => self.excluded.insert(i, name.to_owned()),
+            (Ok(i), false) => {
+                self.excluded.remove(i);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn include_all(&mut self) {
+        self.excluded.clear();
+    }
+
+    pub fn exclude_all<'a>(&mut self, names: impl IntoIterator<Item = &'a str>) {
+        for name in names {
+            self.set_excluded(name, true);
+        }
+    }
+
+    /// How many of the texture set's mesh names still get the layer.
+    pub fn included_count(&self, names: &[String]) -> usize {
+        names.iter().filter(|n| !self.excludes(n)).count()
+    }
+}
+
 /// Where a layer sits: in a folder (by id) or at the top level, at an index counted from
 /// the bottom.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -786,6 +839,32 @@ impl LayerStack {
             None
         }
         search(&mut self.layers, id)
+    }
+
+    /// The mesh names the layer leaves out: its own geometry mask and those of the folders
+    /// it is in. Empty if the layer isn't in the stack.
+    pub fn excluded_meshes(&self, id: u64) -> Vec<String> {
+        fn search(layers: &[Layer], id: u64, outer: &mut Vec<String>) -> bool {
+            for layer in layers {
+                let len = outer.len();
+                outer.extend(layer.geometry_mask.excluded.iter().cloned());
+                if layer.id == id {
+                    return true;
+                }
+                if let Some(children) = layer.children()
+                    && search(children, id, outer)
+                {
+                    return true;
+                }
+                outer.truncate(len);
+            }
+            false
+        }
+        let mut names = Vec::new();
+        search(&self.layers, id, &mut names);
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// Where the layer is.
@@ -1000,6 +1079,38 @@ mod tests {
 
     fn id_of(s: &LayerStack, name: &str) -> u64 {
         s.iter().find(|l| l.name == name).unwrap().id
+    }
+
+    #[test]
+    fn geometry_masks_keep_names_sorted_and_add_up_through_folders() {
+        let mut mask = GeometryMask::default();
+        mask.exclude_all(["Strap", "Buckle", "Strap"]);
+        assert_eq!(mask.excluded, ["Buckle", "Strap"]);
+        assert!(mask.excludes("Strap") && !mask.excludes("Body"));
+        let meshes = ["Body", "Buckle", "Strap"].map(String::from);
+        assert_eq!(mask.included_count(&meshes), 1);
+        mask.set_excluded("Strap", false);
+        assert_eq!(mask.excluded, ["Buckle"]);
+        mask.include_all();
+        assert!(mask.is_empty());
+
+        let mut ids = Ids::default();
+        let mut s = stack(&mut ids);
+        let (folder, c, d) = (id_of(&s, "Folder"), id_of(&s, "C"), id_of(&s, "D"));
+        s.find_mut(folder)
+            .unwrap()
+            .geometry_mask
+            .set_excluded("Strap", true);
+        s.find_mut(c)
+            .unwrap()
+            .geometry_mask
+            .set_excluded("Body", true);
+        assert_eq!(s.excluded_meshes(c), ["Body", "Strap"]);
+        assert_eq!(s.excluded_meshes(id_of(&s, "B")), ["Strap"]);
+        assert!(
+            s.excluded_meshes(d).is_empty(),
+            "a sibling's mask doesn't count"
+        );
     }
 
     #[test]

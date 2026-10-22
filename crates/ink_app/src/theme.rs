@@ -287,6 +287,7 @@ pub mod icons {
         MENU = "menu",
         FOCUS = "focus",
         MULTI_MATERIAL = "multi-material",
+        GEOMETRY_MASK = "geometry-mask",
         PEN_PRESSURE = "pen-pressure",
         CHECK = "check",
         ERROR = "error",

@@ -10,10 +10,10 @@ use ink_core::export::{BitDepth, ExportSettings, FileFormat, Padding, Template};
 use ink_core::{
     Aabb, Alignment, Alpha, AlphaImage, AlphaMode, BakeSettings, BlendMode, Blending, Blur,
     BrushMaterial, Channel, ChannelBlend, ChannelSet, ChannelValues, ColorSelection, Content, Dab,
-    Effect, EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GrayFill, IdSource,
-    Ids, Layer, LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject, Model,
-    NormalFormat, PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera, StrokeSpace,
-    StrokeStencil, Texels, TextureImage, TextureSet, Tool,
+    Effect, EffectKind, Fill, FillTarget, Folder, Generator, GeneratorKind, GeometryMask, GrayFill,
+    IdSource, Ids, Layer, LayerStack, Levels, Mask, Matching, Mesh, MeshMap, MeshMaps, MeshObject,
+    Model, NormalFormat, PaintLayer, Part, Projection, ProjectionMode, Stroke, StrokeCamera,
+    StrokeSpace, StrokeStencil, Texels, TextureImage, TextureSet, Tool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -392,6 +392,9 @@ struct FileLayer {
     content: FileContent,
     #[serde(default)]
     mask: Option<FileMask>,
+    /// Names of the meshes the geometry mask leaves out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    excluded_meshes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -548,6 +551,9 @@ struct FileStroke {
     hidden_objects: Vec<usize>,
     #[serde(default)]
     hidden_sets: Vec<usize>,
+    /// (object, texture set) of the parts the painted layer's geometry mask left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    excluded_parts: Vec<(usize, usize)>,
     /// What a Polygon Fill stroke covers; such strokes have no dabs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fill: Option<FileStrokeFill>,
@@ -832,6 +838,7 @@ impl Saver {
             visible: layer.visible,
             blending,
             content,
+            excluded_meshes: layer.geometry_mask.excluded.clone(),
             mask: layer.mask.as_ref().map(|mask| FileMask {
                 enabled: mask.enabled,
                 background: finite(mask.background),
@@ -937,6 +944,7 @@ impl Saver {
             }),
             hidden_objects: stroke.hidden_objects.clone(),
             hidden_sets: stroke.hidden_sets.clone(),
+            excluded_parts: stroke.excluded_parts.clone(),
             fill: stroke.fill.as_ref().map(|f| match f {
                 FillTarget::Triangles(list) => FileStrokeFill::Triangles(list.to_vec()),
                 FillTarget::Object(o) => FileStrokeFill::Object(*o),
@@ -1529,6 +1537,11 @@ impl Loader<'_> {
             blending,
             content,
             mask,
+            geometry_mask: {
+                let mut mask = GeometryMask::default();
+                mask.exclude_all(layer.excluded_meshes.iter().map(String::as_str));
+                mask
+            },
         })
     }
 
@@ -1629,6 +1642,7 @@ impl Loader<'_> {
             }),
             hidden_objects: stroke.hidden_objects,
             hidden_sets: stroke.hidden_sets,
+            excluded_parts: stroke.excluded_parts,
             fill: stroke.fill.map(|f| match f {
                 FileStrokeFill::Triangles(list) => FillTarget::Triangles(Arc::new(list)),
                 FileStrokeFill::Object(o) => FillTarget::Object(o),
@@ -1853,6 +1867,7 @@ mod tests {
                 }),
                 hidden_objects: vec![1],
                 hidden_sets: vec![],
+                excluded_parts: vec![(2, 0)],
                 fill: camera.then(|| FillTarget::Triangles(Arc::new(vec![0, 2, 1]))),
                 stencil,
                 symmetry: if camera {
@@ -1951,6 +1966,7 @@ mod tests {
                 .push(Layer::new(LayerKind::Paint, "Scratches".into(), ids));
         }
         folder.visible = false;
+        folder.geometry_mask.exclude_all(["Belt", "Body"]);
         stack.layers.push(folder);
 
         Project {
@@ -2065,6 +2081,7 @@ mod tests {
                 );
                 assert_eq!(sa.camera, sb.camera);
                 assert_eq!(sa.symmetry, sb.symmetry);
+                assert_eq!(sa.excluded_parts, sb.excluded_parts);
                 assert!(sa.alpha.same(&sa.alpha));
                 if let (Alpha::Image(ia), Alpha::Image(ib)) = (&sa.alpha, &sb.alpha) {
                     assert_eq!(ia.pixels, ib.pixels);
@@ -2084,6 +2101,8 @@ mod tests {
             panic!()
         };
         assert!(Arc::ptr_eq(height, gray.image.as_ref().unwrap()));
+        let folder = b.texture_sets[0].stack.layers.last().unwrap();
+        assert_eq!(folder.geometry_mask.excluded, ["Belt", "Body"]);
         assert!(matches!(&height.texels, Texels::Rgba16(t) if t[..4] == [0, 1, 65534, 65535]));
         let emissive = fill.0.image(Channel::Emissive).unwrap();
         assert!(matches!(&emissive.texels, Texels::RgbaF32(t) if t[..] == [0.1, 7.5, -0.25, 1.0]));

@@ -170,9 +170,14 @@ ausblenden; bei Adobe liegt dazu ein offener Feature-Wunsch.
 
 ### 2.4 Geometry Mask und UV-Tiles
 
-- [ ] `P1` **Geometry Mask pro Layer oder Ordner:** Ein- und Ausschlussliste nach Mesh-Namen
-      oder UV-Tiles. Rechtsklick zum Kopieren, Einfügen, Alles ein- oder ausschließen.
-- [ ] `P1` **Ausgeschlossene Geometrie ausblenden** (Alt+H), um darunter zu malen.
+- [x] `P1` **Geometry Mask pro Layer oder Ordner:** Ein- und Ausschlussliste nach Mesh-Namen
+      (Symbol in der Layer-Zeile mit der Zahl der Meshes, auf die der Layer noch wirkt;
+      Häkchen in den Properties). Rechtsklick zum Kopieren, Einfügen, Alles ein- oder
+      ausschließen. Striche treffen nur eingeschlossene Meshes und malen durch die anderen
+      hindurch. Anders als in Painter rechnet eine spätere Änderung der Liste vorhandene
+      Striche nicht neu. Die Auswahl nach UV-Tiles kommt mit UDIM.
+- [x] `P1` **Ausgeschlossene Geometrie ausblenden** (Alt+H, oder das Symbol neben dem
+      Ansichtsmodus), um darunter zu malen.
 - [ ] `P1` **UV-Tile-Workflow (UDIM):** mehrere UV-Tiles pro Texture Set. Das Datenmodell muss
       das von Anfang an vorsehen, auch wenn die Oberfläche erst später kommt.
 
@@ -279,7 +284,7 @@ Layer Stack von Body_MAT                 Ergebnis
       „oben gewinnt“, bei weniger Deckkraft oder anderen Modi wird gemischt.
 - [x] `P0` **Ordner mit Maske:** Mehrere Layer lassen sich gruppieren und gemeinsam maskieren,
       z. B. „Lack“ zusammen mit „Kratzer im Lack“.
-- [ ] `P1` **Woher Masken kommen:** gemalt, Polygon Fill (Mesh, Polygon, UV-Insel), Geometry
+- [x] `P1` **Woher Masken kommen:** gemalt, Polygon Fill (Mesh, Polygon, UV-Insel), Geometry
       Mask (nach Mesh-Name), Color Selection aus der ID-Map, Generatoren wie Edge Wear oder
       Dirt.
 - [ ] `P1` **Material auf ein Teil ziehen:** Strg+Drag & Drop eines Materials auf das Modell
@@ -819,6 +824,6 @@ texturieren und exportieren.**
 | 7 | **Pinsel und Shelf:** Pinsel-Presets, Jitter, Alignment, Stencil, Polygon Fill; Shelf mit Kategorien, eigenen Ressourcen (Pinsel, Alphas, Materialien, Texturen) und PBR-Ordner-Import, Online-Bibliotheken (ambientCG, Poly Haven) | ✅ fertig |
 | 8 | **Baking:** AO, Curvature, Position, Thickness, World Normal vom Low-Poly; Normal, Height, ID vom High-Poly | ✅ fertig |
 | 9 | **Generatoren:** Mask Builder, Edge Wear, Dirt, Filter, Noises, Smart Materials und Smart Masks, Starter-Inhalte | ✅ fertig (Blur in Masken; weitere Filter folgen) |
-| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | läuft: Symmetrie und Color Selection fertig |
+| 10 | **Restliche Werkzeuge:** Projection, Symmetrie, Color Selection, Geometry Mask, Anchor Points | läuft: Symmetrie, Color Selection und Geometry Mask fertig |
 | 11 | **Stylized und Vektor-Layer:** Ink-Kanal, Toon-Optionen, Vektor-Pfade auf der Oberfläche | |
 | 12 | **Feinschliff:** deutsche und weitere Sprachen, UDIM, Smudge und Clone, Pfad-Werkzeuge, Post-Effekte, Physik-Pinsel (Fur), Python-API, Installer (AppImage / Flatpak, Windows) | |
