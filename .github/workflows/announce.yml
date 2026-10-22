@@ -1,0 +1,57 @@
+name: Announce on Discord
+
+# Posts a release's announcement to Discord through the webhook in the
+# `DISCORD_WEBHOOK_URL` secret. Run by hand, only once the owner approved the text and the
+# image: Actions → Announce on Discord → Run workflow, or
+#   gh workflow run announce.yml -f tag=v0.1.0
+# The announcement lives in `.github/announcements/<tag>/` on main: `message.md` (Discord
+# markdown; `{release}` becomes the link to the GitHub release) and `image.png` (rendered
+# from `image.svg` by scripts/render-announcement.sh). The release must exist already.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag of the release, e.g. v0.1.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Post to Discord
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          dir=".github/announcements/$TAG"
+          if [ -z "$WEBHOOK" ]; then echo "::error::The DISCORD_WEBHOOK_URL secret is missing."; exit 1; fi
+          for f in message.md image.png; do
+            if [ ! -f "$dir/$f" ]; then echo "::error::$dir/$f is missing."; exit 1; fi
+          done
+          url=$(gh release view "$TAG" --json url -q .url)
+          jq -n --rawfile message "$dir/message.md" --arg tag "$TAG" --arg url "$url" \
+            --arg avatar "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/assets/branding/app-icon-512.png" '
+            ($message | gsub("\\{release\\}"; $url) | rtrimstr("\n")) as $text
+            | if ($text | length) > 4096 then error("message.md is longer than Discord allows (4096 characters)") else . end
+            | {
+                username: "inkpainter3d",
+                avatar_url: $avatar,
+                embeds: [{
+                  title: "inkpainter3d \($tag)",
+                  url: $url,
+                  color: 8042544,
+                  description: $text,
+                  image: { url: "attachment://update.png" },
+                }],
+              }' > discord.json
+          curl --fail-with-body -sS \
+            -F "payload_json=<discord.json;type=application/json" \
+            -F "files[0]=@$dir/image.png;type=image/png;filename=update.png" \
+            "$WEBHOOK"
