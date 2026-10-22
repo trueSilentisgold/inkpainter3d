@@ -1,5 +1,6 @@
 mod app;
 mod pen;
+mod report;
 mod theme;
 
 use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
@@ -7,10 +8,10 @@ use ink_render::wgpu;
 use std::sync::Arc;
 
 fn main() -> eframe::Result {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn"),
-    )
-    .init();
+    report::init();
+    if std::env::var_os("INKPAINTER3D_CRASH_TEST").is_some() {
+        panic!("crash test (INKPAINTER3D_CRASH_TEST is set)");
+    }
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

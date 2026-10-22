@@ -1,0 +1,30 @@
+name: Bug report
+description: Something doesn't work as it should. In the app, Help → Report a bug… fills this in.
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you do, what happened, and what did you expect? The steps to make it happen again help most.
+    validations:
+      required: true
+  - type: textarea
+    id: system
+    attributes:
+      label: Version and system
+      description: The app fills this in. Otherwise the version (Help → About), your operating system and your GPU.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The last lines of the log, if the app filled them in.
+      render: text
+  - type: textarea
+    id: files
+    attributes:
+      label: Screenshots or files
+      description: Drag images or a small model here if they help. Please only share what you are allowed to share.

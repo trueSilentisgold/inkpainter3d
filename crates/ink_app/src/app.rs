@@ -1,5 +1,6 @@
 mod about;
 mod baking;
+mod bug_report;
 mod docking;
 mod export;
 mod layers;
@@ -21,6 +22,7 @@ use ink_render::{
 };
 use layers::LayersState;
 use painting::PaintState;
+pub(crate) use project::data_dir;
 use project::{Leave, ProjectState};
 use std::path::{Path, PathBuf};
 use views::Layout;
@@ -91,6 +93,10 @@ pub struct InkApp {
     export: Option<export::ExportWindow>,
     /// The About dialog (Help menu) is open.
     about_open: bool,
+    /// Help > Report a bug, while open.
+    bug_report: Option<bug_report::BugReport>,
+    /// A crash report from an earlier run, until it is answered.
+    crash_report: Option<crate::report::CrashReport>,
     /// The window closes at the end of the frame.
     quit_requested: bool,
     /// The panels and the viewport.
@@ -106,6 +112,7 @@ impl InkApp {
             .ok_or_else(|| anyhow::anyhow!("inkpainter3d requires the wgpu renderer"))?;
         let info = render_state.adapter.get_info();
         log::info!("GPU: {} ({:?})", info.name, info.backend);
+        crate::report::set_gpu(&info);
         let (device, queue) = (&render_state.device, &render_state.queue);
 
         let mut renderer = ViewportRenderer::new(device, queue);
@@ -160,6 +167,8 @@ impl InkApp {
             project: ProjectState::default(),
             export: None,
             about_open: false,
+            bug_report: None,
+            crash_report: bug_report::pending_crash(),
             quit_requested: false,
             dock: docking::load_layout(),
         };
@@ -417,6 +426,16 @@ impl InkApp {
             });
             ui.menu_button("Window", |ui| self.window_menu(ui));
             ui.menu_button("Help", |ui| {
+                if ui.button("Report a bug…").clicked() {
+                    self.bug_report = Some(bug_report::BugReport::new());
+                }
+                if ui.button("Open crash reports folder").clicked()
+                    && let Some(dir) = crate::report::crash_dir()
+                {
+                    let _ = std::fs::create_dir_all(&dir);
+                    crate::report::open_folder(&dir);
+                }
+                ui.separator();
                 if ui.button("About inkpainter3d").clicked() {
                     self.about_open = true;
                 }
@@ -771,7 +790,11 @@ impl eframe::App for InkApp {
                 .collect()
         });
         // Dialogs and the export window first need an answer.
-        let dialog = self.project.dialog_open() || self.export.is_some() || self.about_open;
+        let dialog = self.project.dialog_open()
+            || self.export.is_some()
+            || self.about_open
+            || self.bug_report.is_some()
+            || self.crash_report.is_some();
         if let Some(path) = dropped.first().filter(|_| !dialog) {
             let ext = path
                 .extension()
@@ -833,6 +856,8 @@ impl eframe::App for InkApp {
         self.export_window(ui, &rs);
         self.baking_window(ui, &rs);
         self.about_dialog(ui);
+        self.report_dialogs(ui);
+        crate::report::set_project(&self.model);
         self.update_title(ui);
         if std::mem::take(&mut self.quit_requested) {
             ui.send_viewport_cmd(egui::ViewportCommand::Close);
